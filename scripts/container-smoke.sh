@@ -5,7 +5,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 compose=(docker compose -f deploy/dev/compose.yaml)
-cleanup() { "${compose[@]}" down --remove-orphans >/dev/null 2>&1 || true; }
+cleanup() {
+  local previous_status=$?
+  trap - EXIT
+  if ! "${compose[@]}" down --remove-orphans; then
+    echo "container-smoke: cleanup FAILED; the demo container may still be running" >&2
+    exit 1
+  fi
+  exit "$previous_status"
+}
 trap cleanup EXIT
 
 "${compose[@]}" build
