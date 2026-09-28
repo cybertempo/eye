@@ -297,6 +297,44 @@ def scenarios() -> dict[str, dict[str, dict]]:
             bbox=[0.1, -0.1, 0.25, 0.1],
         ),
     }
+    # O39: uncertainty windows that span the 13:00 boundary, and an exact control.
+    s["boundary"] = {
+        "01-three-hours.json": capture(
+            "SYNV-0015 is silent from 12:52 to 13:08 while it moves across the line "
+            "(ambiguous, either hour). SYNV-0016 crosses definitely between reports at "
+            "12:59:50 and 13:00:50 (either hour). SYNV-0017 crosses at 14:30 between reports "
+            "a minute apart (exact).",
+            t("12:00:00"),
+            t("15:00:00"),
+            t("15:00:00"),
+            t("15:00:05"),
+            "ok",
+            voyage("SYNV-0015", t("12:36:00"), [(0.22, 0.02), (LINE_LON - east(1000), 0.02)])
+            + voyage("SYNV-0015", t("13:08:00"), [(LINE_LON + east(1000), 0.02), (0.38, 0.02)])
+            + voyage("SYNV-0016", t("12:36:50"), [(0.2, -0.02), (0.4, -0.02)])
+            + voyage("SYNV-0017", t("14:06:49"), [(0.2, -0.03), (0.4, -0.03)]),
+        ),
+    }
+    # O40: a long stay inside the 50 m no-side band, and a short valid passage.
+    dwell = voyage("SYNV-0018", t("12:00:00"), [(0.25, 0.01), (LINE_LON - east(100), 0.01)])
+    dwell += [
+        message("SYNV-0018", t("12:12:00") + timedelta(minutes=i), LINE_LON + east(offset), 0.01)
+        for i, offset in enumerate([-30, -10, 10, 30] * 7 + [-20, 20])
+    ]
+    dwell += voyage("SYNV-0018", t("12:42:00"), [(LINE_LON + east(200), 0.01), (0.35, 0.01)])
+    s["band-dwell"] = {
+        "01-hour.json": hour(
+            "SYNV-0018 stays inside the 50 m no-side band for 30 minutes, then leaves east. "
+            "SYNV-0019 passes through the band with one report in it, 120 s between sided "
+            "reports.",
+            dwell
+            + voyage(
+                "SYNV-0019",
+                t("12:05:00"),
+                [(LINE_LON - east(480 * 10 + 20), -0.01), (LINE_LON + east(4800), -0.01)],
+            ),
+        ),
+    }
     return s
 
 

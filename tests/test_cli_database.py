@@ -51,7 +51,11 @@ def test_db_commands_end_to_end(make_db):
     } in line["counts"]
     replay = run_eye("db-replay", url=url)
     assert replay.returncode == 0, replay.stdout + replay.stderr
-    assert json.loads(replay.stdout) == {"completed_pending": 0, "discrepancies": []}
+    assert json.loads(replay.stdout) == {
+        "completed_pending": 0,
+        "discrepancies": [],
+        "audited_runs": 1,
+    }
     assert json.loads(run_eye("db-status", url=url).stdout) == {"applied": EXISTING, "pending": []}
 
 

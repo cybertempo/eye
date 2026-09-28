@@ -151,9 +151,17 @@ def _database_command(command: str, config: EyeConfig) -> int:
         else:
             completed = replay_pending(conn)
             discrepancies = verify_replay(conn)
+            audited = 0
             for line in _lines(transits, config.count_lines) if config.count_lines else []:
                 discrepancies += transits.verify(conn, transits.SOURCE_ID, line)
-            result = {"completed_pending": len(completed), "discrepancies": discrepancies}
+                for run_id in transits.recorded_runs(conn, transits.SOURCE_ID, line):
+                    discrepancies += transits.audit_run(conn, run_id, line)
+                    audited += 1
+            result = {
+                "completed_pending": len(completed),
+                "discrepancies": discrepancies,
+                "audited_runs": audited,
+            }
             if result["discrepancies"]:
                 print(json.dumps(result, sort_keys=True))
                 return EXIT_DATABASE

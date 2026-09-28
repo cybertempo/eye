@@ -43,8 +43,9 @@ def derive(conn, intervals=HOUR):
 def count(conn, start=NOON, end=None) -> dict:
     end = end or NOON.replace(hour=13)
     row = conn.run(
-        "SELECT state::text, inbound, outbound, total, ambiguous_crossings, insufficient_gaps, "
-        "reason, line_id, line_version, algorithm_version, cardinality(coverage_ids) "
+        "SELECT state::text, inbound, outbound, total, ambiguous_crossings, boundary_crossings, "
+        "insufficient_gaps, reason, line_id, line_version, algorithm_version, "
+        "cardinality(coverage_ids) "
         "FROM eye.transit_count WHERE interval_start = :a AND interval_end = :b",
         a=start,
         b=end,
@@ -55,6 +56,7 @@ def count(conn, start=NOON, end=None) -> dict:
         "outbound",
         "total",
         "ambiguous",
+        "boundary",
         "insufficient",
         "reason",
         "line_id",
@@ -95,7 +97,7 @@ def reference_crossing_id() -> str:
         )
         for oid, row in capture_derive(parsed).observations.items()
     ]
-    d = transits.derive(transits.Inputs(points, [], "x"), LINE, [])
+    d = transits.derive(transits.Inputs(points, [], [], "x"), LINE, [])
     (crossing_id,) = [k for k, c in d.crossings.items() if c[0] == "SYNV-0001"]
     return crossing_id
 
@@ -113,11 +115,12 @@ def test_valid_transit_is_counted_once_with_its_evidence(fresh, reference_crossi
         "outbound": 0,
         "total": 1,
         "ambiguous": 0,
+        "boundary": 0,
         "insufficient": 0,
         "reason": None,
         "line_id": "synthetic-golden-gate",
         "line_version": 1,
-        "algorithm": "transit-counter/1",
+        "algorithm": transits.ALGORITHM_VERSION,
         "coverage_rows": 1,
     }
     assert crossings(conn) == [[reference_crossing_id, "SYNV-0001", "inbound", "definite", None]]
@@ -131,7 +134,7 @@ def test_valid_transit_is_counted_once_with_its_evidence(fresh, reference_crossi
         "JOIN eye.observation a ON a.observation_id = c.after_observation_id"
     )[0]
     assert row[1] < row[0] < row[2]
-    assert row[3:] == ["linear_interpolation", 1, 1, "transit-counter/1"]
+    assert row[3:] == ["linear_interpolation", 1, 1, transits.ALGORITHM_VERSION]
     assert verify_replay(conn) == [] and transits.verify(conn, SOURCE, LINE) == []
 
 
@@ -338,10 +341,11 @@ def test_database_refuses_a_zero_for_an_unknown_count(fresh):
     insert = (
         "INSERT INTO eye.transit_count (count_id, run_id, source_id, line_id, line_version, "
         "algorithm_version, interval_start, interval_end, state, inbound, outbound, total, "
-        "ambiguous_crossings, insufficient_gaps, reason, coverage_ids, crossing_ids) VALUES "
+        "ambiguous_crossings, boundary_crossings, insufficient_gaps, reason, coverage_ids, "
+        "crossing_ids, insufficient_gap_ids) VALUES "
         "(gen_random_uuid(), CAST(:run AS uuid), 'synthetic-ais', 'synthetic-golden-gate', 1, "
         "'probe', '2026-02-01T14:00:00Z', '2026-02-01T15:00:00Z', "
-        "CAST(:state AS eye.coverage_state), :n, :n, :n, 0, 0, :reason, '{}', '{}')"
+        "CAST(:state AS eye.coverage_state), :n, :n, :n, 0, 0, 0, :reason, '{}', '{}', '{}')"
     )
     with pytest.raises(DatabaseError, match="transit_count_missing_is_null"):
         conn.run(insert, run=run_id, state="unknown", n=0, reason="outage")
@@ -392,7 +396,7 @@ def test_every_scenario_verifies_clean(fresh, scenario):
     ("statement", "label"),
     [
         (
-            "UPDATE eye.line_crossing SET crossing_time = crossing_time + interval '1 minute'",
+            "UPDATE eye.line_crossing SET crossing_time = crossing_time + interval '1 second'",
             "crossings",
         ),
         ("UPDATE eye.line_crossing SET status = 'ambiguous', reason = 'x'", "crossings"),
@@ -479,3 +483,188 @@ def test_generated_fixtures_are_current():
         timeout=60,
     )
     assert result.returncode == 0, result.stderr
+
+
+# --- O39: an uncertainty window that spans an interval boundary ------------------------
+
+
+HOURS_3 = [(NOON.replace(hour=h), NOON.replace(hour=h + 1)) for h in (12, 13, 14)]
+
+
+def test_crossing_window_spanning_an_hour_makes_every_affected_hour_uncertain(fresh):
+    conn = fresh()
+    load(conn, "boundary")
+    derive(conn, HOURS_3)
+    twelve, thirteen, fourteen = (count(conn, a, b) for a, b in HOURS_3)
+    # SYNV-0015 (ambiguous, silent 12:52-13:08) and SYNV-0016 (definite, reports at
+    # 12:59:50 and 13:00:50) may each belong to either hour, so neither hour is exact
+    # and neither counts them.
+    for hour in (twelve, thirteen):
+        assert (hour["state"], hour["total"], hour["ambiguous"], hour["boundary"]) == (
+            "partial",
+            0,
+            1,
+            1,
+        )
+        assert "neighbouring interval" in hour["reason"]
+    # Control: a well-observed crossing entirely inside 14:00-15:00 is exact.
+    assert (fourteen["state"], fourteen["total"], fourteen["boundary"]) == ("qualified", 1, 0)
+    windows = conn.run(
+        "SELECT vessel_id, status, eye.iso_utc(window_start), eye.iso_utc(window_end) "
+        "FROM eye.line_crossing ORDER BY vessel_id"
+    )
+    assert [w[:2] for w in windows] == [
+        ["SYNV-0015", "ambiguous"],
+        ["SYNV-0016", "definite"],
+        ["SYNV-0017", "definite"],
+    ]
+    assert windows[1][2] < "2026-02-01T13:00:00" < windows[1][3]  # spans the boundary
+    assert "2026-02-01T14:00:00" < windows[2][2] < windows[2][3] < "2026-02-01T15:00:00"
+    assert transits.verify(conn, SOURCE, LINE) == []
+
+
+def test_database_refuses_qualified_with_a_boundary_crossing(fresh):
+    conn = fresh()
+    load(conn, "quiet")
+    run_id, _ = derive(conn)
+    insert = (
+        "INSERT INTO eye.transit_count (count_id, run_id, source_id, line_id, line_version, "
+        "algorithm_version, interval_start, interval_end, state, inbound, outbound, total, "
+        "ambiguous_crossings, boundary_crossings, insufficient_gaps, reason, coverage_ids, "
+        "crossing_ids, insufficient_gap_ids) VALUES (gen_random_uuid(), CAST(:run AS uuid), "
+        "'synthetic-ais', 'synthetic-golden-gate', 1, 'probe', '2026-02-01T14:00:00Z', "
+        "'2026-02-01T15:00:00Z', CAST(:state AS eye.coverage_state), 0, 0, 0, 0, 1, 0, "
+        ":reason, '{}', '{}', '{}')"
+    )
+    with pytest.raises(DatabaseError, match="check"):
+        conn.run(insert, run=run_id, state="qualified", reason=None)
+    conn.run(insert, run=run_id, state="partial", reason="lower bound")  # control
+
+
+# --- O40: time spent inside the no-side band ---------------------------------------------
+
+
+def test_long_stay_in_the_band_is_not_a_precisely_timed_crossing(fresh):
+    conn = fresh()
+    load(conn, "band-dwell")
+    derive(conn)
+    rows = {
+        r[0]: r[1:]
+        for r in conn.run(
+            "SELECT vessel_id, status, reason, "
+            "extract(epoch FROM window_end - window_start)::int FROM eye.line_crossing"
+        )
+    }
+    status, reason, window = rows["SYNV-0018"]
+    assert status == "ambiguous" and window > transits.MAX_BRACKET_S
+    assert "cannot be interpolated" in reason
+    # Control: a short passage with one report inside the band stays definite.
+    assert rows["SYNV-0019"] == ["definite", None, 120]
+    result = count(conn)
+    assert (result["state"], result["total"], result["ambiguous"]) == ("partial", 1, 1)
+
+
+def test_bracket_limit_is_the_boundary_between_definite_and_ambiguous(fresh, monkeypatch):
+    conn = fresh()
+    load(conn, "band-dwell")
+    inputs = transits.read_inputs(conn, SOURCE, LINE)
+    statuses = lambda d: {c[0]: c[5] for c in d.crossings.values()}  # noqa: E731
+    assert statuses(transits.derive(inputs, LINE, HOUR))["SYNV-0019"] == "definite"
+    monkeypatch.setattr(transits, "MAX_BRACKET_S", 119.0)  # just below its 120 s window
+    assert statuses(transits.derive(inputs, LINE, HOUR))["SYNV-0019"] == "ambiguous"
+
+
+# --- O41: auditing both the original and the revised count ---------------------------------
+
+
+def test_original_and_revised_counts_stay_auditable_after_late_arrival(fresh):
+    conn = fresh()
+    first, backfill = (p.read_bytes() for p in files("late"))
+    ingest(conn, first)
+    original_run, _ = derive(conn)
+    ingest(conn, backfill)
+    revised_run, _ = derive(conn)
+    assert original_run != revised_run
+
+    def recorded(run_id):
+        return conn.run(
+            "SELECT c.state::text, c.total, c.ambiguous_crossings, "
+            "cardinality(c.crossing_ids), cardinality(r.input_batch_ids) "
+            "FROM eye.run_count c JOIN eye.derivation_run r USING (run_id) "
+            "WHERE c.run_id = CAST(:run AS uuid)",
+            run=run_id,
+        )
+
+    # The original result is still there, as it was, with the evidence it used.
+    assert recorded(original_run) == [["partial", 0, 1, 1, 1]]
+    assert recorded(revised_run) == [["qualified", 1, 0, 1, 2]]
+    original_crossing = conn.run(
+        "SELECT status, cardinality(evidence_batch_ids) FROM eye.run_crossing "
+        "WHERE run_id = CAST(:run AS uuid)",
+        run=original_run,
+    )
+    assert original_crossing == [["ambiguous", 1]]
+    # Each run re-derives exactly from the batches it recorded.
+    assert transits.audit_run(conn, original_run, LINE) == []
+    assert transits.audit_run(conn, revised_run, LINE) == []
+    # The current tables hold only the revised result.
+    assert (count(conn)["state"], count(conn)["total"]) == ("qualified", 1)
+
+
+def test_recorded_run_results_are_immutable_and_tampering_is_detected(fresh):
+    conn = fresh()
+    first, backfill = (p.read_bytes() for p in files("late"))
+    ingest(conn, first)
+    original_run, _ = derive(conn)
+    ingest(conn, backfill)
+    derive(conn)
+    assert transits.audit_run(conn, original_run, LINE) == []  # control
+    for statement in (
+        "UPDATE eye.run_count SET total = 1, inbound = 1",
+        "DELETE FROM eye.run_crossing",
+        "UPDATE eye.derivation_run SET input_batch_ids = '{}'",
+    ):
+        with pytest.raises(DatabaseError, match="not permitted"):
+            conn.run(statement)
+    conn.run("ALTER TABLE eye.run_count DISABLE TRIGGER run_count_append_only")
+    conn.run(
+        "UPDATE eye.run_count SET state = 'qualified', total = 1, inbound = 1, "
+        "ambiguous_crossings = 0, reason = NULL WHERE run_id = CAST(:run AS uuid)",
+        run=original_run,
+    )
+    problems = transits.audit_run(conn, original_run, LINE)
+    assert any(p.startswith("counts") for p in problems), problems
+
+
+def test_replay_audits_every_recorded_run(make_db):
+    url = make_db()
+    conn = connect(url)
+    migrate(conn)
+    first, backfill = (p.read_bytes() for p in files("late"))
+    ingest(conn, first)
+    derive(conn)
+    ingest(conn, backfill)
+    derive(conn)
+    env_url = url
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "eye",
+            "db-replay",
+            "--config",
+            str(REPO_ROOT / "config" / "eye.example.toml"),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PYTHONPATH": str(REPO_ROOT / "backend"),
+            "EYE_DATABASE_URL": env_url,
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(result.stdout)
+    assert report["discrepancies"] == [] and report["audited_runs"] == 2
