@@ -1,0 +1,39 @@
+:root {
+  --fg: #111; --bg: #fff; --muted: #444; --rule: #999; --focus: #0050b3; --banner: #b35900;
+  --unknown-bg: #f1f1f1; --partial-bg: #fff4d6; --failed-bg: #fbe3e3;
+  --globe-sea: #dfe8f1; --globe-grid: #9aa8b6; --globe-area: #7a4b00; --globe-line: #b00020;
+  --globe-flight: #0b5cad; --globe-vessel: #006b5a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #eee; --bg: #111; --muted: #bbb; --rule: #555; --focus: #7fb6ff; --banner: #ffa94d;
+    --unknown-bg: #2a2a2a; --partial-bg: #3a3014; --failed-bg: #3d1f1f;
+    --globe-sea: #1b2835; --globe-grid: #4b5b6b; --globe-area: #ffb74d; --globe-line: #ff6b81;
+    --globe-flight: #7fb6ff; --globe-vessel: #5fd3bc;
+  }
+}
+body { font-family: system-ui, sans-serif; margin: 1rem; max-width: 80rem; color: var(--fg); background: var(--bg); }
+.skip { position: absolute; left: -999px; }
+.skip:focus { left: 1rem; top: 1rem; background: var(--bg); padding: 0.5rem; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.banner { border: 2px solid var(--banner); padding: 0.5rem; font-weight: 600; }
+.note { color: var(--muted); }
+.error { color: #b00020; min-height: 1em; }
+fieldset { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; border: 1px solid var(--rule); }
+[role="tablist"] { display: flex; gap: 0.25rem; margin: 1rem 0 0; }
+[role="tab"] { padding: 0.5rem 1rem; border: 1px solid var(--rule); background: var(--bg); color: var(--fg); font-weight: 600; }
+[role="tab"][aria-selected="true"] { border-bottom: 3px solid var(--focus); }
+[role="tabpanel"] { border: 1px solid var(--rule); padding: 1rem; }
+.globe-controls { display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; }
+canvas#globe { width: 100%; height: 26rem; display: block; margin: 0.5rem 0; border: 1px solid var(--rule); }
+table { border-collapse: collapse; width: 100%; margin-bottom: 1rem; }
+caption { text-align: left; font-weight: 600; padding: 0.25rem 0; }
+th, td { border: 1px solid var(--rule); padding: 0.25rem 0.5rem; text-align: left; font-size: 0.9rem; vertical-align: top; }
+code { font-size: 0.8rem; word-break: break-all; }
+ul.ids { margin: 0; padding-left: 1rem; }
+tr.state-unknown, tr.state-failed { background: var(--unknown-bg); font-style: italic; }
+tr.state-failed { background: var(--failed-bg); }
+tr.state-partial { background: var(--partial-bg); }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; }
+dt { font-weight: 600; }
+dd { margin: 0; }

@@ -3,20 +3,70 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>EYE synthetic demo</title>
-  <link rel="stylesheet" href="/static/demo.css">
-  <script type="module" src="/static/demo.js"></script>
+  <title>EYE: THEATRE and DESK (synthetic demo)</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/app.js"></script>
 </head>
 <body>
+  <a class="skip" href="#main">Skip to content</a>
   <header>
-    <h1>EYE synthetic demo</h1>
-    <p class="banner">SYNTHETIC DATA. Nothing on this page describes a real aircraft, vessel, road or event.</p>
+    <h1>EYE</h1>
+    <p id="notice" class="banner">SYNTHETIC DATA. Nothing on this page describes a real aircraft, vessel, road or event.</p>
+    <p class="live">Live updates: <span id="live-status" role="status" data-state="loading">Loading…</span>
+      <span class="cursor">Cursor <code id="cursor">none</code></span></p>
   </header>
-  <main>
-    <p id="status" role="status">Loading synthetic snapshot…</p>
-    <section aria-labelledby="coverage-h"><h2 id="coverage-h">Coverage</h2><table id="coverage"></table></section>
-    <section aria-labelledby="tracks-h"><h2 id="tracks-h">Tracks</h2><table id="tracks"></table></section>
-    <section aria-labelledby="events-h"><h2 id="events-h">Events</h2><table id="events"></table></section>
+  <main id="main">
+    <form id="view-form" aria-describedby="view-summary">
+      <fieldset>
+        <legend>View interval (UTC)</legend>
+        <label for="view-start">Start</label>
+        <input id="view-start" name="start" type="text" inputmode="text" autocomplete="off" spellcheck="false"
+               aria-describedby="view-error" placeholder="2026-02-01T12:00:00Z">
+        <label for="view-hours">Hours</label>
+        <input id="view-hours" name="hours" type="number" min="1" max="168" step="1" aria-describedby="view-error">
+        <button type="submit">Show interval</button>
+        <p id="view-error" class="error" role="alert"></p>
+      </fieldset>
+      <p id="view-summary"></p>
+    </form>
+
+    <div role="tablist" aria-label="Views">
+      <button type="button" role="tab" id="tab-theatre" aria-selected="true" aria-controls="panel-theatre">THEATRE</button>
+      <button type="button" role="tab" id="tab-desk" aria-selected="false" aria-controls="panel-desk" tabindex="-1">DESK</button>
+    </div>
+
+    <section id="panel-theatre" role="tabpanel" aria-labelledby="tab-theatre" tabindex="0">
+      <h2>THEATRE</h2>
+      <p class="note">Illustrative globe without a basemap. Rendering presets change only what is drawn; the fact
+        tables below come from stored evidence and stay the same in every preset.</p>
+      <div class="globe-controls" role="group" aria-label="Globe controls">
+        <button type="button" id="rotate-west">Rotate west</button>
+        <button type="button" id="rotate-east">Rotate east</button>
+        <button type="button" id="rotate-north">Rotate north</button>
+        <button type="button" id="rotate-south">Rotate south</button>
+        <button type="button" id="zoom-in">Zoom in</button>
+        <button type="button" id="zoom-out">Zoom out</button>
+        <button type="button" id="reset-view">Fit area</button>
+        <label for="preset">Rendering preset</label>
+        <select id="preset"></select>
+      </div>
+      <canvas id="globe" role="img" tabindex="0" aria-label="Globe" aria-describedby="globe-keys"></canvas>
+      <p id="globe-keys" class="note">With the globe focused: arrow keys rotate, + and − zoom, Home or 0 fits the area.</p>
+      <p id="globe-description" class="note"></p>
+      <h3>Measured facts</h3>
+      <table id="track-facts"></table>
+      <table id="coverage-facts"></table>
+    </section>
+
+    <section id="panel-desk" role="tabpanel" aria-labelledby="tab-desk" tabindex="0" hidden>
+      <h2>DESK: observed transits</h2>
+      <p class="note">Counts come from deterministic derivation of stored evidence. Unknown means no usable count;
+        partial counts are lower bounds; crossing times are estimates between two observed positions.</p>
+      <div id="transit-summary"></div>
+      <table id="transit-counts"></table>
+      <table id="transit-crossings"></table>
+      <table id="transit-coverage"></table>
+    </section>
   </main>
 </body>
 </html>

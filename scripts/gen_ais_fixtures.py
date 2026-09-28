@@ -335,7 +335,35 @@ def scenarios() -> dict[str, dict[str, dict]]:
             ),
         ),
     }
+    # Package 3 demo: four consecutive hours with every count state the DESK shows.
+    s["demo"] = {
+        "01-exact.json": _demo_hour(
+            12,
+            "12:00-13:00: SYNV-0020 crosses inbound mid-line; SYNV-0021 never approaches.",
+            voyage("SYNV-0020", t("12:05:00"), [(0.2, 0.0), (0.4, 0.0)])
+            + voyage("SYNV-0021", t("12:02:00"), [(0.15, -0.06), (0.15, 0.06)]),
+        ),
+        "02-partial.json": _demo_hour(
+            13,
+            "13:00-14:00: SYNV-0022 crosses 111 m from the north end (ambiguous); "
+            "SYNV-0023 crosses outbound mid-line.",
+            voyage("SYNV-0022", t("13:05:00"), [(0.2, 0.049), (0.4, 0.049)])
+            + voyage("SYNV-0023", t("13:06:00"), [(0.4, -0.01), (0.2, -0.01)]),
+        ),
+        "03-outage.json": _demo_hour(14, "14:00-15:00: the provider timed out.", [], "timeout"),
+        "04-quiet.json": _demo_hour(
+            15,
+            "15:00-16:00: a healthy hour in which no vessel crosses (a measured zero).",
+            voyage("SYNV-0024", t("15:02:00"), [(0.15, -0.06), (0.15, 0.06)]),
+        ),
+    }
     return s
+
+
+def _demo_hour(h, note, messages, status="ok"):
+    start = DAY.replace(hour=h)
+    end = start + timedelta(hours=1)
+    return capture(note, start, end, end, end + timedelta(seconds=5), status, messages)
 
 
 def _straddle():

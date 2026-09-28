@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
-# Build the dev image and check it serves the synthetic demo on host loopback.
+# Build the dev image, start it with its disposable PostGIS database and check
+# it serves the database-backed synthetic demo on host loopback.
 # Runs on: developer laptop (with Docker), CI.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# A password for this run only; it is never written to disk.
+EYE_DEMO_DB_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
+export EYE_DEMO_DB_PASSWORD
 compose=(docker compose -f deploy/dev/compose.yaml)
 cleanup() {
   local previous_status=$?
   trap - EXIT
   if ! "${compose[@]}" down --remove-orphans; then
-    echo "container-smoke: cleanup FAILED; the demo container may still be running" >&2
+    echo "container-smoke: cleanup FAILED; the demo containers may still be running" >&2
     exit 1
   fi
   exit "$previous_status"
@@ -19,16 +23,25 @@ trap cleanup EXIT
 "${compose[@]}" build
 "${compose[@]}" up -d
 port="${EYE_DEMO_PORT:-8765}"
-published="$("${compose[@]}" port eye-demo 8765)"
+published="$("${compose[@]}" port db 8765)"
 case "$published" in
   127.0.0.1:*) echo "container-smoke: published on $published (loopback)" ;;
   *) echo "container-smoke: REFUSED, port published on $published" >&2; exit 1 ;;
 esac
-for _ in $(seq 1 30); do
-  if curl -fsS "http://127.0.0.1:${port}/api/v0/health"; then
+base="http://127.0.0.1:${port}"
+for _ in $(seq 1 90); do
+  if curl -fsS "${base}/api/v0/health"; then
     echo
-    curl -fsS -o /dev/null "http://127.0.0.1:${port}/api/v0/snapshot"
-    echo "container-smoke: health and snapshot OK on 127.0.0.1:${port}"
+    curl -fsS -o /dev/null "${base}/api/v0/snapshot"
+    # The four demo hours: exact, partial, outage (unknown, never zero), measured zero.
+    curl -fsS "${base}/api/v0/transits" | python3 -c '
+import json, sys
+counts = json.load(sys.stdin)["counts"]
+states = [(c["state"], c["total"]) for c in counts]
+expected = [("qualified", 1), ("partial", 1), ("unknown", None), ("qualified", 0)]
+sys.exit(0 if states == expected else f"container-smoke: unexpected transit counts {states}")
+'
+    echo "container-smoke: health, snapshot and transit counts OK on 127.0.0.1:${port}"
     exit 0
   fi
   sleep 1

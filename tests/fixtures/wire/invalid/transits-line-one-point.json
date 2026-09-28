@@ -1,0 +1,181 @@
+{
+  "entry": "ServerMessage",
+  "note": "a count line has exactly two ends",
+  "message": {
+    "schema_version": "eye.wire/1",
+    "kind": "transits",
+    "generated_at": "2026-02-01T16:00:00Z",
+    "synthetic": true,
+    "source": "synthetic-ais",
+    "source_label": "Synthetic AIS (invented vessels)",
+    "line": {
+      "id": "synthetic-golden-gate",
+      "version": 1,
+      "name": "Synthetic count line",
+      "synthetic": true,
+      "coords": [
+        [
+          0.0,
+          0.0
+        ]
+      ]
+    },
+    "algorithm_version": "transit-counter/2",
+    "run_id": "00000000-0000-5000-8000-000000000001",
+    "derived_at": "2026-02-01T15:30:00Z",
+    "interval": {
+      "start": "2026-02-01T12:00:00Z",
+      "end": "2026-02-01T15:00:00Z"
+    },
+    "counts": [
+      {
+        "count_id": "00000000-0000-5000-8000-000000000010",
+        "run_id": "00000000-0000-5000-8000-000000000001",
+        "interval": {
+          "start": "2026-02-01T12:00:00Z",
+          "end": "2026-02-01T13:00:00Z"
+        },
+        "state": "qualified",
+        "inbound": 1,
+        "outbound": 0,
+        "total": 1,
+        "ambiguous_crossings": 0,
+        "boundary_crossings": 0,
+        "insufficient_gaps": 0,
+        "reason": null,
+        "coverage_ids": [
+          "00000000-0000-5000-8000-000000000020"
+        ],
+        "crossing_ids": [
+          "00000000-0000-5000-8000-000000000030"
+        ],
+        "insufficient_gap_ids": []
+      },
+      {
+        "count_id": "00000000-0000-5000-8000-000000000011",
+        "run_id": "00000000-0000-5000-8000-000000000001",
+        "interval": {
+          "start": "2026-02-01T13:00:00Z",
+          "end": "2026-02-01T14:00:00Z"
+        },
+        "state": "partial",
+        "inbound": 0,
+        "outbound": 0,
+        "total": 0,
+        "ambiguous_crossings": 1,
+        "boundary_crossings": 0,
+        "insufficient_gaps": 0,
+        "reason": "lower bound: 1 ambiguous crossing",
+        "coverage_ids": [
+          "00000000-0000-5000-8000-000000000021"
+        ],
+        "crossing_ids": [
+          "00000000-0000-5000-8000-000000000031"
+        ],
+        "insufficient_gap_ids": []
+      },
+      {
+        "count_id": "00000000-0000-5000-8000-000000000012",
+        "run_id": "00000000-0000-5000-8000-000000000001",
+        "interval": {
+          "start": "2026-02-01T14:00:00Z",
+          "end": "2026-02-01T15:00:00Z"
+        },
+        "state": "unknown",
+        "inbound": null,
+        "outbound": null,
+        "total": null,
+        "ambiguous_crossings": 0,
+        "boundary_crossings": 0,
+        "insufficient_gaps": 0,
+        "reason": "coverage failed: provider timeout",
+        "coverage_ids": [
+          "00000000-0000-5000-8000-000000000022"
+        ],
+        "crossing_ids": [],
+        "insufficient_gap_ids": []
+      }
+    ],
+    "crossings": [
+      {
+        "id": "00000000-0000-5000-8000-000000000030",
+        "vessel_id": "SYNV-0001",
+        "direction": "inbound",
+        "status": "definite",
+        "reason": null,
+        "estimated_time": "2026-02-01T12:20:00Z",
+        "time_method": "linear_interpolation",
+        "window": {
+          "start": "2026-02-01T12:19:00Z",
+          "end": "2026-02-01T12:21:00Z"
+        },
+        "position": [
+          0.0,
+          0.0
+        ],
+        "before_observation_id": "00000000-0000-5000-8000-000000000040",
+        "after_observation_id": "00000000-0000-5000-8000-000000000041",
+        "evidence_batch_ids": [
+          "00000000-0000-5000-8000-000000000050"
+        ]
+      },
+      {
+        "id": "00000000-0000-5000-8000-000000000031",
+        "vessel_id": "SYNV-0002",
+        "direction": "inbound",
+        "status": "ambiguous",
+        "reason": "bracketing positions 900 s apart",
+        "estimated_time": "2026-02-01T13:30:00Z",
+        "time_method": "linear_interpolation",
+        "window": {
+          "start": "2026-02-01T13:22:30Z",
+          "end": "2026-02-01T13:37:30Z"
+        },
+        "position": [
+          0.001,
+          0.0
+        ],
+        "before_observation_id": "00000000-0000-5000-8000-000000000042",
+        "after_observation_id": "00000000-0000-5000-8000-000000000043",
+        "evidence_batch_ids": [
+          "00000000-0000-5000-8000-000000000051"
+        ]
+      }
+    ],
+    "coverage": [
+      {
+        "id": "00000000-0000-5000-8000-000000000020",
+        "batch_id": "00000000-0000-5000-8000-000000000050",
+        "interval": {
+          "start": "2026-02-01T12:00:00Z",
+          "end": "2026-02-01T13:00:00Z"
+        },
+        "state": "qualified",
+        "reason": null,
+        "received_time": "2026-02-01T13:00:05Z"
+      },
+      {
+        "id": "00000000-0000-5000-8000-000000000021",
+        "batch_id": "00000000-0000-5000-8000-000000000051",
+        "interval": {
+          "start": "2026-02-01T13:00:00Z",
+          "end": "2026-02-01T14:00:00Z"
+        },
+        "state": "qualified",
+        "reason": null,
+        "received_time": "2026-02-01T14:00:05Z"
+      },
+      {
+        "id": "00000000-0000-5000-8000-000000000022",
+        "batch_id": "00000000-0000-5000-8000-000000000052",
+        "interval": {
+          "start": "2026-02-01T14:00:00Z",
+          "end": "2026-02-01T15:00:00Z"
+        },
+        "state": "failed",
+        "reason": "provider timeout",
+        "received_time": "2026-02-01T15:00:05Z"
+      }
+    ]
+  }
+}

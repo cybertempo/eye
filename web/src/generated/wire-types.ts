@@ -122,6 +122,99 @@ export type CoverageMissing = {
 
 export type Coverage = CoverageMeasured | CoverageMissing;
 
+/** Name and version of a deterministic derivation, such as transit-counter/2. */
+export type AlgorithmVersion = string;
+
+/** Exact count: full coverage and no uncertain crossing or gap. The only state that can be a measured zero. */
+export type TransitCountQualified = {
+  readonly count_id: Identifier;
+  readonly run_id: Identifier;
+  readonly interval: Interval;
+  readonly coverage_ids: Identifier[];
+  readonly crossing_ids: Identifier[];
+  readonly insufficient_gap_ids: Identifier[];
+  readonly state: "qualified";
+  readonly inbound: number;
+  readonly outbound: number;
+  readonly total: number;
+  readonly ambiguous_crossings: 0;
+  readonly boundary_crossings: 0;
+  readonly insufficient_gaps: 0;
+  readonly reason: null;
+};
+
+/** Lower bound: some crossings are ambiguous or cross the interval boundary, or coverage is partial. */
+export type TransitCountPartial = {
+  readonly count_id: Identifier;
+  readonly run_id: Identifier;
+  readonly interval: Interval;
+  readonly coverage_ids: Identifier[];
+  readonly crossing_ids: Identifier[];
+  readonly insufficient_gap_ids: Identifier[];
+  readonly state: "partial";
+  readonly inbound: number;
+  readonly outbound: number;
+  readonly total: number;
+  readonly ambiguous_crossings: number;
+  readonly boundary_crossings: number;
+  readonly insufficient_gaps: number;
+  readonly reason: ShortText;
+};
+
+/** No usable count: an outage, unknown coverage or insufficient track evidence. Counts must be null, never zero. */
+export type TransitCountMissing = {
+  readonly count_id: Identifier;
+  readonly run_id: Identifier;
+  readonly interval: Interval;
+  readonly coverage_ids: Identifier[];
+  readonly crossing_ids: Identifier[];
+  readonly insufficient_gap_ids: Identifier[];
+  readonly state: "unknown" | "failed";
+  readonly inbound: null;
+  readonly outbound: null;
+  readonly total: null;
+  readonly ambiguous_crossings: number;
+  readonly boundary_crossings: number;
+  readonly insufficient_gaps: number;
+  readonly reason: ShortText;
+};
+
+export type TransitCount = TransitCountQualified | TransitCountPartial | TransitCountMissing;
+
+/** One derived line crossing. Its time is estimated by interpolation; the window is bounded by two observed positions. */
+export type TransitCrossing = {
+  readonly id: Identifier;
+  readonly vessel_id: Identifier;
+  readonly direction: "inbound" | "outbound";
+  readonly status: "definite" | "ambiguous";
+  readonly reason: string | null;
+  readonly estimated_time: Timestamp;
+  readonly time_method: "linear_interpolation";
+  readonly window: Interval;
+  readonly position: Position;
+  readonly before_observation_id: Identifier;
+  readonly after_observation_id: Identifier;
+  readonly evidence_batch_ids: Identifier[];
+};
+
+/** A coverage row cited by a count, with the capture batch it came from. */
+export type TransitCoverage = {
+  readonly id: Identifier;
+  readonly batch_id: Identifier;
+  readonly interval: Interval;
+  readonly state: "qualified" | "partial" | "unknown" | "failed";
+  readonly reason: string | null;
+  readonly received_time: Timestamp;
+};
+
+export type CountLine = {
+  readonly id: Identifier;
+  readonly version: number;
+  readonly name: ShortText;
+  readonly synthetic: boolean;
+  readonly coords: Position[];
+};
+
 /** REST GET /api/v0/health. */
 export type HealthMessage = {
   readonly schema_version: SchemaVersion;
@@ -174,6 +267,24 @@ export type ResyncRequiredMessage = {
   readonly last_cursor: string | null;
 };
 
+/** REST GET /api/v0/transits: observed transit counts for one versioned line over a bounded interval, with the crossings and coverage they cite. */
+export type TransitsMessage = {
+  readonly schema_version: SchemaVersion;
+  readonly kind: "transits";
+  readonly generated_at: Timestamp;
+  readonly synthetic: boolean;
+  readonly source: Identifier;
+  readonly source_label: ShortText;
+  readonly line: CountLine;
+  readonly algorithm_version: AlgorithmVersion;
+  readonly run_id: string | null;
+  readonly derived_at: string | null;
+  readonly interval: Interval;
+  readonly counts: TransitCount[];
+  readonly crossings: TransitCrossing[];
+  readonly coverage: TransitCoverage[];
+};
+
 /** WebSocket client request for a bounded area, interval and layer set. */
 export type SubscribeMessage = {
   readonly schema_version: SchemaVersion;
@@ -190,7 +301,7 @@ export type UnsubscribeMessage = {
 };
 
 /** Every message the server sends over REST or WebSocket. */
-export type ServerMessage = HealthMessage | ErrorMessage | SnapshotMessage | DeltaMessage | ResyncRequiredMessage;
+export type ServerMessage = HealthMessage | ErrorMessage | SnapshotMessage | DeltaMessage | ResyncRequiredMessage | TransitsMessage;
 
 /** Every message a client sends over WebSocket. */
 export type ClientMessage = SubscribeMessage | UnsubscribeMessage;

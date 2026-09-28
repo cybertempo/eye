@@ -20,6 +20,40 @@ max_response_bytes = 1048576
 request_timeout_seconds = 10
 max_connections = 16
 
+[api]
+# Browser API bounds. Every query, response, queue and buffer is limited.
+# Empty: a WebSocket Origin must match the request's own Host (same origin).
+# A private deployment behind its gateway sets the gateway's public origin.
+allowed_origin = ""
+max_websockets = 8
+# Hard cap on bytes queued for one WebSocket client (at least
+# server.max_response_bytes); a slower client is disconnected, never buffered
+# without limit. The kernel send buffer adds at most 32 KiB per socket.
+ws_max_buffer_bytes = 2097152
+ws_max_inbound_bytes = 16384
+ws_send_timeout_seconds = 5
+ws_idle_timeout_seconds = 120
+ws_ping_seconds = 30
+# How often the server looks for new committed batches and derivation runs.
+poll_interval_ms = 1000
+db_pool_size = 4
+query_timeout_ms = 5000
+max_interval_hours = 168
+max_tracks = 1000
+max_points = 20000
+max_coverage = 1000
+max_counts = 168
+max_crossings = 1000
+# A subscriber further behind than this gets a fresh snapshot instead of deltas.
+max_pending_changes = 50
+# The default view is the latest hours that have any coverage.
+default_view_hours = 4
+
+[view]
+area_name = "Synthetic test area near 0N 0E (open ocean; no real features)"
+bbox = [-0.5, -0.5, 0.5, 0.5]
+layers = ["flight", "vessel", "road"]
+
 [auth]
 # "demo" or "private". Production must use "private".
 adapter = "demo"
@@ -29,11 +63,10 @@ private_adapter_module = ""
 
 [data]
 # Relative paths resolve from this file's directory.
-fixture = "../tests/fixtures/synthetic/demo_snapshot.json"
 # Synthetic capture batches loaded by `python -m eye db-load-fixtures` (demo only).
 capture_fixtures = "../tests/fixtures/synthetic/captures"
 # Synthetic AIS captures (Package 2) loaded by the same command (demo only).
-ais_capture_fixtures = "../tests/fixtures/synthetic/ais/transit"
+ais_capture_fixtures = "../tests/fixtures/synthetic/ais/demo"
 # Versioned count lines used by `python -m eye db-derive-transits`.
 count_lines = "../reference/lines"
 

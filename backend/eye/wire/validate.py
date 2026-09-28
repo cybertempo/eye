@@ -279,6 +279,12 @@ def load_schema(path: Path = SCHEMA_PATH) -> WireSchema:
     return WireSchema(json.loads(path.read_text(encoding="utf-8")))
 
 
+@cache
+def default_schema() -> WireSchema:
+    """The repository schema, loaded and checked once per process."""
+    return load_schema()
+
+
 def validate_message(
     payload: bytes | str | dict,
     entry: str,
@@ -295,4 +301,4 @@ def validate_message(
             payload = json.loads(payload, parse_constant=_reject_constant)
         except (ValueError, RecursionError) as exc:
             raise WireValidationError([f"$: not valid JSON ({exc})"]) from exc
-    return (schema or load_schema()).validate(payload, entry)
+    return (schema or default_schema()).validate(payload, entry)

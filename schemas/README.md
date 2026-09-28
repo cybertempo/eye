@@ -2,7 +2,7 @@
 
 `eye-wire.v1.schema.json` is the single authoritative definition of every REST
 response and WebSocket message (protocol version `eye.wire/1`). Entry points:
-`ServerMessage` (health, error, snapshot, delta, resync_required) and
+`ServerMessage` (health, error, snapshot, delta, resync_required, transits) and
 `ClientMessage` (subscribe, unsubscribe).
 
 - **Server side:** `backend/eye/wire/validate.py` validates every outgoing body
@@ -31,6 +31,13 @@ response and WebSocket message (protocol version `eye.wire/1`). Entry points:
 - Coverage in state `unknown`/`failed` must carry `"value": null` and a reason;
   a number there is invalid. Observed and received times are separate required
   fields.
+- Transit counts (`transits`, added in Package 3 as a backwards-compatible
+  addition to `eye.wire/1`: no existing message changed) have three forms:
+  `qualified` (exact numbers, every uncertainty count 0, no reason), `partial`
+  (numbers are lower bounds, reason required) and `unknown`/`failed` (null
+  numbers, reason required). A crossing's time is `estimated_time` with its
+  method; there is no observed-time field for it. The browser also refuses a
+  count whose total is not inbound + outbound, which JSON Schema cannot express.
 
 ## Changing the schema
 

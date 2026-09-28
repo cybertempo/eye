@@ -27,7 +27,8 @@ def test_example_config_is_safe_demo():
     assert config.mode == "demo"
     assert config.server.bind_host == "127.0.0.1"
     assert config.enabled_providers == ()
-    assert config.fixture.is_file()
+    assert config.capture_fixtures.is_dir() and config.ais_capture_fixtures.is_dir()
+    assert config.api.ws_max_buffer_bytes >= config.server.max_response_bytes
     assert isinstance(resolve_auth(config), DemoAuth)
 
 
@@ -120,3 +121,36 @@ def test_production_must_bind_loopback(example_raw):
     raw["server"]["bind_host"] = "0.0.0.0"
     with pytest.raises(ConfigError, match="loopback"):
         parse(raw)
+
+
+def test_client_buffer_must_hold_one_full_message(example_raw):
+    example_raw["api"]["ws_max_buffer_bytes"] = example_raw["server"]["max_response_bytes"] - 1
+    with pytest.raises(ConfigError, match="ws_max_buffer_bytes"):
+        parse(example_raw)
+    example_raw["api"]["ws_max_buffer_bytes"] = example_raw["server"]["max_response_bytes"]
+    assert parse(example_raw).api.ws_max_buffer_bytes == example_raw["server"]["max_response_bytes"]
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "value"),
+    [
+        ("api", "max_websockets", 0),
+        ("api", "poll_interval_ms", 10),
+        ("api", "max_counts", 169),
+        ("api", "allowed_origin", "javascript:alert(1)"),
+        ("view", "bbox", [1, 0, 0, 1]),
+        ("view", "layers", ["ships"]),
+        ("api", "unknown_limit", 1),
+    ],
+)
+def test_api_and_view_limits_are_checked(example_raw, section, key, value):
+    bad = copy.deepcopy(example_raw)
+    bad[section][key] = value
+    with pytest.raises(ConfigError):
+        parse(bad)
+    assert parse(example_raw).api.max_websockets == 8  # control
+
+
+def test_allowed_origin_accepts_an_exact_origin(example_raw):
+    example_raw["api"]["allowed_origin"] = "https://eye.example.org"
+    assert parse(example_raw).api.allowed_origin == "https://eye.example.org"

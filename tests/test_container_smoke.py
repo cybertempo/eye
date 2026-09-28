@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -26,7 +27,20 @@ def test_cleanup_failure_refuses_success_and_clean_cleanup_passes(tmp_path: Path
     )
     docker.chmod(0o755)
     curl = bin_dir / "curl"
-    curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    counts = [
+        {"state": "qualified", "total": 1},
+        {"state": "partial", "total": 1},
+        {"state": "unknown", "total": None},
+        {"state": "qualified", "total": 0},
+    ]
+    curl.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        f"  *transits*) echo '{json.dumps({'counts': counts})}' ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
     curl.chmod(0o755)
 
     env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
@@ -45,4 +59,4 @@ def test_cleanup_failure_refuses_success_and_clean_cleanup_passes(tmp_path: Path
         if expected:
             assert "cleanup FAILED" in result.stderr
         else:
-            assert "health and snapshot OK" in result.stdout
+            assert "health, snapshot and transit counts OK" in result.stdout

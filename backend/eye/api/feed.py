@@ -1,0 +1,529 @@
+"""Bounded, database-backed wire messages for the browser API (Package 3).
+
+Everything here reads the database and returns ``eye.wire/1`` message dicts;
+nothing writes. Callers pass a connection opened by ``open_reader`` (read-only
+session, statement timeout). Every query is bounded by area, interval, layer
+and row limits; a request that would exceed a limit is refused with
+``QueryRefused`` rather than silently truncated.
+
+Cursors are ``e<epoch>:<change_seq>``: the database's random feed epoch
+(migration 0003) and a position in ``eye.feed_change``. A cursor from another
+or a rebuilt database names a different epoch and is reported as expired.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+from eye.ingest.capture import APPROVED_SOURCES
+from eye.storage.db import Connection, connect
+from eye.wire import SCHEMA_VERSION
+
+LAYERS = ("flight", "vessel", "road")
+SYNTHETIC_SOURCES = APPROVED_SOURCES  # every approved source is invented data today
+SOURCE_LABELS = {
+    "synthetic-ais": "Synthetic AIS (invented vessels; not a real AIS feed)",
+    "synthetic-fixture": "Synthetic fixture (invented records)",
+}
+SYNTHETIC_NOTICE = (
+    "Invented data for the public demo. No record describes a real aircraft, vessel, road or event."
+)
+CURSOR = re.compile(
+    r"^e([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):([0-9]{1,18})$"
+)
+MAX_TRACK_POINTS = 1000  # wire schema Track.points maxItems
+MAX_FLAGS = 16
+
+
+class QueryRefused(ValueError):
+    """The request is outside the configured bounds. ``status`` is the HTTP status."""
+
+    def __init__(self, status: int, reason: str) -> None:
+        super().__init__(reason)
+        self.status = status
+
+
+@dataclass(frozen=True)
+class Limits:
+    max_interval_hours: int
+    max_tracks: int
+    max_points: int
+    max_coverage: int
+    max_counts: int
+    max_crossings: int
+    max_changes: int
+    query_timeout_ms: int
+    default_view_hours: int
+
+
+@dataclass(frozen=True)
+class Query:
+    bbox: tuple[float, float, float, float]
+    start: datetime
+    end: datetime
+    layers: tuple[str, ...]
+
+
+# --- connections -------------------------------------------------------------------
+
+
+def open_reader(url: str, *, require_loopback: bool, query_timeout_ms: int) -> Connection:
+    """A read-only session: the API can never write ingest history."""
+    conn = connect(url, require_loopback=require_loopback)
+    conn.run("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
+    conn.run(f"SET statement_timeout = {int(query_timeout_ms)}")
+    return conn
+
+
+def _begin(conn: Connection) -> None:
+    # One consistent view: the cursor and the rows it describes come from the
+    # same snapshot.
+    conn.run("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+
+
+def _end(conn: Connection) -> None:
+    conn.run("COMMIT")
+
+
+# --- time, cursors and query parsing -------------------------------------------------
+
+
+def iso(moment: datetime) -> str:
+    moment = moment.astimezone(UTC)
+    text = moment.strftime("%Y-%m-%dT%H:%M:%S")
+    if moment.microsecond:
+        text += f".{moment.microsecond:06d}".rstrip("0")
+    return text + "Z"
+
+
+def parse_time(text: str, what: str) -> datetime:
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z", text):
+        raise QueryRefused(400, f"{what} must be an RFC 3339 UTC time ending in Z")
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise QueryRefused(400, f"{what} is not a real calendar time") from exc
+
+
+def make_cursor(epoch: str, seq: int) -> str:
+    return f"e{epoch}:{seq}"
+
+
+def parse_cursor(text: str | None) -> tuple[str, int] | None:
+    if not text:
+        return None
+    match = CURSOR.fullmatch(text)
+    return (match.group(1), int(match.group(2))) if match else None
+
+
+def check_query(query: Query, limits: Limits) -> Query:
+    west, south, east, north = query.bbox
+    if not (-180 <= west < east <= 180 and -90 <= south < north <= 90):
+        raise QueryRefused(
+            400, "bbox must be west,south,east,north with west < east, south < north"
+        )
+    if query.end <= query.start:
+        raise QueryRefused(400, "interval end must be after its start")
+    if query.end - query.start > timedelta(hours=limits.max_interval_hours):
+        raise QueryRefused(
+            413, f"interval longer than {limits.max_interval_hours} hours; narrow the request"
+        )
+    if not query.layers or any(layer not in LAYERS for layer in query.layers):
+        raise QueryRefused(400, f"layers must be a non-empty subset of {', '.join(LAYERS)}")
+    return query
+
+
+def query_from_params(params: dict[str, list[str]], default: Query, limits: Limits) -> Query:
+    """Build a query from URL parameters; absent parameters take the default view."""
+    for name in params:
+        if name not in ("bbox", "start", "end", "layers", "line"):
+            raise QueryRefused(400, f"unknown query parameter {name!r}")
+        if len(params[name]) != 1:
+            raise QueryRefused(400, f"query parameter {name!r} must appear once")
+    one = {name: values[0] for name, values in params.items()}
+    bbox = default.bbox
+    if "bbox" in one:
+        parts = one["bbox"].split(",")
+        try:
+            numbers = tuple(float(p) for p in parts)
+        except ValueError as exc:
+            raise QueryRefused(400, "bbox must be four numbers") from exc
+        if len(numbers) != 4 or any(n != n or n in (float("inf"), float("-inf")) for n in numbers):
+            raise QueryRefused(400, "bbox must be four finite numbers")
+        bbox = numbers  # type: ignore[assignment]
+    start = parse_time(one["start"], "start") if "start" in one else default.start
+    end = parse_time(one["end"], "end") if "end" in one else default.end
+    layers = tuple(one["layers"].split(",")) if "layers" in one else default.layers
+    return check_query(Query(bbox, start, end, layers), limits)
+
+
+def default_query(conn: Connection, bbox, layers, limits: Limits) -> Query:
+    """The default view: the latest ``default_view_hours`` that have any coverage."""
+    rows = conn.run("SELECT max(interval_end) FROM eye.coverage")
+    latest = rows[0][0]
+    if latest is None:
+        latest = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    latest = latest.astimezone(UTC)
+    return Query(tuple(bbox), latest - timedelta(hours=limits.default_view_hours), latest, layers)
+
+
+def head(conn: Connection) -> tuple[str, int]:
+    epoch = conn.run("SELECT epoch::text FROM eye.feed_epoch")[0][0]
+    seq = conn.run("SELECT coalesce(max(change_seq), 0) FROM eye.feed_change")[0][0]
+    return epoch, int(seq)
+
+
+# --- snapshot and deltas -------------------------------------------------------------
+
+
+TRACK_POINTS = """
+SELECT o.source_id, o.source_record_id, o.layer, o.display_type::text,
+       eye.iso_utc(o.observed_time), eye.iso_utc(v.first_received_time),
+       ST_X(o.position), ST_Y(o.position), o.altitude_m, o.quality_flags::text[],
+       v.publication_conflict
+FROM eye.observation o
+JOIN eye.observation_version v USING (observation_id)
+WHERE v.is_current IS NOT FALSE
+  AND o.layer = ANY(CAST(:layers AS text[]))
+  AND o.observed_time >= :start AND o.observed_time < :end
+  AND o.position && ST_MakeEnvelope(:w, :s, :e, :n, 4326)
+  AND (CAST(:records AS text[]) IS NULL
+       OR o.source_id || ' ' || o.source_record_id = ANY(CAST(:records AS text[])))
+ORDER BY o.source_id, o.source_record_id, o.observed_time, o.source_published_time
+LIMIT :cap
+"""
+
+COVERAGE = """
+SELECT c.coverage_id::text, c.source_id, c.layer, eye.iso_utc(c.interval_start),
+       eye.iso_utc(c.interval_end), c.state::text, c.reason, c.metric_name, c.metric_value,
+       b.batch_id::text, eye.iso_utc(b.attempt_finished_at)
+FROM eye.coverage c JOIN eye.capture_batch b USING (batch_id)
+WHERE c.layer = ANY(CAST(:layers AS text[]))
+  AND c.interval_start < :end AND c.interval_end > :start
+  AND b.requested_area && ST_MakeEnvelope(:w, :s, :e, :n, 4326)
+  AND (CAST(:batch AS uuid) IS NULL OR c.batch_id = CAST(:batch AS uuid))
+ORDER BY c.interval_start, c.layer, c.source_id, c.coverage_id
+LIMIT :cap
+"""
+
+
+def _params(query: Query) -> dict:
+    west, south, east, north = query.bbox
+    return {
+        "layers": list(query.layers),
+        "start": query.start,
+        "end": query.end,
+        "w": west,
+        "s": south,
+        "e": east,
+        "n": north,
+    }
+
+
+def _tracks(conn, query: Query, limits: Limits, records: list[str] | None) -> list[dict]:
+    rows = conn.run(TRACK_POINTS, **_params(query), records=records, cap=limits.max_points + 1)
+    if len(rows) > limits.max_points:
+        raise QueryRefused(413, f"more than {limits.max_points} positions; narrow the request")
+    tracks: dict[tuple[str, str], dict] = {}
+    for source, record, layer, display, observed, received, lon, lat, alt, flags, conflict in rows:
+        if layer not in ("flight", "vessel"):
+            continue  # road observations are not tracks; the event ledger is Package 4c
+        track = tracks.get((source, record))
+        if track is None:
+            if len(tracks) >= limits.max_tracks:
+                raise QueryRefused(413, f"more than {limits.max_tracks} tracks; narrow the request")
+            track = tracks[(source, record)] = {
+                "id": f"{source}:{record}"[:128],
+                "kind": layer,
+                "source": source,
+                "source_record_id": record,
+                "display_type": display,
+                "points": [],
+                "quality_flags": [],
+            }
+        if len(track["points"]) >= MAX_TRACK_POINTS:
+            raise QueryRefused(413, "a track has more positions than one message allows")
+        track["points"].append(
+            {
+                "observed_time": observed.replace(".000000Z", "Z"),
+                "received_time": received.replace(".000000Z", "Z"),
+                "lon": float(lon),
+                "lat": float(lat),
+                "alt_m": None if alt is None else float(alt),
+            }
+        )
+        wanted = list(flags or []) + (["publication_conflict"] if conflict else [])
+        for flag in wanted:
+            if flag not in track["quality_flags"] and len(track["quality_flags"]) < MAX_FLAGS:
+                track["quality_flags"].append(flag)
+    return list(tracks.values())
+
+
+def _coverage(conn, query: Query, limits: Limits, batch: str | None) -> tuple[list[dict], set]:
+    rows = conn.run(COVERAGE, **_params(query), batch=batch, cap=limits.max_coverage + 1)
+    if len(rows) > limits.max_coverage:
+        raise QueryRefused(
+            413, f"more than {limits.max_coverage} coverage rows; narrow the request"
+        )
+    out, sources = [], set()
+    for _cid, source, layer, start, end, state, reason, metric, value, _batch, _rx in rows:
+        if layer not in LAYERS:
+            continue
+        sources.add(source)
+        item = {
+            "layer": layer,
+            "interval": {"start": _t(start), "end": _t(end)},
+            "state": state,
+            "metric": {"name": metric, "value": None if value is None else _number(value)},
+        }
+        if reason is not None:
+            item["reason"] = reason
+        out.append(item)
+    return out, sources
+
+
+def _t(text: str) -> str:
+    return text.replace(".000000Z", "Z")
+
+
+def _number(value) -> float | int:
+    number = float(value)
+    return int(number) if number.is_integer() else number
+
+
+def _synthetic(conn, sources: set[str]) -> bool:
+    """True only if every source behind the result (or, for an empty result,
+    every source in the database) is an invented one."""
+    if not sources:
+        sources = {s for (s,) in conn.run("SELECT DISTINCT source_id FROM eye.capture_batch")}
+    return all(source in SYNTHETIC_SOURCES for source in sources)
+
+
+def snapshot(conn: Connection, query: Query, limits: Limits, area_name: str) -> dict:
+    _begin(conn)
+    try:
+        epoch, seq = head(conn)
+        tracks = _tracks(conn, query, limits, None)
+        coverage, sources = _coverage(conn, query, limits, None)
+        sources |= {t["source"] for t in tracks}
+        synthetic = _synthetic(conn, sources)
+    finally:
+        _end(conn)
+    message = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": "snapshot",
+        "cursor": make_cursor(epoch, seq),
+        "generated_at": iso(datetime.now(UTC)),
+        "synthetic": synthetic,
+        "area": {"name": area_name, "bbox": list(query.bbox)},
+        "interval": {"start": iso(query.start), "end": iso(query.end)},
+        "tracks": tracks,
+        "events": [],
+        "coverage": coverage,
+    }
+    if synthetic:
+        message["notice"] = SYNTHETIC_NOTICE
+    return message
+
+
+def changes_after(conn: Connection, seq: int, limit: int) -> list[tuple]:
+    """Change rows after ``seq``, oldest first: (seq, kind, batch_id, run_id, layer)."""
+    return conn.run(
+        "SELECT change_seq, kind, batch_id::text, run_id::text, layer FROM eye.feed_change "
+        "WHERE change_seq > :seq ORDER BY change_seq LIMIT :limit",
+        seq=seq,
+        limit=limit,
+    )
+
+
+def delta(
+    conn: Connection,
+    query: Query,
+    limits: Limits,
+    epoch: str,
+    change: tuple,
+    previous_seq: int,
+    sequence: int,
+) -> dict:
+    """The delta for one change row, restricted to one subscription."""
+    seq, kind, batch_id, _run_id, layer = change
+    tracks: list[dict] = []
+    coverage: list[dict] = []
+    if kind == "capture_batch" and layer in query.layers:
+        records = [
+            f"{s} {r}"
+            for s, r in conn.run(
+                "SELECT DISTINCT o.source_id, o.source_record_id FROM eye.observation_receipt r "
+                "JOIN eye.observation o USING (observation_id) "
+                "WHERE r.batch_id = CAST(:batch AS uuid) LIMIT :cap",
+                batch=batch_id,
+                cap=limits.max_tracks + 1,
+            )
+        ]
+        if records:
+            tracks = _tracks(conn, query, limits, records)
+        coverage, _ = _coverage(conn, query, limits, batch_id)
+    # A derivation run changes transit counts only; the delta advances the
+    # cursor so the client knows to re-read /api/v0/transits.
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "kind": "delta",
+        "sequence": sequence,
+        "cursor": make_cursor(epoch, seq),
+        "previous_cursor": make_cursor(epoch, previous_seq),
+        "tracks_upserted": tracks,
+        "events_upserted": [],
+        "coverage_upserted": coverage,
+    }
+
+
+# --- transit counts ----------------------------------------------------------------
+
+
+def load_lines(directory: Path | None) -> dict[str, object]:
+    from eye.worker import transits
+
+    if directory is None:
+        return {}
+    lines = [transits.load_line(p) for p in sorted(directory.glob("*.json"))]
+    return {line.line_id: line for line in lines}
+
+
+def transit_counts(conn: Connection, line, start: datetime, end: datetime, limits: Limits) -> dict:
+    """Counts for one versioned line from the latest derivation run, with cited evidence."""
+    from eye.worker.transits import ALGORITHM_VERSION, SOURCE_ID
+
+    if end <= start:
+        raise QueryRefused(400, "interval end must be after its start")
+    if end - start > timedelta(hours=min(limits.max_interval_hours, limits.max_counts)):
+        raise QueryRefused(413, "interval too long for one transit response; narrow the request")
+    scope = {"s": SOURCE_ID, "l": line.line_id, "v": line.version, "a": ALGORITHM_VERSION}
+    _begin(conn)
+    try:
+        run = conn.run(
+            "SELECT run_id::text, eye.iso_utc(derived_at) FROM eye.derivation_run "
+            "WHERE source_id = :s AND line_id = :l AND line_version = :v "
+            "AND algorithm_version = :a ORDER BY derived_at DESC, run_id DESC LIMIT 1",
+            **scope,
+        )
+        counts = conn.run(
+            "SELECT count_id::text, run_id::text, eye.iso_utc(interval_start), "
+            "eye.iso_utc(interval_end), state::text, inbound, outbound, total, "
+            "ambiguous_crossings, boundary_crossings, insufficient_gaps, reason, "
+            "coverage_ids::text[], crossing_ids::text[], insufficient_gap_ids::text[] "
+            "FROM eye.transit_count WHERE source_id = :s AND line_id = :l "
+            "AND line_version = :v AND algorithm_version = :a "
+            "AND interval_start < :end AND interval_end > :start "
+            "ORDER BY interval_start, interval_end LIMIT :cap",
+            **scope,
+            start=start,
+            end=end,
+            cap=limits.max_counts + 1,
+        )
+        if len(counts) > limits.max_counts:
+            raise QueryRefused(413, f"more than {limits.max_counts} counts; narrow the request")
+        crossing_ids = sorted({c for row in counts for c in row[13]})
+        coverage_ids = sorted({c for row in counts for c in row[12]})
+        if len(crossing_ids) > limits.max_crossings:
+            raise QueryRefused(
+                413, f"more than {limits.max_crossings} crossings; narrow the request"
+            )
+        crossings = conn.run(
+            "SELECT crossing_id::text, vessel_id, direction, status, reason, "
+            "eye.iso_utc(crossing_time), eye.iso_utc(window_start), eye.iso_utc(window_end), "
+            "ST_X(crossing_point), ST_Y(crossing_point), before_observation_id::text, "
+            "after_observation_id::text, evidence_batch_ids::text[] FROM eye.line_crossing "
+            "WHERE crossing_id = ANY(CAST(:ids AS uuid[])) ORDER BY crossing_time, crossing_id",
+            ids=crossing_ids,
+        )
+        coverage = conn.run(
+            "SELECT c.coverage_id::text, c.batch_id::text, eye.iso_utc(c.interval_start), "
+            "eye.iso_utc(c.interval_end), c.state::text, c.reason, "
+            "eye.iso_utc(b.attempt_finished_at) FROM eye.coverage c "
+            "JOIN eye.capture_batch b USING (batch_id) "
+            "WHERE c.coverage_id = ANY(CAST(:ids AS uuid[])) ORDER BY c.interval_start, "
+            "c.coverage_id",
+            ids=coverage_ids,
+        )
+    finally:
+        _end(conn)
+    run_id, derived_at = run[0] if run else (None, None)
+    message = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": "transits",
+        "generated_at": iso(datetime.now(UTC)),
+        "synthetic": bool(line.synthetic) and SOURCE_ID in SYNTHETIC_SOURCES,
+        "source": SOURCE_ID,
+        "source_label": SOURCE_LABELS.get(SOURCE_ID, SOURCE_ID),
+        "line": {
+            "id": line.line_id,
+            "version": line.version,
+            "name": line.name[:500],
+            "synthetic": bool(line.synthetic),
+            "coords": [list(line.start), list(line.end)],
+        },
+        "algorithm_version": ALGORITHM_VERSION,
+        "run_id": run_id,
+        "derived_at": None if derived_at is None else _t(derived_at),
+        "interval": {"start": iso(start), "end": iso(end)},
+        "counts": [_count(row) for row in counts],
+        "crossings": [_crossing(row) for row in crossings],
+        "coverage": [
+            {
+                "id": cid,
+                "batch_id": batch,
+                "interval": {"start": _t(a), "end": _t(b)},
+                "state": state,
+                "reason": reason,
+                "received_time": _t(received),
+            }
+            for cid, batch, a, b, state, reason, received in coverage
+        ],
+    }
+    return message
+
+
+def _count(row) -> dict:
+    (cid, run, a, b, state, inbound, outbound, total, amb, bnd, ins, reason, cov, crs, gaps) = row
+    return {
+        "count_id": cid,
+        "run_id": run,
+        "interval": {"start": _t(a), "end": _t(b)},
+        "state": state,
+        "inbound": inbound,
+        "outbound": outbound,
+        "total": total,
+        "ambiguous_crossings": amb,
+        "boundary_crossings": bnd,
+        "insufficient_gaps": ins,
+        "reason": reason,
+        "coverage_ids": sorted(cov),
+        "crossing_ids": sorted(crs),
+        "insufficient_gap_ids": sorted(gaps),
+    }
+
+
+def _crossing(row) -> dict:
+    cid, vessel, direction, status, reason, when, w0, w1, lon, lat, before, after, batches = row
+    return {
+        "id": cid,
+        "vessel_id": vessel,
+        "direction": direction,
+        "status": status,
+        "reason": reason,
+        "estimated_time": _t(when),
+        "time_method": "linear_interpolation",
+        "window": {"start": _t(w0), "end": _t(w1)},
+        "position": [float(lon), float(lat)],
+        "before_observation_id": before,
+        "after_observation_id": after,
+        "evidence_batch_ids": sorted(batches),
+    }
+
+
+def dumps(message: dict) -> bytes:
+    return json.dumps(message, separators=(",", ":"), sort_keys=True).encode("utf-8")
