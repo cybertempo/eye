@@ -21,6 +21,11 @@ pick_python() {
 
 PYTHON="$(pick_python)"
 command -v npm >/dev/null 2>&1 || { echo "setup: Node.js 22+ with npm is required" >&2; exit 1; }
+command -v node >/dev/null 2>&1 || { echo "setup: Node.js 22+ with npm is required" >&2; exit 1; }
+node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)' || {
+  echo "setup: Node.js 22 or newer is required (found $(node --version))" >&2
+  exit 1
+}
 
 echo "setup: creating .venv with $("$PYTHON" --version)"
 "$PYTHON" -m venv .venv

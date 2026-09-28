@@ -59,6 +59,22 @@ def test_ignored_file_is_not_published(repo):
     assert run_checker(repo).returncode == 0
 
 
+def test_staged_secret_is_checked_even_after_working_copy_is_clean(repo):
+    target = repo / "notes.md"
+    target.write_text("key = " + "AKIA" + "Q" * 16 + "\n", encoding="utf-8")
+    subprocess.run(["git", "add", "notes.md"], cwd=repo, check=True)
+    target.write_text("public notes\n", encoding="utf-8")
+
+    refused = run_checker(repo)
+    assert refused.returncode == 1, refused.stdout
+    assert "notes.md (staged)" in refused.stdout
+    assert "AWS access key id" in refused.stdout
+
+    subprocess.run(["git", "add", "notes.md"], cwd=repo, check=True)
+    accepted = run_checker(repo)
+    assert accepted.returncode == 0, accepted.stdout
+
+
 def test_open_source_claim_fails_but_negation_passes(repo):
     readme = repo / "README.md"
     readme.write_text(CLEAN_README + "EYE is not open source.\n", encoding="utf-8")
