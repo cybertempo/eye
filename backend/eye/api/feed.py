@@ -13,6 +13,7 @@ or a rebuilt database names a different epoch and is reported as expired.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ CURSOR = re.compile(
     r"^e([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):([0-9]{1,18})$"
 )
 MAX_TRACK_POINTS = 1000  # wire schema Track.points maxItems
+DELTA_MAX_ITEMS = 500  # wire schema DeltaMessage *_upserted maxItems
 MAX_FLAGS = 16
 
 
@@ -224,6 +226,17 @@ def _params(query: Query) -> dict:
     }
 
 
+def track_id(source: str, record: str) -> str:
+    """A stable track id: the same (source, record) always gives the same id.
+
+    SHA-256 over an unambiguous encoding of both parts, kept to 128 bits:
+    never a truncation of the readable name, so two records cannot share an id
+    by sharing a prefix.
+    """
+    digest = hashlib.sha256(json.dumps([source, record]).encode("utf-8")).hexdigest()
+    return f"trk-{digest[:32]}"
+
+
 def _tracks(conn, query: Query, limits: Limits, records: list[str] | None) -> list[dict]:
     rows = conn.run(TRACK_POINTS, **_params(query), records=records, cap=limits.max_points + 1)
     if len(rows) > limits.max_points:
@@ -237,7 +250,7 @@ def _tracks(conn, query: Query, limits: Limits, records: list[str] | None) -> li
             if len(tracks) >= limits.max_tracks:
                 raise QueryRefused(413, f"more than {limits.max_tracks} tracks; narrow the request")
             track = tracks[(source, record)] = {
-                "id": f"{source}:{record}"[:128],
+                "id": track_id(source, record),
                 "kind": layer,
                 "source": source,
                 "source_record_id": record,
@@ -354,19 +367,32 @@ def delta(
     tracks: list[dict] = []
     coverage: list[dict] = []
     if kind == "capture_batch" and layer in query.layers:
+        limit = min(limits.max_tracks, DELTA_MAX_ITEMS)
+        # Only the records this batch changed inside the subscription. The
+        # query asks for one more than the limit: a batch that touches more
+        # cannot be sent as one delta, and is refused rather than cut short.
         records = [
             f"{s} {r}"
             for s, r in conn.run(
                 "SELECT DISTINCT o.source_id, o.source_record_id FROM eye.observation_receipt r "
                 "JOIN eye.observation o USING (observation_id) "
-                "WHERE r.batch_id = CAST(:batch AS uuid) LIMIT :cap",
+                "WHERE r.batch_id = CAST(:batch AS uuid) "
+                "AND o.layer = ANY(CAST(:layers AS text[])) "
+                "AND o.observed_time >= :start AND o.observed_time < :end "
+                "AND o.position && ST_MakeEnvelope(:w, :s, :e, :n, 4326) "
+                "LIMIT :cap",
                 batch=batch_id,
-                cap=limits.max_tracks + 1,
+                cap=limit + 1,
+                **_params(query),
             )
         ]
+        if len(records) > limit:
+            raise QueryRefused(413, f"batch changes more than {limit} tracks in view")
         if records:
             tracks = _tracks(conn, query, limits, records)
         coverage, _ = _coverage(conn, query, limits, batch_id)
+        if len(tracks) > limit or len(coverage) > DELTA_MAX_ITEMS:
+            raise QueryRefused(413, "batch is larger than one delta allows")
     # A derivation run changes transit counts only; the delta advances the
     # cursor so the client knows to re-read /api/v0/transits.
     return {

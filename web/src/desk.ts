@@ -167,12 +167,14 @@ export function renderTracks(tracks: readonly Track[]): void {
   fillTable(
     table,
     "Tracks in view: last observed position and times, from the stored evidence.",
-    ["Track", "Kind", "Source", "Display type", "Positions", "Last observed (UTC)", "Last received by EYE (UTC)", "Last position", "Quality flags"],
+    ["Source record", "Track ID", "Kind", "Source", "Display type", "Positions", "Last observed (UTC)", "Last received by EYE (UTC)", "Last position", "Quality flags"],
     [...tracks]
-      .sort((a, b) => a.id.localeCompare(b.id))
+      .sort((a, b) => a.source.localeCompare(b.source) || a.source_record_id.localeCompare(b.source_record_id))
       .map((track) => {
         const f = trackFacts(track);
-        return { cells: [f.id, f.kind, f.source, f.displayType, f.points, f.lastObserved, f.lastReceived, f.lastPosition, f.flags] };
+        return {
+          cells: [f.record, element("code", f.id), f.kind, f.source, f.displayType, f.points, f.lastObserved, f.lastReceived, f.lastPosition, f.flags],
+        };
       }),
   );
 }

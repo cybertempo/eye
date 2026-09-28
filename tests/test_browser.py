@@ -429,3 +429,94 @@ def test_an_invalid_live_message_is_refused(api_server, page):
     expect(status).to_have_attribute("data-state", "live", timeout=WAIT)
     assert status.get_attribute("data-deltas") == "0"
     expect(page.locator("#track-facts")).to_contain_text("SYNV-0020")  # control: valid data shown
+
+
+# --- O45 to O47 ---------------------------------------------------------------------------
+
+
+def test_change_feed_failure_shows_stale_then_recovers(api_server, admin_url, page):
+    from test_api import _cut_database
+
+    api = api_server(ais_files=DEMO_FILES[1:])
+    open_app_loose(page, api)
+    status, banner = page.locator("#live-status"), page.locator("#stale-banner")
+    expect(banner).to_be_hidden()  # control: a healthy feed is not marked stale
+    api.server.hub.tick()
+    expect(status).to_have_attribute("data-state", "live")
+
+    _cut_database(api, admin_url, allow=False)
+    api.server.hub.tick()
+    expect(status).to_have_attribute("data-state", "stale", timeout=WAIT)
+    expect(banner).to_be_visible()
+    expect(banner).to_contain_text("may be out of date")
+    assert page.locator("body.stale").count() == 1
+
+    _cut_database(api, admin_url, allow=True)
+    from eye.ingest.capture import ingest
+    from eye.storage.db import connect
+
+    writer = connect(api.database_url)
+    ingest(writer, DEMO_FILES[0].read_bytes())
+    writer.close()
+    api.server.hub.tick()
+    expect(status).to_have_attribute("data-state", "live", timeout=WAIT)
+    expect(banner).to_be_hidden()
+    expect(status).to_have_attribute("data-snapshots", "2")
+    expect(page.locator("#track-facts")).to_contain_text("SYNV-0020")
+
+
+def test_refused_subscription_is_shown_stale_and_gets_no_deltas(api_server, page):
+    api = api_server(ais_files=DEMO_FILES[1:])
+
+    def relay(client):
+        server = client.connect_to_server()
+
+        def to_server(message):
+            doc = json.loads(message)
+            if doc.get("kind") == "subscribe":
+                doc["interval"] = {"start": "2026-01-01T00:00:00Z", "end": "2026-03-01T00:00:00Z"}
+            server.send(json.dumps(doc))
+
+        client.on_message(to_server)
+        server.on_message(lambda message: client.send(message))
+
+    page.route_web_socket("**/api/v0/stream", relay)
+    page.goto(f"{api.origin}/")
+    status = page.locator("#live-status")
+    expect(status).to_have_attribute("data-state", "stale", timeout=WAIT)
+    expect(page.locator("#stale-banner")).to_be_visible()
+    expect(status).to_contain_text("413")
+    (sub,) = api.server.hub.subscribers()
+    assert sub.query is None
+    api.ingest(DEMO_FILES[0])
+    api.server.hub.tick()
+    page.wait_for_timeout(500)
+    assert status.get_attribute("data-deltas") == "0"
+
+
+def test_accepted_subscription_is_live_and_not_stale(api_server, page):
+    # Control for the refused subscription above: the unmodified request goes live.
+    api = api_server(ais_files=DEMO_FILES[1:])
+    open_app_loose(page, api)
+    expect(page.locator("#stale-banner")).to_be_hidden()
+    assert api.server.hub.subscribers()[0].query is not None
+
+
+def test_track_ids_are_distinct_for_long_similar_records(api_server, page, tmp_path):
+    from test_api import _long_record_flights
+
+    api = api_server()
+    api.ingest(_long_record_flights(tmp_path))
+    open_app(page, api)
+    page.get_by_label("Start").fill("2026-01-01T02:00:00Z")
+    page.get_by_label("Hours").fill("1")
+    page.get_by_role("button", name="Show interval").click()
+    rows = page.locator("#track-facts tbody tr")
+    expect(rows).to_have_count(2, timeout=WAIT)
+    records = sorted(rows.nth(i).locator("th").inner_text() for i in range(2))
+    assert records == ["SYN-" + "X" * 122 + "A", "SYN-" + "X" * 122 + "B"]
+    ids = [rows.nth(i).locator("td code").first.inner_text() for i in range(2)]
+    assert len(set(ids)) == 2 and all(i.startswith("trk-") for i in ids)
+    # Control: the ids are the same ones the API gives, so reloads and deltas agree.
+    _, raw = api.get("/api/v0/snapshot?start=2026-01-01T02:00:00Z&end=2026-01-01T03:00:00Z")
+    assert sorted(ids) == sorted(t["id"] for t in json.loads(raw)["tracks"])

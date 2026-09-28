@@ -418,6 +418,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             with sub.lock:
                 sub.query = None
             return True
+        with sub.lock:
+            sub.query = None  # a new request replaces the old subscription, even if it fails
         west, south, east, north = message["bbox"]
         try:
             query = feed.check_query(

@@ -17,7 +17,7 @@ import type {
 } from "./generated/wire-types.js";
 import { MAX_MESSAGE_BYTES, parseMessage, WireValidationError } from "./wire-validate.js";
 
-export type LiveState = "connecting" | "live" | "resyncing" | "reconnecting" | "stopped";
+export type LiveState = "connecting" | "live" | "resyncing" | "reconnecting" | "stale" | "stopped";
 
 export interface LiveHandlers {
   snapshot(message: SnapshotMessage): void;
@@ -164,7 +164,15 @@ export class LiveFeed {
         );
         return;
       case "error":
-        this.handlers.status("resyncing", `Server refused the request (${message.status}): ${message.error}`);
+        // Either the live feed failed or the request was refused. Until a new
+        // snapshot arrives nothing on the page is current: say so, and ignore
+        // any delta, which would have no baseline.
+        this.awaitingSnapshot = true;
+        this.handlers.status(
+          "stale",
+          `Live updates stopped (${message.status}: ${message.error}). The data shown may be out of ` +
+            `date as of cursor ${this.cursor ?? "none"}; it will refresh from a new snapshot.`,
+        );
         return;
       default:
         this.refuse(`unexpected ${message.kind} message`);

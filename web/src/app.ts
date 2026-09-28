@@ -52,6 +52,11 @@ function setStatus(stateName: LiveState | "error" | "loading", text: string): vo
   const status = byId("live-status", HTMLElement);
   status.textContent = text;
   status.dataset.state = stateName;
+  // Anything but a live feed means the page may be out of date: say so on the page.
+  const stale = stateName === "stale" || stateName === "reconnecting" || stateName === "error";
+  const banner = byId("stale-banner", HTMLElement);
+  banner.hidden = !stale;
+  document.body.classList.toggle("stale", stale);
 }
 
 function coverageKey(c: Coverage): string {

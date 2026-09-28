@@ -105,6 +105,7 @@ export function formatPosition(lon: number, lat: number): string {
 
 export interface TrackFacts {
   id: string;
+  record: string;
   kind: string;
   source: string;
   displayType: string;
@@ -119,6 +120,7 @@ export function trackFacts(track: Track): TrackFacts {
   const last = track.points.at(-1);
   return {
     id: track.id,
+    record: track.source_record_id,
     kind: track.kind,
     source: sourceLabel(track.source),
     displayType: track.display_type,

@@ -103,6 +103,31 @@ Date: 2026-09-28. Status: proposed (awaiting owner review).
     accessibility structure, each with a control; the accessibility checks are
     themselves shown to catch a deliberately broken page.
 
+13. **Review repairs before merge (O44–O47).**
+    - *O44, no truncated delta:* a delta is built only from the records its
+      batch changed inside the subscription's area, interval and layers. If
+      that is more than one delta may carry (the configured track limit, and
+      the schema's 500 items), or the delta fails validation or the size
+      limit, the server sends `resync_required` (`overflow`) with the
+      **unchanged** cursor and a fresh snapshot. The cursor advances only
+      after a complete, valid delta is queued.
+    - *O45, change-feed failure:* if the change log cannot be read, every
+      live subscriber is sent one 503 error saying its data may be stale. The
+      browser marks the page stale (status, `role="alert"` banner, dimmed
+      tables) and ignores deltas. When the feed is readable again each such
+      subscriber gets `resync_required` (`gap`) and a fresh snapshot before any
+      delta, and the page returns to live.
+    - *O46, subscription needs a baseline:* a subscription becomes active only
+      once its snapshot has been built, validated, found within the size limit
+      and queued. A refused or oversized snapshot, or a refused new request,
+      leaves no active subscription (and ends the previous one), so no delta
+      can follow an error.
+    - *O47, track ids:* a track id is `trk-` plus the first 128 bits of
+      SHA-256 over the JSON pair `[source, record]`: stable across snapshots,
+      deltas and reconnects, and never a truncation of the readable name, so
+      two long, similar record ids cannot share an id. The fact table shows
+      the source record beside the id.
+
 ## Consequences
 
 - Snapshots carry no events yet; the event-claim ledger is Package 4c.

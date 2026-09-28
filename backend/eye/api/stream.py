@@ -82,6 +82,15 @@ class Pool:
                 conn.close()
 
 
+def encode_valid(message: dict) -> bytes | None:
+    """The encoded message, or None if it breaks the wire schema."""
+    try:
+        validate_message(message, "ServerMessage")
+    except WireValidationError:
+        return None
+    return feed.dumps(message)
+
+
 def encode_message(message: dict) -> bytes:
     """Validate an outgoing message and encode it; a violation is a server bug."""
     try:
@@ -115,8 +124,9 @@ class Subscriber:
         self.headers = headers
         self.max_message = max_message
         self.lock = threading.RLock()  # held while the subscription or its deltas change
-        self.query: feed.Query | None = None
+        self.query: feed.Query | None = None  # set only once a snapshot baseline is queued
         self.area_name = ""
+        self.stale = False  # told the change feed failed; owed a fresh snapshot
         self.epoch: str | None = None
         self.seq = 0
         self.sequence = 0
@@ -279,7 +289,12 @@ class Hub:
     # -- one poll -----------------------------------------------------------------------
 
     def tick(self) -> None:
-        """Deliver pending changes to every subscriber. Safe to call from tests."""
+        """Deliver pending changes to every subscriber. Safe to call from tests.
+
+        If the change feed cannot be read, every live subscriber is told once
+        that its data may be stale; when the feed is readable again each of
+        them gets a fresh snapshot before any further delta.
+        """
         with self._tick_lock:
             try:
                 if self._conn is None:
@@ -292,12 +307,27 @@ class Hub:
                         continue
                     self._deliver(conn, sub, epoch, head_seq)
                 self.unavailable = False
-            except Exception:  # noqa: BLE001 - reported to clients as unavailable, then retried
+            except Exception:  # noqa: BLE001 - reported to clients as stale, then retried
                 self.unavailable = True
                 if self._conn is not None:
                     with contextlib.suppress(Exception):
                         self._conn.close()
                 self._conn = None
+                self._mark_stale()
+
+    def _mark_stale(self) -> None:
+        for sub in self.subscribers():
+            with sub.lock:
+                if sub.query is None or sub.stale or sub.closed:
+                    continue
+                sub.stale = True
+                sub.send(
+                    error_message(
+                        503,
+                        "live updates unavailable: the change feed cannot be read; "
+                        "data shown may be stale",
+                    )
+                )
 
     def _recheck_auth(self) -> None:
         now = time.monotonic()
@@ -318,7 +348,12 @@ class Hub:
 
     def _deliver(self, conn, sub: Subscriber, epoch: str, head_seq: int) -> None:
         with sub.lock:
-            if sub.query is None or sub.closed or sub.seq >= head_seq:
+            if sub.query is None or sub.closed:
+                return
+            if sub.stale:
+                self.resnapshot(conn, sub, "gap")  # updates may have been missed
+                return
+            if sub.seq >= head_seq:
                 return
             if sub.epoch != epoch:
                 self.resnapshot(conn, sub, "expired_cursor")
@@ -328,6 +363,7 @@ class Hub:
                 self.resnapshot(conn, sub, "gap")
                 return
             for row in rows:
+                # The cursor advances only after a complete, valid delta is queued.
                 try:
                     message = feed.delta(
                         conn, sub.query, self.limits, epoch, row, sub.seq, sub.sequence + 1
@@ -335,8 +371,8 @@ class Hub:
                 except feed.QueryRefused:
                     self.resnapshot(conn, sub, "overflow")
                     return
-                body = encode_message(message)
-                if len(body) > sub.max_message:
+                body = encode_valid(message)
+                if body is None or len(body) > sub.max_message:
                     self.resnapshot(conn, sub, "overflow")
                     return
                 if not sub.send_frame(ws.encode(ws.TEXT, body)):
@@ -348,18 +384,38 @@ class Hub:
         """Tell the client its state is stale, then send a fresh snapshot."""
         last = feed.make_cursor(sub.epoch, sub.seq) if sub.epoch else None
         sub.send(resync_message(reason, last))
-        send_snapshot(conn, sub, sub.query, self.limits, sub.area_name)
+        query = sub.query
+        try:
+            send_snapshot(conn, sub, query, self.limits, sub.area_name)
+        except Exception:
+            # The database failed mid-snapshot: keep the subscription so this
+            # poll's failure marks it stale and a later poll retries the snapshot.
+            sub.query = query
+            raise
 
 
-def send_snapshot(conn, sub: Subscriber, query: feed.Query, limits: feed.Limits, area: str) -> None:
-    """Send a snapshot and start the subscriber's delta sequence at its cursor."""
+def send_snapshot(conn, sub: Subscriber, query: feed.Query, limits: feed.Limits, area: str) -> bool:
+    """Send a snapshot and start the subscriber's delta sequence at its cursor.
+
+    The subscription becomes active only once its snapshot (the client's
+    baseline) is known to fit and has been queued. A snapshot that cannot be
+    built or sent leaves no subscription: no delta will follow an error.
+    """
+    sub.query = None
     try:
         message = feed.snapshot(conn, query, limits, area)
     except feed.QueryRefused as exc:
-        sub.query = None
-        sub.send(error_message(exc.status, str(exc)))
-        return
+        sub.send(error_message(exc.status, f"{exc}; no subscription is active"))
+        return False
+    body = encode_valid(message)
+    if body is None or len(body) > sub.max_message:
+        sub.send(
+            error_message(413, "snapshot exceeds the configured limit; narrow the subscription")
+        )
+        return False
+    if not sub.send_frame(ws.encode(ws.TEXT, body)):
+        return False
     epoch, seq = feed.parse_cursor(message["cursor"])  # type: ignore[misc]
     sub.query, sub.epoch, sub.seq, sub.sequence = query, epoch, seq, 0
-    sub.area_name = area
-    sub.send(message)
+    sub.area_name, sub.stale = area, False
+    return True

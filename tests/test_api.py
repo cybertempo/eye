@@ -539,3 +539,322 @@ def test_repository_root_is_the_server_root():
     from eye.api import server
 
     assert server.REPO_ROOT == REPO_ROOT
+
+
+# --- O44: a batch too large for one delta is never sent cut short ---------------------------
+
+
+def _capture(tmp_path, name: str, doc: dict):
+    path = tmp_path / f"{name}.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return path
+
+
+def _three_vessel_hour(tmp_path):
+    """The first demo hour plus SYNV-0099, a copy of SYNV-0021 moved 33 km east."""
+    doc = json.loads(DEMO_FILES[0].read_text(encoding="utf-8"))
+    doc["note"] = "Test capture: SYNV-0020, SYNV-0021 and SYNV-0099 (east of the others)."
+    extra = [
+        {**m, "mmsi": "SYNV-0099", "lon": round(m["lon"] + 0.3, 7)}
+        for m in doc["provider_response"]["messages"]
+        if m["mmsi"] == "SYNV-0021"
+    ]
+    doc["provider_response"]["messages"] += extra
+    return _capture(tmp_path, "three-vessels", doc)
+
+
+EAST = (0.42, -0.1, 0.48, 0.1)  # holds SYNV-0099 only
+
+
+def test_delta_holds_every_changed_track_in_view_even_when_the_batch_is_larger(
+    api_server, tmp_path
+):
+    # The batch changes three tracks but only one is in view, and the limit is
+    # one. The in-view track must arrive; the others are not the view's business.
+    api = api_server(ais_files=[], api={"max_tracks": 1})
+    client = ws(api)
+    client.send(subscribe(EAST, DAY))
+    snapshot = client.recv()
+    assert snapshot["kind"] == "snapshot" and snapshot["tracks"] == []
+    api.ingest(_three_vessel_hour(tmp_path))
+    api.server.hub.tick()
+    delta = client.recv()
+    assert delta["kind"] == "delta" and delta["previous_cursor"] == snapshot["cursor"]
+    assert [t["source_record_id"] for t in delta["tracks_upserted"]] == ["SYNV-0099"]
+    client.close()
+
+
+def test_batch_over_the_delta_limit_resnapshots_before_the_cursor_moves(api_server, tmp_path):
+    api = api_server(ais_files=[], api={"max_tracks": 2})
+    client = ws(api)
+    client.send(subscribe(AREA, DAY))
+    snapshot = client.recv()
+    api.ingest(_three_vessel_hour(tmp_path))  # three tracks in view, limit two
+    api.server.hub.tick()
+    notice = client.recv()
+    assert (notice["kind"], notice["reason"]) == ("resync_required", "overflow")
+    assert notice["last_cursor"] == snapshot["cursor"]  # not advanced past the batch
+    refused = client.recv()  # the fresh snapshot is over the limit too
+    assert (refused["kind"], refused["status"]) == ("error", 413)
+    (sub,) = api.server.hub.subscribers()
+    assert sub.query is None and sub.seq == feed.parse_cursor(snapshot["cursor"])[1]
+    # Control: the same batch within the limit arrives as one complete delta.
+    ok = api_server(ais_files=[], api={"max_tracks": 3})
+    control = ws(ok)
+    control.send(subscribe(AREA, DAY))
+    base = control.recv()
+    ok.ingest(_three_vessel_hour(tmp_path))
+    ok.server.hub.tick()
+    delta = control.recv()
+    assert delta["kind"] == "delta" and delta["previous_cursor"] == base["cursor"]
+    assert len(delta["tracks_upserted"]) == 3
+    client.close()
+    control.close()
+
+
+def test_delta_that_would_break_the_wire_schema_is_not_sent(api_server, monkeypatch):
+    api = _partial_demo(api_server)
+    client = ws(api)
+    client.send(subscribe(AREA, DAY))
+    snapshot = client.recv()
+    real = feed.delta
+
+    def oversized(*args, **kwargs):
+        message = real(*args, **kwargs)
+        message["coverage_upserted"] = message["coverage_upserted"] * 501  # past maxItems
+        return message
+
+    monkeypatch.setattr(feed, "delta", oversized)
+    api.ingest(DEMO_FILES[3])
+    api.server.hub.tick()
+    notice = client.recv()
+    assert (notice["kind"], notice["reason"], notice["last_cursor"]) == (
+        "resync_required",
+        "overflow",
+        snapshot["cursor"],
+    )
+    fresh = client.recv()
+    assert fresh["kind"] == "snapshot"
+    assert "SYNV-0024" in {t["source_record_id"] for t in fresh["tracks"]}
+    monkeypatch.setattr(feed, "delta", real)  # control: a valid delta is sent as it is
+    api.derive()
+    api.server.hub.tick()
+    delta = client.recv()
+    assert delta["kind"] == "delta" and delta["previous_cursor"] == fresh["cursor"]
+    client.close()
+
+
+# --- O45: a change-feed failure makes clients stale, then recovers with a snapshot ---------
+
+
+def _cut_database(api, admin_url, allow: bool) -> None:
+    from eye.storage.db import connect
+
+    name = api.database_url.rsplit("/", 1)[1]
+    admin = connect(admin_url)
+    try:
+        admin.run(f'ALTER DATABASE "{name}" ALLOW_CONNECTIONS {"true" if allow else "false"}')
+        if not allow:
+            admin.run(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = :n",
+                n=name,
+            )
+    finally:
+        admin.close()
+
+
+def test_feed_failure_marks_subscribers_stale_then_resnapshots(api_server, admin_url):
+    from eye.storage.db import connect
+
+    api = _partial_demo(api_server)
+    client = ws(api)
+    client.send(subscribe(AREA, DAY))
+    snapshot = client.recv()
+    api.server.hub.tick()  # control: a healthy poll with nothing new sends nothing
+    client.sock.settimeout(0.5)
+    with pytest.raises(TimeoutError):
+        client.recv()
+    client.sock.settimeout(10)
+
+    _cut_database(api, admin_url, allow=False)
+    api.server.hub.tick()
+    stale = client.recv()
+    assert (stale["kind"], stale["status"]) == ("error", 503)
+    assert "stale" in stale["error"]
+    api.server.hub.tick()  # still down: told once, not repeatedly
+    client.sock.settimeout(0.5)
+    with pytest.raises(TimeoutError):
+        client.recv()
+    client.sock.settimeout(10)
+
+    _cut_database(api, admin_url, allow=True)
+    writer = connect(api.database_url)
+    from eye.ingest.capture import ingest
+
+    ingest(writer, DEMO_FILES[3].read_bytes())  # changed while the feed was down
+    writer.close()
+    api.server.hub.tick()
+    notice = client.recv()
+    assert (notice["kind"], notice["reason"], notice["last_cursor"]) == (
+        "resync_required",
+        "gap",
+        snapshot["cursor"],
+    )
+    fresh = client.recv()
+    assert fresh["kind"] == "snapshot"
+    assert "SYNV-0024" in {t["source_record_id"] for t in fresh["tracks"]}
+    (sub,) = api.server.hub.subscribers()
+    assert not sub.stale and not api.server.hub.unavailable
+    client.close()
+
+
+# --- O46: a snapshot too large to send leaves no subscription -------------------------------
+
+
+def test_oversized_websocket_snapshot_leaves_no_active_subscription(api_server):
+    api = _partial_demo(
+        api_server, server={"max_response_bytes": 8192}, api={"ws_max_buffer_bytes": 16384}
+    )
+    client = ws(api)
+    client.send(subscribe(AREA, DAY))  # four vessel tracks: far more than 8 KiB
+    refused = client.recv()
+    assert (refused["kind"], refused["status"]) == ("error", 413)
+    (sub,) = api.server.hub.subscribers()
+    assert sub.query is None
+    api.ingest(DEMO_FILES[3])
+    api.derive()
+    api.server.hub.tick()
+    client.sock.settimeout(0.5)
+    with pytest.raises(TimeoutError):  # no delta without a baseline
+        client.recv()
+    client.sock.settimeout(10)
+    # Control: a narrow view fits, becomes active and receives deltas.
+    client.send(subscribe((0.14, -0.07, 0.16, 0.07), DAY))  # the quiet vessels' column only
+    snapshot = client.recv()
+    assert snapshot["kind"] == "snapshot" and sub.query is not None
+    api.ingest(_capture_quiet_again())
+    api.server.hub.tick()
+    delta = client.recv()
+    assert delta["kind"] == "delta" and delta["previous_cursor"] == snapshot["cursor"]
+    client.close()
+
+
+def _capture_quiet_again():
+    """A redelivery of the quiet hour, byte-identical except its receipt time."""
+    import tempfile
+    from pathlib import Path
+
+    doc = json.loads(DEMO_FILES[3].read_text(encoding="utf-8"))
+    doc["attempt"]["started_at"] = "2026-02-01T16:10:00Z"
+    doc["attempt"]["finished_at"] = "2026-02-01T16:10:05Z"
+    path = Path(tempfile.mkdtemp()) / "quiet-again.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return path
+
+
+def test_failed_resubscribe_ends_the_previous_subscription(api_server):
+    api = _partial_demo(api_server)
+    client = ws(api)
+    client.send(subscribe(AREA, DAY))
+    assert client.recv()["kind"] == "snapshot"
+    client.send(subscribe(AREA, {"start": "2026-01-01T00:00:00Z", "end": "2026-03-01T00:00:00Z"}))
+    assert client.recv()["status"] == 413
+    (sub,) = api.server.hub.subscribers()
+    assert sub.query is None  # the old view does not keep sending deltas
+    api.ingest(DEMO_FILES[3])
+    api.server.hub.tick()
+    client.sock.settimeout(0.5)
+    with pytest.raises(TimeoutError):
+        client.recv()
+    client.close()
+
+
+# --- O47: stable, collision-resistant track ids ----------------------------------------------
+
+
+def _long_record_flights(tmp_path):
+    """Two invented flights whose record ids share their first 126 characters."""
+    doc = json.loads(
+        (REPO_ROOT / "tests/fixtures/synthetic/captures/001-flight-ok.json").read_text()
+    )
+    doc["note"] = "Test capture: two flights with long, nearly identical record ids."
+    for key in ("start", "end"):
+        doc["request"][key] = doc["request"][key].replace("T00:", "T02:")
+    for key in ("started_at", "finished_at", "observed_start", "observed_end"):
+        doc["attempt"][key] = doc["attempt"][key].replace("T00:", "T02:")
+    base = doc["provider_response"]["records"]
+    records = []
+    for suffix, shift in (("A", 0.0), ("B", 0.1)):
+        for r in base:
+            records.append(
+                {
+                    **r,
+                    "record_id": "SYN-" + "X" * 122 + suffix,
+                    "observed_time": r["observed_time"].replace("T00:", "T02:"),
+                    "source_published_time": r["source_published_time"].replace("T00:", "T02:"),
+                    "lat": round(r["lat"] + shift, 6),
+                }
+            )
+    doc["provider_response"]["records"] = records
+    return _capture(tmp_path, "long-ids", doc)
+
+
+def test_long_record_ids_get_distinct_stable_track_ids(api_server, tmp_path):
+    import hashlib
+
+    api = api_server()
+    api.ingest(_long_record_flights(tmp_path))
+    query = "/api/v0/snapshot?start=2026-01-01T02:00:00Z&end=2026-01-01T03:00:00Z&layers=flight"
+    tracks = body(api.get(query))["tracks"]
+    records = sorted(t["source_record_id"] for t in tracks)
+    assert records == ["SYN-" + "X" * 122 + "A", "SYN-" + "X" * 122 + "B"]
+    ids = {t["id"] for t in tracks}
+    assert len(ids) == 2  # the old truncated ids were identical for these two
+    # Independent computation of the documented rule, and stability across calls.
+    for t in tracks:
+        digest = hashlib.sha256(
+            json.dumps([t["source"], t["source_record_id"]]).encode()
+        ).hexdigest()
+        assert t["id"] == f"trk-{digest[:32]}"
+    assert {t["id"] for t in body(api.get(query))["tracks"]} == ids
+    # Control: short records keep one stable id each, the same over REST and WebSocket.
+    rest = {t["source_record_id"]: t["id"] for t in body(api.get("/api/v0/snapshot"))["tracks"]}
+    client = ws(api)
+    client.send(subscribe(AREA, DAY))
+    live = {t["source_record_id"]: t["id"] for t in client.recv()["tracks"]}
+    assert live == rest and len(set(rest.values())) == len(rest) == 5
+    client.close()
+
+
+def test_failure_during_recovery_keeps_the_subscription_and_retries(
+    api_server, admin_url, monkeypatch
+):
+    api = _partial_demo(api_server)
+    client = ws(api)
+    client.send(subscribe(AREA, DAY))
+    snapshot = client.recv()
+    _cut_database(api, admin_url, allow=False)
+    api.server.hub.tick()
+    assert client.recv()["status"] == 503
+    _cut_database(api, admin_url, allow=True)
+
+    real = feed.snapshot
+    calls = []
+
+    def fails_once(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise ConnectionError("database lost mid-snapshot")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(feed, "snapshot", fails_once)
+    api.server.hub.tick()  # recovery starts, then fails
+    assert client.recv()["reason"] == "gap"
+    (sub,) = api.server.hub.subscribers()
+    assert sub.query is not None and sub.stale  # not dropped: still owed a snapshot
+    api.server.hub.tick()  # control: the retry succeeds
+    assert client.recv()["reason"] == "gap"
+    fresh = client.recv()
+    assert fresh["kind"] == "snapshot" and fresh["cursor"] == snapshot["cursor"]
+    assert not sub.stale
+    client.close()
