@@ -4,14 +4,14 @@ One row per source (brief §6). **A source with any blank, unknown or unapproved
 field stays disabled.** The configuration loader refuses every entry in
 `providers.enabled` until an adapter exists and its row here is approved.
 
-Package 0 status: **no source is approved and no provider adapter exists.**
+Package 1 status: **no real source is approved and no provider adapter exists.**
 The only data source is the synthetic fixture set in `tests/fixtures/synthetic/`.
 
 ## Register
 
 | Source id | Status | Adapter | Reviewed |
 |---|---|---|---|
-| `synthetic-fixture` | Approved for demo and tests | built-in fixture file | 2026-09-28 |
+| `synthetic-fixture` | Approved for demo and tests | built-in fixture files; `backend/eye/ingest/capture.py` accepts only this source | 2026-09-28 |
 
 ## Row template
 

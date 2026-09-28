@@ -50,3 +50,9 @@ def test_workflow_actions_pinned_by_commit():
                 assert re.search(r"@[0-9a-f]{40}$", ref), ref
         for image in re.findall(r"docker run[^\n]*?\s(\S+@sha256:\S+)", text):
             assert re.search(r"@sha256:[0-9a-f]{64}$", image), image
+
+
+def test_test_database_image_pinned_by_digest():
+    text = (REPO_ROOT / "scripts" / "test-db.sh").read_text()
+    images = re.findall(r'IMAGE="([^"]+)"', text)
+    assert images and all(re.search(r"@sha256:[0-9a-f]{64}$", i) for i in images), images

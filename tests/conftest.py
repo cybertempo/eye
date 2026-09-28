@@ -50,3 +50,60 @@ def write_config(tmp_path: Path):
         return path
 
     return _write
+
+
+CAPTURES = REPO_ROOT / "tests" / "fixtures" / "synthetic" / "captures"
+
+
+@pytest.fixture(scope="session")
+def admin_url() -> str:
+    """URL of a disposable PostGIS server (scripts/test-db.sh provides one).
+
+    Without it, database tests are skipped and labelled UNVERIFIED, and
+    scripts/verify.sh (which sets EYE_REQUIRE_DB=1) fails instead of skipping.
+    """
+    import os
+
+    url = os.environ.get("EYE_TEST_DATABASE_URL")
+    if not url:
+        message = "UNVERIFIED: no EYE_TEST_DATABASE_URL; run via scripts/test-db.sh"
+        if os.environ.get("EYE_REQUIRE_DB") == "1":
+            pytest.fail(message)
+        pytest.skip(message)
+    return url
+
+
+@pytest.fixture
+def make_db(admin_url):
+    """Create empty databases on the test server; drop them afterwards."""
+    import uuid
+    from urllib.parse import urlsplit, urlunsplit
+
+    from eye.storage.db import connect
+
+    admin = connect(admin_url)
+    created: list[str] = []
+
+    def _make() -> str:
+        name = f"eye_t_{uuid.uuid4().hex[:12]}"
+        admin.run(f'CREATE DATABASE "{name}"')
+        created.append(name)
+        parts = urlsplit(admin_url)
+        return urlunsplit(parts._replace(path=f"/{name}"))
+
+    yield _make
+    for name in created:
+        admin.run(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+    admin.close()
+
+
+@pytest.fixture
+def db(make_db):
+    """A connection to a fresh, fully migrated database."""
+    from eye.storage.db import connect
+    from eye.storage.migrate import migrate
+
+    conn = connect(make_db())
+    migrate(conn)
+    yield conn
+    conn.close()

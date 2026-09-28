@@ -1,0 +1,28 @@
+{
+  "capture_format": "eye.synthetic-capture/1",
+  "synthetic": true,
+  "source_id": "synthetic-fixture",
+  "adapter_version": "synthetic-adapter/1",
+  "note": "Flight feed healthy but nothing in the area: a genuine measured zero.",
+  "layer": "flight",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-01-01T00:15:00Z",
+    "end": "2026-01-01T00:30:00Z",
+    "expected_interval_s": 300
+  },
+  "attempt": {
+    "started_at": "2026-01-01T00:30:00Z",
+    "finished_at": "2026-01-01T00:30:01Z",
+    "provider_status": "ok",
+    "quota_cost": 0,
+    "observed_start": "2026-01-01T00:15:00Z",
+    "observed_end": "2026-01-01T00:30:00Z"
+  },
+  "records": []
+}

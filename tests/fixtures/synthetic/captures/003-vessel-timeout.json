@@ -1,0 +1,26 @@
+{
+  "capture_format": "eye.synthetic-capture/1",
+  "synthetic": true,
+  "source_id": "synthetic-fixture",
+  "adapter_version": "synthetic-adapter/1",
+  "note": "Provider timed out: coverage failed, metric null, no observations.",
+  "layer": "vessel",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-01-01T00:45:00Z",
+    "end": "2026-01-01T01:00:00Z",
+    "expected_interval_s": 600
+  },
+  "attempt": {
+    "started_at": "2026-01-01T01:00:00Z",
+    "finished_at": "2026-01-01T01:00:30Z",
+    "provider_status": "timeout",
+    "quota_cost": 0
+  },
+  "records": []
+}

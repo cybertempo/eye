@@ -1,0 +1,11 @@
+{
+  "entry": "ServerMessage",
+  "note": "REST health",
+  "message": {
+    "schema_version": "eye.wire/1",
+    "kind": "health",
+    "status": "ok",
+    "mode": "demo",
+    "synthetic": true
+  }
+}

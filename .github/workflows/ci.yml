@@ -69,6 +69,7 @@ jobs:
       - name: Audit Python locks (queries the PyPI advisory service)
         run: |
           /tmp/audit/bin/pip-audit --strict --require-hashes --disable-pip -r requirements/dev.lock
+          /tmp/audit/bin/pip-audit --strict --require-hashes --disable-pip -r requirements/runtime.lock
           /tmp/audit/bin/pip-audit --strict --require-hashes --disable-pip -r requirements/audit.lock
       - name: Audit npm lock (queries the npm advisory service)
         run: npm audit --prefix web --audit-level=moderate

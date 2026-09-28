@@ -1,0 +1,22 @@
+{
+  "entry": "ClientMessage",
+  "note": "resume_cursor must be present (null allowed)",
+  "message": {
+    "schema_version": "eye.wire/1",
+    "kind": "subscribe",
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "interval": {
+      "start": "2026-01-01T00:00:00Z",
+      "end": "2026-01-01T01:00:00Z"
+    },
+    "layers": [
+      "flight",
+      "vessel"
+    ]
+  }
+}

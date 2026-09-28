@@ -1,0 +1,3 @@
+# Runtime dependencies (installed wherever EYE touches the database).
+# Regenerate requirements/runtime.lock and dev.lock with docs/dependencies.md.
+pg8000==1.31.5

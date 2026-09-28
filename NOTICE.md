@@ -6,7 +6,7 @@ licence status in [`README.md`](README.md).
 
 ## Upstream code, assets, models and datasets in the repository
 
-None. Package 0 imports no upstream code, media, models or datasets. Before
+None. Packages 0 and 1 import no upstream code, media, models or datasets. Before
 anything is imported, add a row here with source URL, exact commit or version,
 licence, attribution text, files copied and reviewer.
 
@@ -22,11 +22,15 @@ metadata on 2026-09-28.
 
 | Tool | Version / pin | Licence | Used by |
 |---|---|---|---|
+| pg8000 | 1.31.5 | BSD-3-Clause | database driver (runtime, not in the demo image) |
+| scramp, asn1crypto, python-dateutil, six | see `requirements/runtime.lock` | MIT-0 / MIT / Apache-2.0 or BSD-3-Clause / MIT | pg8000 dependencies |
+| jsonschema and its dependencies (attrs, referencing, jsonschema-specifications, rpds-py, typing-extensions) | 4.26.0; see `requirements/dev.lock` | MIT (typing-extensions: PSF-2.0) | reference validator in tests only |
 | pytest | 9.1.1 | MIT | tests |
 | ruff | 0.16.9 | MIT | lint and format |
 | iniconfig, packaging, pluggy, pygments, colorama | see `requirements/dev.lock` | MIT / Apache-2.0 or BSD-2-Clause / MIT / BSD-2-Clause / BSD-3-Clause | pytest dependencies |
 | pip-audit and its dependencies | see `requirements/audit.lock` | Apache-2.0 (pip-audit); see lock for others | CI dependency scan only |
 | TypeScript | 7.0.2 (+ platform binary packages) | Apache-2.0 | web typecheck and build |
+| PostGIS image | `postgis/postgis:17-3.5@sha256:01a6a70e…` | PostgreSQL licence; PostGIS GPL-2.0-or-later; Debian package licences. Run as a separate test server process; nothing from it is copied into this repository. | disposable test database |
 | Python base image | `python:3.12-slim-bookworm@sha256:392307d2…` | PSF licence (Python) and Debian package licences | demo container |
 | gitleaks | `ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0…` (v8.30.1) | MIT | CI secret scan |
 | GitHub Actions: checkout, setup-python, setup-node, dependency-review-action | pinned commits in `.github/workflows/ci.yml` | MIT | CI |

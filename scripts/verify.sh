@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # One-command verification. Runs on: developer laptop, CI.
-# Needs scripts/setup.sh first. Makes no network calls.
+# Needs scripts/setup.sh first. Makes no network calls: database tests use a
+# disposable PostGIS container from the image setup pulled (scripts/test-db.sh),
+# or the server in EYE_TEST_DATABASE_URL if set. Without either, verify FAILS;
+# database tests are never silently skipped.
 # Pass --container to also build the dev image and smoke-test it (needs Docker;
 # the image build pulls the pinned base image).
 set -euo pipefail
@@ -18,14 +21,22 @@ step "lint and format"
 .venv/bin/ruff check .
 .venv/bin/ruff format --check .
 
+step "generated wire types are current"
+"$PY" scripts/gen_wire_types.py --check
+
 step "web typecheck"
 npm run --prefix web typecheck
 
 step "configuration: example accepted"
 PYTHONPATH=backend "$PY" -m eye check-config --config config/eye.example.toml
 
-step "tests (includes loopback demo and refusal controls)"
-"$PY" -m pytest
+step "tests (loopback demo, wire schema on both sides, PostGIS storage)"
+export EYE_REQUIRE_DB=1
+if [ -n "${EYE_TEST_DATABASE_URL:-}" ]; then
+  "$PY" -m pytest
+else
+  scripts/test-db.sh run "$PY" -m pytest
+fi
 
 if [ "${1:-}" = "--container" ]; then
   step "container build and smoke test"

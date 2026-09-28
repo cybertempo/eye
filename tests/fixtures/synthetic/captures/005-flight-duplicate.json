@@ -1,0 +1,39 @@
+{
+  "capture_format": "eye.synthetic-capture/1",
+  "synthetic": true,
+  "source_id": "synthetic-fixture",
+  "adapter_version": "synthetic-adapter/1",
+  "note": "Duplicate delivery of an already stored flight record: no new observation.",
+  "layer": "flight",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-01-01T00:05:00Z",
+    "end": "2026-01-01T00:10:00Z",
+    "expected_interval_s": 300
+  },
+  "attempt": {
+    "started_at": "2026-01-01T00:10:30Z",
+    "finished_at": "2026-01-01T00:10:31Z",
+    "provider_status": "ok",
+    "quota_cost": 0,
+    "observed_start": "2026-01-01T00:05:00Z",
+    "observed_end": "2026-01-01T00:10:00Z"
+  },
+  "records": [
+    {
+      "record_id": "SYN-FLT-001",
+      "observed_time": "2026-01-01T00:05:00Z",
+      "received_time": "2026-01-01T00:10:30Z",
+      "lon": -0.25,
+      "lat": -0.12,
+      "alt_m": 9150,
+      "confidence": 0.9,
+      "quality_flags": []
+    }
+  ]
+}
