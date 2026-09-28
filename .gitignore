@@ -1,0 +1,16 @@
+# Convenience only; the disclosure boundary is the tracked-file review in
+# scripts/check_repo_boundary.py and the PR review.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+web/node_modules/
+web/dist/
+*.log
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+/data/
+/private/

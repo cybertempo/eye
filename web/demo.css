@@ -1,0 +1,6 @@
+body { font-family: system-ui, sans-serif; margin: 1rem; max-width: 60rem; color: #111; background: #fff; }
+.banner { border: 2px solid #b35900; padding: 0.5rem; font-weight: 600; }
+table { border-collapse: collapse; width: 100%; margin-bottom: 1rem; }
+th, td { border: 1px solid #999; padding: 0.25rem 0.5rem; text-align: left; font-size: 0.9rem; }
+.unknown { font-style: italic; }
+@media (prefers-color-scheme: dark) { body { color: #eee; background: #111; } th, td { border-color: #555; } }

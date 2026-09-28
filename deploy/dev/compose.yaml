@@ -1,0 +1,17 @@
+# Synthetic demo container. Runs on: developer laptop (Docker), CI.
+# The port is published on host loopback only; keep the default equal to
+# server.port in deploy/dev/eye.container.toml (a test enforces this).
+name: eye-dev
+services:
+  eye-demo:
+    build:
+      context: ../..
+      dockerfile: deploy/dev/Dockerfile
+    image: eye-demo:dev
+    ports:
+      - "127.0.0.1:${EYE_DEMO_PORT:-8765}:8765"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 64

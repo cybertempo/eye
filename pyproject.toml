@@ -1,0 +1,27 @@
+# Tool configuration for the EYE backend. The project is not packaged or
+# published; runtime code uses the Python standard library only.
+[project]
+name = "eye"
+version = "0.0.0"
+description = "EYE backend (Package 0: repository foundation and synthetic demo)"
+requires-python = ">=3.11"
+dependencies = []
+# No licence has been chosen; this classifier blocks accidental upload to PyPI.
+classifiers = ["Private :: Do Not Upload"]
+
+[tool.pytest.ini_options]
+pythonpath = ["backend", "tests/support"]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["web/node_modules"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "A", "SIM"]
+ignore = ["S101", "S603", "S607"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S104", "S105", "S108"]

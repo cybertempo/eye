@@ -1,0 +1,77 @@
+# Runs in: CI (GitHub Actions). Synthetic data only: no secrets, no provider
+# calls, no deployment. Third-party actions and images are pinned by commit or
+# digest; docs/dependencies.md explains how to update them.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Setup (one command)
+        run: scripts/setup.sh
+      - name: Verify (one command, with container smoke test)
+        run: scripts/verify.sh --container
+
+  secret-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: gitleaks (full history)
+        run: >-
+          docker run --rm --network none -v "$PWD:/repo:ro"
+          -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo
+          ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          git /repo --redact --no-banner --exit-code 1
+
+  dependency-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install pinned pip-audit
+        run: |
+          python -m venv /tmp/audit
+          /tmp/audit/bin/python -m pip install --no-input --require-hashes --no-deps -r requirements/audit.lock
+      - name: Audit Python locks (queries the PyPI advisory service)
+        run: |
+          /tmp/audit/bin/pip-audit --strict --require-hashes --disable-pip -r requirements/dev.lock
+          /tmp/audit/bin/pip-audit --strict --require-hashes --disable-pip -r requirements/audit.lock
+      - name: Audit npm lock (queries the npm advisory service)
+        run: npm audit --prefix web --audit-level=moderate
+      - name: Dependency review
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
