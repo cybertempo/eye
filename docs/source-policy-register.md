@@ -4,14 +4,18 @@ One row per source (brief §6). **A source with any blank, unknown or unapproved
 field stays disabled.** The configuration loader refuses every entry in
 `providers.enabled` until an adapter exists and its row here is approved.
 
-Package 1 status: **no real source is approved and no provider adapter exists.**
-The only data source is the synthetic fixture set in `tests/fixtures/synthetic/`.
+Package 2 status: **no real source is approved and no real provider adapter
+exists.** The only data sources are the synthetic fixture sets in
+`tests/fixtures/synthetic/`. The real AIS region (San Francisco Bay / Golden
+Gate) is decided, but its NOAA/MarineCadastre historical subset and any live
+AIS source still need their own rows here before any adapter is enabled.
 
 ## Register
 
 | Source id | Status | Adapter | Reviewed |
 |---|---|---|---|
-| `synthetic-fixture` | Approved for demo and tests | built-in fixture files; `backend/eye/ingest/capture.py` accepts only this source | 2026-09-28 |
+| `synthetic-fixture` | Approved for demo and tests | built-in fixture files; `backend/eye/ingest/capture.py` | 2026-09-28 |
+| `synthetic-ais` | Approved for demo and tests | invented AIS reports from `scripts/gen_ais_fixtures.py`; `backend/eye/ingest/synthetic_ais.py` (only `SYNV-` vessel ids) | 2026-09-28 |
 
 ## Row template
 

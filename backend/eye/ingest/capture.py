@@ -34,12 +34,18 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
+from eye.ingest import synthetic_ais
 from eye.storage.db import Connection, transaction
 from eye.wire import SCHEMA_VERSION
 
 CAPTURE_FORMAT = "eye.synthetic-capture/2"
-APPROVED_SOURCES = frozenset({"synthetic-fixture"})
-LAYERS = frozenset({"flight", "vessel", "road"})
+APPROVED_SOURCES = frozenset({"synthetic-fixture", "synthetic-ais"})
+# Record parser per approved source; the AIS adapter maps its own message shape.
+SOURCE_LAYERS = {
+    "synthetic-fixture": frozenset({"flight", "vessel", "road"}),
+    "synthetic-ais": frozenset({"vessel"}),
+}
+LAYERS = frozenset({"flight", "vessel", "road"})  # every layer any source may use
 PROVIDER_STATUSES = frozenset({"ok", "error", "timeout", "indeterminate"})
 MAX_EVIDENCE_BYTES = 1_048_576
 MAX_RECORDS = 10_000
@@ -250,7 +256,14 @@ def parse_capture(raw: bytes) -> ParsedCapture:
             observed_end = parse_time(attempt["observed_end"], "attempt.observed_end")
             if not start <= observed_start <= observed_end <= end:
                 raise ValueError("observed interval must lie inside the requested interval")
-        records = doc["provider_response"]["records"]
+        if layer not in SOURCE_LAYERS[source_id]:
+            raise ValueError(f"source {source_id} does not provide layer {layer}")
+        if source_id == synthetic_ais.SOURCE_ID:
+            records = synthetic_ais.messages(doc["provider_response"])
+            parse_item = synthetic_ais.parse_message
+        else:
+            records = doc["provider_response"]["records"]
+            parse_item = _parse_record
         if not isinstance(records, list) or len(records) > MAX_RECORDS:
             raise ValueError(f"records must be a list of at most {MAX_RECORDS}")
     except (KeyError, TypeError, ValueError) as exc:
@@ -279,7 +292,7 @@ def parse_capture(raw: bytes) -> ParsedCapture:
             parsed.rejected.append(f"record {index}: provider status {status}")
             continue
         try:
-            record = _parse_record(item, index, finished)
+            record = parse_item(item, index, finished)
         except ValueError as exc:
             parsed.rejected.append(str(exc))
             continue

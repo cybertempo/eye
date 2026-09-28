@@ -1,12 +1,14 @@
 # EYE
 
 EYE is a planned self-hosted geospatial and solar-system observation and research
-application. This repository holds its public source. **Status: Package 1
-(contracts and storage) on top of Package 0 (repository foundation).** It contains
-the layout, tooling, CI, a small synthetic demo, the versioned wire schema with
-validation on both sides, and PostgreSQL/PostGIS storage for captures, evidence,
-observations and coverage, loaded from synthetic fixtures. No real data feed,
-globe renderer, live API or AI feature exists yet.
+application. This repository holds its public source. **Status: Package 2
+(synthetic AIS vertical slice) on Packages 0 and 1.** It contains the layout,
+tooling, CI, a small synthetic demo, the versioned wire schema with validation
+on both sides, PostgreSQL/PostGIS storage for captures, evidence, observations
+and coverage, and a synthetic vessel adapter with track splitting, crossings of
+a versioned synthetic count line and coverage-aware transit counts. All data is
+invented. No real data feed, real Golden Gate geometry, globe renderer, live API
+or AI feature exists yet.
 
 The design brief is [`docs/public-repo-build-brief.md`](docs/public-repo-build-brief.md);
 contributor and agent rules are in [`CLAUDE.md`](CLAUDE.md).
@@ -45,13 +47,17 @@ Put the URL in the environment variable named by `database.url_env`
 ```text
 PYTHONPATH=backend .venv/bin/python -m eye db-migrate       --config config/eye.example.toml
 PYTHONPATH=backend .venv/bin/python -m eye db-load-fixtures --config config/eye.example.toml
+PYTHONPATH=backend .venv/bin/python -m eye db-derive-transits --config config/eye.example.toml
 PYTHONPATH=backend .venv/bin/python -m eye db-replay        --config config/eye.example.toml
 PYTHONPATH=backend .venv/bin/python -m eye db-status        --config config/eye.example.toml
 ```
 
 Demo mode connects only to a loopback database, and only demo mode loads
-synthetic fixtures. See [`migrations/README.md`](migrations/README.md) and
-[`schemas/README.md`](schemas/README.md).
+synthetic fixtures. `db-derive-transits` counts crossings of every line in
+`reference/lines/` per hour; `db-replay` also re-derives and checks them. See
+[`migrations/README.md`](migrations/README.md),
+[`schemas/README.md`](schemas/README.md) and
+[ADR 0003](docs/adr/0003-package-2-synthetic-ais.md).
 
 ## Configuration
 
@@ -76,19 +82,20 @@ The loader refuses, before opening a socket:
 
 ```text
 backend/eye/api/      HTTP API, auth port, demo server
-backend/eye/ingest/   capture pipeline (synthetic source only)
+backend/eye/ingest/   capture pipeline and synthetic AIS adapter
 backend/eye/storage/  database connection and migration runner
 backend/eye/wire/     wire-schema runtime validator
-backend/eye/worker/   derivation workers (Package 1+)
+backend/eye/worker/   tracks, line crossings and transit counts
 backend/eye/raster/   optional imagery pipeline (Package 6)
 config/               example configuration
 deploy/dev/           loopback synthetic demo container
 deploy/lab/           generic private-deployment templates (placeholder)
 docs/                 brief, source-policy register, dependencies, ADRs
 migrations/           forward-only PostgreSQL/PostGIS migrations
+reference/lines/      versioned synthetic count lines
 requirements/         hash-locked Python tool manifests
 schemas/              versioned wire schema (eye.wire/1)
-scripts/              setup, verify, demo, boundary check
+scripts/              setup, verify, demo, boundary check, fixture generators
 tests/                tests and synthetic fixtures
 web/                  browser client (demo page only)
 ```

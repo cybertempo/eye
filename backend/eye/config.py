@@ -33,7 +33,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "max_connections",
     },
     "auth": {"adapter", "private_adapter_module"},
-    "data": {"fixture", "capture_fixtures"},
+    "data": {"fixture", "capture_fixtures", "ais_capture_fixtures", "count_lines"},
     "database": {"url_env"},
     "providers": {"enabled"},
 }
@@ -67,6 +67,8 @@ class EyeConfig:
     auth: AuthConfig
     fixture: Path
     capture_fixtures: Path | None
+    ais_capture_fixtures: Path | None
+    count_lines: Path | None
     database_url_env: str
     enabled_providers: tuple[str, ...]
 
@@ -146,14 +148,19 @@ def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None)
     fixture = Path(fixture_value)
     if not fixture.is_absolute():
         fixture = (source.parent / fixture).resolve()
-    captures_value = data.get("capture_fixtures")
-    capture_fixtures = None
-    if captures_value is not None:
-        if not isinstance(captures_value, str) or not captures_value:
-            raise ConfigError("data.capture_fixtures must name a directory")
-        capture_fixtures = Path(captures_value)
-        if not capture_fixtures.is_absolute():
-            capture_fixtures = (source.parent / capture_fixtures).resolve()
+
+    def directory(key: str) -> Path | None:
+        value = data.get(key)
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value:
+            raise ConfigError(f"data.{key} must name a directory")
+        path = Path(value)
+        return path if path.is_absolute() else (source.parent / path).resolve()
+
+    capture_fixtures = directory("capture_fixtures")
+    ais_capture_fixtures = directory("ais_capture_fixtures")
+    count_lines = directory("count_lines")
 
     # The URL itself (with any password) lives only in the environment or a
     # private runtime secret; configuration names the variable that holds it.
@@ -212,6 +219,8 @@ def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None)
         auth=auth,
         fixture=fixture,
         capture_fixtures=capture_fixtures,
+        ais_capture_fixtures=ais_capture_fixtures,
+        count_lines=count_lines,
         database_url_env=url_env,
         enabled_providers=tuple(enabled),
     )

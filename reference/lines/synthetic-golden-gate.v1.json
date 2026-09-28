@@ -1,0 +1,10 @@
+{
+  "line_id": "synthetic-golden-gate",
+  "version": 1,
+  "synthetic": true,
+  "name": "Synthetic Golden Gate count line (placeholder geometry)",
+  "note": "Invented geometry in the synthetic test area near 0N 0E. It stands in for the later real Golden Gate line, whose exact geometry is an open owner decision. It is not the real strait and must not be used for real counts.",
+  "coordinates": [[0.3, -0.05], [0.3, 0.05]],
+  "inbound_side": "left",
+  "direction_note": "The line runs from its first to its second coordinate (south to north). Moving from the left (west, 'sea') side to the right (east, 'bay') side is inbound; the reverse is outbound."
+}

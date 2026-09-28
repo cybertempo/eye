@@ -1,7 +1,7 @@
 """Command-line entry point: ``python -m eye COMMAND --config PATH``.
 
 Commands: check-config, serve, db-migrate, db-status, db-load-fixtures,
-db-replay. Exit codes: 0 success, 2 configuration refused, 3 authentication
+db-derive-transits, db-replay. Exit codes: 0 success, 2 configuration refused, 3 authentication
 adapter refused, 4 other startup refusal, 5 database operation failed.
 Nothing here opens a browser.
 """
@@ -18,7 +18,7 @@ EXIT_CONFIG = 2
 EXIT_AUTH = 3
 EXIT_STARTUP = 4
 EXIT_DATABASE = 5
-DB_COMMANDS = ("db-migrate", "db-status", "db-load-fixtures", "db-replay")
+DB_COMMANDS = ("db-migrate", "db-status", "db-load-fixtures", "db-derive-transits", "db-replay")
 
 
 def _prepare(path: str) -> tuple[EyeConfig, object]:
@@ -85,6 +85,7 @@ def _database_command(command: str, config: EyeConfig) -> int:
     from eye.ingest.capture import CaptureRejected, load_fixtures, replay_pending, verify_replay
     from eye.storage.db import DatabaseConfigError, connect
     from eye.storage.migrate import MigrationError, migrate, status
+    from eye.worker import transits
 
     url = os.environ.get(config.database_url_env)
     if not url:
@@ -104,6 +105,9 @@ def _database_command(command: str, config: EyeConfig) -> int:
         if config.capture_fixtures is None:
             print("eye: REFUSED (configuration): data.capture_fixtures is not set", file=sys.stderr)
             return EXIT_CONFIG
+    if command == "db-derive-transits" and config.count_lines is None:
+        print("eye: REFUSED (configuration): data.count_lines is not set", file=sys.stderr)
+        return EXIT_CONFIG
     try:
         conn = connect(url, require_loopback=config.mode == "demo")
     except DatabaseConfigError as exc:
@@ -119,18 +123,47 @@ def _database_command(command: str, config: EyeConfig) -> int:
             result = status(conn)
         elif command == "db-load-fixtures":
             batches = load_fixtures(conn, config.capture_fixtures)
+            if config.ais_capture_fixtures is not None:
+                batches += load_fixtures(conn, config.ais_capture_fixtures)
             result = {
                 "batches": len(batches),
                 "created": sum(b.created for b in batches),
                 "statuses": sorted({b.status for b in batches}),
             }
+        elif command == "db-derive-transits":
+            result = {"lines": []}
+            for line in _lines(transits, config.count_lines):
+                intervals = transits.hourly_intervals(
+                    transits.read_inputs(conn, transits.SOURCE_ID, line)
+                )
+                run_id, derived = transits.store(conn, transits.SOURCE_ID, line, intervals)
+                result["lines"].append(
+                    {
+                        "line": f"{line.line_id}/v{line.version}",
+                        "run_id": run_id,
+                        "crossings": len(derived.crossings),
+                        "counts": [
+                            {"start": c[0], "end": c[1], "state": c[2], "total": c[5]}
+                            for c in sorted(derived.counts.values())
+                        ],
+                    }
+                )
         else:
             completed = replay_pending(conn)
-            result = {"completed_pending": len(completed), "discrepancies": verify_replay(conn)}
+            discrepancies = verify_replay(conn)
+            for line in _lines(transits, config.count_lines) if config.count_lines else []:
+                discrepancies += transits.verify(conn, transits.SOURCE_ID, line)
+            result = {"completed_pending": len(completed), "discrepancies": discrepancies}
             if result["discrepancies"]:
                 print(json.dumps(result, sort_keys=True))
                 return EXIT_DATABASE
-    except (MigrationError, CaptureRejected, LookupError, OSError) as exc:
+    except (
+        MigrationError,
+        CaptureRejected,
+        LookupError,
+        OSError,
+        transits.LineDefinitionError,
+    ) as exc:
         print(f"eye: FAILED ({command}): {exc}", file=sys.stderr)
         return EXIT_DATABASE
     except (DatabaseError, InterfaceError) as exc:
@@ -140,6 +173,10 @@ def _database_command(command: str, config: EyeConfig) -> int:
         conn.close()
     print(json.dumps(result, sort_keys=True))
     return 0
+
+
+def _lines(transits, directory):
+    return [transits.load_line(path) for path in sorted(directory.glob("*.json"))]
 
 
 if __name__ == "__main__":
