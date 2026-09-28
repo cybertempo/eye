@@ -3,6 +3,7 @@
 Standard library only. It serves one synthetic snapshot and the static demo
 page, checks the Host header against loopback names, sets restrictive browser
 headers and bounds concurrent connections, request time and response size.
+Every JSON body is a wire-schema message and is validated before it is sent.
 """
 
 from __future__ import annotations
@@ -17,14 +18,20 @@ from pathlib import Path
 from eye import __version__
 from eye.api.auth import AuthPort
 from eye.config import EyeConfig, is_loopback_host
+from eye.wire import SCHEMA_VERSION, WireValidationError, validate_message
 
 API_PREFIX = "/api/v0"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WEB_ROOT = REPO_ROOT / "web"
+JS = "text/javascript; charset=utf-8"
+# A fixed allowlist; request paths never map onto the filesystem directly.
 STATIC_FILES = {
     "/": (WEB_ROOT / "index.html", "text/html; charset=utf-8"),
     "/static/demo.css": (WEB_ROOT / "demo.css", "text/css; charset=utf-8"),
-    "/static/demo.js": (WEB_ROOT / "dist" / "demo.js", "text/javascript; charset=utf-8"),
+    "/static/demo.js": (WEB_ROOT / "dist" / "demo.js", JS),
+    "/static/wire-validate.js": (WEB_ROOT / "dist" / "wire-validate.js", JS),
+    "/static/generated/wire-schema.js": (WEB_ROOT / "dist" / "generated" / "wire-schema.js", JS),
+    "/static/generated/wire-types.js": (WEB_ROOT / "dist" / "generated" / "wire-types.js", JS),
 }
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
@@ -50,6 +57,12 @@ def load_snapshot(config: EyeConfig) -> bytes:
         raise StartupError(f"cannot read synthetic fixture {config.fixture}: {exc}") from exc
     if document.get("synthetic") is not True:
         raise StartupError('the demo serves only fixtures marked "synthetic": true')
+    try:
+        validate_message(document, "ServerMessage")
+    except WireValidationError as exc:
+        raise StartupError(f"synthetic fixture is not a valid wire message: {exc}") from exc
+    if document.get("kind") != "snapshot":
+        raise StartupError("the demo fixture must be a snapshot message")
     body = json.dumps(document, separators=(",", ":"), sort_keys=True).encode("utf-8")
     if len(body) > config.server.max_response_bytes:
         raise StartupError("synthetic snapshot exceeds server.max_response_bytes")
@@ -108,7 +121,7 @@ class DemoHandler(BaseHTTPRequestHandler):
     def _send(self, status: HTTPStatus, body: bytes, content_type: str) -> None:
         if len(body) > self.server.config.server.max_response_bytes:
             status = HTTPStatus.SERVICE_UNAVAILABLE
-            body = b'{"error":"response exceeds configured limit","status":503}'
+            body = _encode(_error_message(status, "response exceeds configured limit"))
             content_type = "application/json"
         self.send_response(status)
         for name, value in SECURITY_HEADERS.items():
@@ -121,12 +134,18 @@ class DemoHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         self.close_connection = True
 
-    def _json(self, status: HTTPStatus, payload: dict) -> None:
-        body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-        self._send(status, body, "application/json")
+    def _message(self, status: HTTPStatus, message: dict) -> None:
+        # Outgoing runtime validation: a schema violation is a server bug, so
+        # the client receives a valid error message instead of the bad body.
+        try:
+            validate_message(message, "ServerMessage")
+        except WireValidationError:
+            status = HTTPStatus.INTERNAL_SERVER_ERROR
+            message = _error_message(status, "internal error: invalid outgoing message")
+        self._send(status, _encode(message), "application/json")
 
     def _error(self, status: HTTPStatus, reason: str) -> None:
-        self._json(status, {"error": reason, "status": status.value})
+        self._message(status, _error_message(status, reason))
 
     def do_GET(self) -> None:
         if not is_loopback_host(_host_name(self.headers.get("Host", ""))):
@@ -134,9 +153,15 @@ class DemoHandler(BaseHTTPRequestHandler):
             return
         path = self.path.split("?", 1)[0]
         if path == f"{API_PREFIX}/health":
-            self._json(
+            self._message(
                 HTTPStatus.OK,
-                {"status": "ok", "mode": self.server.config.mode, "synthetic": True},
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "kind": "health",
+                    "status": "ok",
+                    "mode": self.server.config.mode,
+                    "synthetic": True,
+                },
             )
             return
         if path == f"{API_PREFIX}/snapshot":
@@ -162,6 +187,19 @@ class DemoHandler(BaseHTTPRequestHandler):
         self._error(HTTPStatus.METHOD_NOT_ALLOWED, "method not allowed")
 
     do_POST = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = _method_not_allowed
+
+
+def _error_message(status: HTTPStatus, reason: str) -> dict:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "kind": "error",
+        "status": status.value,
+        "error": reason,
+    }
+
+
+def _encode(message: dict) -> bytes:
+    return json.dumps(message, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
 def build_server(config: EyeConfig, auth: AuthPort) -> DemoServer:

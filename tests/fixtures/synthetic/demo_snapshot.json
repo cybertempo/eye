@@ -1,10 +1,18 @@
 {
+  "schema_version": "eye.wire/1",
+  "kind": "snapshot",
+  "cursor": "demo-p1-0001",
+  "generated_at": "2026-01-01T01:00:00Z",
   "synthetic": true,
-  "fixture_version": "p0-demo-1",
   "notice": "Invented data for the public demo. No record describes a real aircraft, vessel, road or event.",
   "area": {
     "name": "Synthetic test area near 0N 0E (open ocean; no real features)",
-    "bbox": [-0.5, -0.5, 0.5, 0.5]
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ]
   },
   "interval": {
     "start": "2026-01-01T00:00:00Z",
@@ -18,9 +26,27 @@
       "source_record_id": "SYN-FLT-001",
       "display_type": "observed",
       "points": [
-        {"observed_time": "2026-01-01T00:00:00Z", "received_time": "2026-01-01T00:00:04Z", "lon": -0.40, "lat": -0.20, "alt_m": 9100},
-        {"observed_time": "2026-01-01T00:05:00Z", "received_time": "2026-01-01T00:05:03Z", "lon": -0.25, "lat": -0.12, "alt_m": 9150},
-        {"observed_time": "2026-01-01T00:10:00Z", "received_time": "2026-01-01T00:10:05Z", "lon": -0.10, "lat": -0.04, "alt_m": 9150}
+        {
+          "observed_time": "2026-01-01T00:00:00Z",
+          "received_time": "2026-01-01T00:00:04Z",
+          "lon": -0.4,
+          "lat": -0.2,
+          "alt_m": 9100
+        },
+        {
+          "observed_time": "2026-01-01T00:05:00Z",
+          "received_time": "2026-01-01T00:05:03Z",
+          "lon": -0.25,
+          "lat": -0.12,
+          "alt_m": 9150
+        },
+        {
+          "observed_time": "2026-01-01T00:10:00Z",
+          "received_time": "2026-01-01T00:10:05Z",
+          "lon": -0.1,
+          "lat": -0.04,
+          "alt_m": 9150
+        }
       ],
       "quality_flags": []
     },
@@ -31,11 +57,31 @@
       "source_record_id": "SYN-VES-001",
       "display_type": "observed",
       "points": [
-        {"observed_time": "2026-01-01T00:00:00Z", "received_time": "2026-01-01T00:00:30Z", "lon": 0.10, "lat": 0.30, "alt_m": null},
-        {"observed_time": "2026-01-01T00:20:00Z", "received_time": "2026-01-01T00:20:40Z", "lon": 0.13, "lat": 0.27, "alt_m": null},
-        {"observed_time": "2026-01-01T00:40:00Z", "received_time": "2026-01-01T00:41:10Z", "lon": 0.16, "lat": 0.24, "alt_m": null}
+        {
+          "observed_time": "2026-01-01T00:00:00Z",
+          "received_time": "2026-01-01T00:00:30Z",
+          "lon": 0.1,
+          "lat": 0.3,
+          "alt_m": null
+        },
+        {
+          "observed_time": "2026-01-01T00:20:00Z",
+          "received_time": "2026-01-01T00:20:40Z",
+          "lon": 0.13,
+          "lat": 0.27,
+          "alt_m": null
+        },
+        {
+          "observed_time": "2026-01-01T00:40:00Z",
+          "received_time": "2026-01-01T00:41:10Z",
+          "lon": 0.16,
+          "lat": 0.24,
+          "alt_m": null
+        }
       ],
-      "quality_flags": ["position_gap_before_first_point"]
+      "quality_flags": [
+        "position_gap_before_first_point"
+      ]
     }
   ],
   "events": [
@@ -44,7 +90,20 @@
       "kind": "road_closure",
       "source": "synthetic-fixture",
       "status": "reported",
-      "reported_event_location": {"type": "segment", "coords": [[0.02, -0.30], [0.05, -0.28]], "precision_m": 250},
+      "reported_event_location": {
+        "type": "segment",
+        "coords": [
+          [
+            0.02,
+            -0.3
+          ],
+          [
+            0.05,
+            -0.28
+          ]
+        ],
+        "precision_m": 250
+      },
       "event_time": "2026-01-01T00:12:00Z",
       "published_time": "2026-01-01T00:18:00Z",
       "received_time": "2026-01-01T00:18:20Z",
@@ -56,14 +115,45 @@
       "kind": "road_incident",
       "source": "synthetic-fixture",
       "status": "corrected",
-      "reported_event_location": {"type": "point", "coords": [0.08, -0.26], "precision_m": 500},
+      "reported_event_location": {
+        "type": "point",
+        "coords": [
+          0.08,
+          -0.26
+        ],
+        "precision_m": 500
+      },
       "event_time": "2026-01-01T00:15:00Z",
       "published_time": "2026-01-01T00:50:00Z",
       "received_time": "2026-01-01T00:50:15Z",
       "replayed": false,
       "revisions": [
-        {"revision": 1, "published_time": "2026-01-01T00:20:00Z", "status": "reported", "location": {"type": "point", "coords": [0.06, -0.29], "precision_m": 1000}},
-        {"revision": 2, "published_time": "2026-01-01T00:50:00Z", "status": "corrected", "location": {"type": "point", "coords": [0.08, -0.26], "precision_m": 500}}
+        {
+          "revision": 1,
+          "published_time": "2026-01-01T00:20:00Z",
+          "status": "reported",
+          "location": {
+            "type": "point",
+            "coords": [
+              0.06,
+              -0.29
+            ],
+            "precision_m": 1000
+          }
+        },
+        {
+          "revision": 2,
+          "published_time": "2026-01-01T00:50:00Z",
+          "status": "corrected",
+          "location": {
+            "type": "point",
+            "coords": [
+              0.08,
+              -0.26
+            ],
+            "precision_m": 500
+          }
+        }
       ]
     },
     {
@@ -71,7 +161,16 @@
       "kind": "vessel_port_arrival",
       "source": "synthetic-fixture",
       "status": "reported",
-      "reported_event_location": {"type": "area", "bbox": [0.15, 0.20, 0.20, 0.25], "precision_m": 2000},
+      "reported_event_location": {
+        "type": "area",
+        "bbox": [
+          0.15,
+          0.2,
+          0.2,
+          0.25
+        ],
+        "precision_m": 2000
+      },
       "event_time": "2026-01-01T00:42:00Z",
       "published_time": "2026-01-01T00:45:00Z",
       "received_time": "2026-01-01T00:45:05Z",
@@ -82,22 +181,41 @@
   "coverage": [
     {
       "layer": "flight",
-      "interval": {"start": "2026-01-01T00:00:00Z", "end": "2026-01-01T01:00:00Z"},
+      "interval": {
+        "start": "2026-01-01T00:00:00Z",
+        "end": "2026-01-01T01:00:00Z"
+      },
       "state": "qualified",
-      "metric": {"name": "tracks_observed", "value": 1}
+      "metric": {
+        "name": "tracks_observed",
+        "value": 1
+      }
     },
     {
       "layer": "vessel",
-      "interval": {"start": "2026-01-01T00:00:00Z", "end": "2026-01-01T00:45:00Z"},
+      "interval": {
+        "start": "2026-01-01T00:00:00Z",
+        "end": "2026-01-01T00:45:00Z"
+      },
       "state": "partial",
-      "metric": {"name": "tracks_observed", "value": 1}
+      "metric": {
+        "name": "tracks_observed",
+        "value": 1
+      },
+      "reason": "synthetic position gap before first vessel report"
     },
     {
       "layer": "vessel",
-      "interval": {"start": "2026-01-01T00:45:00Z", "end": "2026-01-01T01:00:00Z"},
+      "interval": {
+        "start": "2026-01-01T00:45:00Z",
+        "end": "2026-01-01T01:00:00Z"
+      },
       "state": "unknown",
       "reason": "synthetic feed outage",
-      "metric": {"name": "tracks_observed", "value": null}
+      "metric": {
+        "name": "tracks_observed",
+        "value": null
+      }
     }
   ]
 }

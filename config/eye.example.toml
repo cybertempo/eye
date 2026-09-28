@@ -30,6 +30,14 @@ private_adapter_module = ""
 [data]
 # Relative paths resolve from this file's directory.
 fixture = "../tests/fixtures/synthetic/demo_snapshot.json"
+# Synthetic capture batches loaded by `python -m eye db-load-fixtures` (demo only).
+capture_fixtures = "../tests/fixtures/synthetic/captures"
+
+[database]
+# Name of the environment variable holding the PostgreSQL URL. The URL (and
+# any password) is never written in this file. Demo mode accepts only a
+# loopback database host.
+url_env = "EYE_DATABASE_URL"
 
 [providers]
 # Real provider adapters stay disabled until approved in

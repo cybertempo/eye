@@ -1,0 +1,29 @@
+{
+  "capture_format": "eye.synthetic-capture/2",
+  "synthetic": true,
+  "source_id": "synthetic-fixture",
+  "adapter_version": "synthetic-adapter/2",
+  "note": "Road feed returned a response whose completeness cannot be determined: unknown.",
+  "layer": "road",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-01-01T00:00:00Z",
+    "end": "2026-01-01T01:00:00Z",
+    "expected_interval_s": 900
+  },
+  "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every record",
+    "started_at": "2026-01-01T01:00:00Z",
+    "finished_at": "2026-01-01T01:00:05Z",
+    "provider_status": "indeterminate",
+    "quota_cost": 0
+  },
+  "provider_response": {
+    "records": []
+  }
+}

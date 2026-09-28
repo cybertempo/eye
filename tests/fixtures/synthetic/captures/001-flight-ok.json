@@ -1,0 +1,62 @@
+{
+  "capture_format": "eye.synthetic-capture/2",
+  "synthetic": true,
+  "source_id": "synthetic-fixture",
+  "adapter_version": "synthetic-adapter/2",
+  "note": "Flight feed healthy for the whole request: qualified.",
+  "layer": "flight",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-01-01T00:00:00Z",
+    "end": "2026-01-01T00:15:00Z",
+    "expected_interval_s": 300
+  },
+  "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every record",
+    "started_at": "2026-01-01T00:15:00Z",
+    "finished_at": "2026-01-01T00:15:02Z",
+    "provider_status": "ok",
+    "quota_cost": 0,
+    "observed_start": "2026-01-01T00:00:00Z",
+    "observed_end": "2026-01-01T00:15:00Z"
+  },
+  "provider_response": {
+    "records": [
+      {
+        "record_id": "SYN-FLT-001",
+        "observed_time": "2026-01-01T00:00:00Z",
+        "source_published_time": "2026-01-01T00:00:03Z",
+        "lon": -0.4,
+        "lat": -0.2,
+        "alt_m": 9100,
+        "confidence": 0.9,
+        "quality_flags": []
+      },
+      {
+        "record_id": "SYN-FLT-001",
+        "observed_time": "2026-01-01T00:05:00Z",
+        "source_published_time": "2026-01-01T00:05:03Z",
+        "lon": -0.25,
+        "lat": -0.12,
+        "alt_m": 9150,
+        "confidence": 0.9,
+        "quality_flags": []
+      },
+      {
+        "record_id": "SYN-FLT-001",
+        "observed_time": "2026-01-01T00:10:00Z",
+        "source_published_time": "2026-01-01T00:10:04Z",
+        "lon": -0.1,
+        "lat": -0.04,
+        "alt_m": 9150,
+        "confidence": 0.9,
+        "quality_flags": []
+      }
+    ]
+  }
+}

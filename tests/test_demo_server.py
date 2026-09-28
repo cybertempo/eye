@@ -11,10 +11,11 @@ import sys
 import threading
 
 import pytest
-from conftest import REPO_ROOT
+from conftest import EXAMPLE_CONFIG, REPO_ROOT
 from eye.api.auth import DemoAuth
-from eye.api.server import STATIC_FILES, build_server
+from eye.api.server import STATIC_FILES, StartupError, build_server
 from eye.config import load_config
+from eye.wire import validate_message
 
 
 @pytest.fixture
@@ -53,11 +54,19 @@ def request(addr, path, method="GET", host=None):
 def test_health_and_snapshot(demo):
     response, body = request(demo, "/api/v0/health")
     assert response.status == 200
-    assert json.loads(body) == {"mode": "demo", "status": "ok", "synthetic": True}
+    assert json.loads(body) == {
+        "schema_version": "eye.wire/1",
+        "kind": "health",
+        "mode": "demo",
+        "status": "ok",
+        "synthetic": True,
+    }
+    validate_message(body, "ServerMessage")
 
     response, body = request(demo, "/api/v0/snapshot")
     assert response.status == 200
-    snapshot = json.loads(body)
+    snapshot = validate_message(body, "ServerMessage")
+    assert snapshot["kind"] == "snapshot"
     assert snapshot["synthetic"] is True
     assert {t["kind"] for t in snapshot["tracks"]} == {"flight", "vessel"}
 
@@ -72,8 +81,9 @@ def test_security_headers(demo):
 def test_foreign_host_header_refused_loopback_accepted(demo):
     ok, _ = request(demo, "/api/v0/health", host=f"localhost:{demo[1]}")
     assert ok.status == 200
-    refused, _ = request(demo, "/api/v0/health", host="eye.example.org")
+    refused, body = request(demo, "/api/v0/health", host="eye.example.org")
     assert refused.status == 421
+    assert validate_message(body, "ServerMessage")["kind"] == "error"
 
 
 def test_write_methods_refused(demo):
@@ -81,6 +91,15 @@ def test_write_methods_refused(demo):
     assert ok.status == 200
     refused, _ = request(demo, "/api/v0/snapshot", method="POST")
     assert refused.status == 405
+
+
+def test_browser_modules_served(demo):
+    for path in ("/static/demo.js", "/static/wire-validate.js", "/static/generated/wire-schema.js"):
+        response, _ = request(demo, path)
+        assert response.status == 200, path
+        assert response.getheader("Content-Type").startswith("text/javascript")
+    missing, _ = request(demo, "/static/../config/eye.example.toml")
+    assert missing.status == 404
 
 
 def test_demo_page_served(demo):
@@ -115,7 +134,21 @@ def test_response_limit_applies_to_static_and_snapshot(
         refused, body = request(address, "/api/v0/snapshot")
         assert refused.status == 503
         assert len(body) <= 4096
+        assert validate_message(body, "ServerMessage")["kind"] == "error"
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_demo_refuses_a_fixture_that_breaks_the_wire_schema(example_raw, write_config, tmp_path):
+    example_raw["server"]["port"] = 0
+    good = build_server(load_config(write_config(example_raw)), DemoAuth("demo"))  # control
+    good.server_close()
+    snapshot = json.loads((EXAMPLE_CONFIG.parent / example_raw["data"]["fixture"]).read_text())
+    snapshot["coverage"][2]["metric"]["value"] = 0  # an outage reported as zero
+    bad = tmp_path / "bad_snapshot.json"
+    bad.write_text(json.dumps(snapshot), encoding="utf-8")
+    example_raw["data"]["fixture"] = str(bad)
+    with pytest.raises(StartupError, match="not a valid wire message"):
+        build_server(load_config(write_config(example_raw)), DemoAuth("demo"))

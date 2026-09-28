@@ -36,4 +36,14 @@ echo "setup: installing locked web toolchain"
 npm ci --prefix web --ignore-scripts --no-audit --no-fund
 npm run --prefix web build
 
+# The pinned PostGIS image for database tests (scripts/test-db.sh). Pulling it
+# here keeps scripts/verify.sh free of network access.
+POSTGIS_IMAGE="$(grep -o 'postgis/postgis:[^"]*' scripts/test-db.sh | head -n 1)"
+if command -v docker >/dev/null 2>&1; then
+  echo "setup: pulling $POSTGIS_IMAGE"
+  docker pull --quiet "$POSTGIS_IMAGE"
+else
+  echo "setup: Docker not found; database tests will need EYE_TEST_DATABASE_URL" >&2
+fi
+
 echo "setup: done. Next: scripts/verify.sh"

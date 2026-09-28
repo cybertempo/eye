@@ -1,0 +1,44 @@
+{
+  "capture_format": "eye.synthetic-capture/2",
+  "synthetic": true,
+  "source_id": "synthetic-fixture",
+  "adapter_version": "synthetic-adapter/2",
+  "note": "The source re-issued its 00:20 vessel position at 00:51:30; EYE received it at 00:52:01.",
+  "layer": "vessel",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-01-01T00:15:00Z",
+    "end": "2026-01-01T00:25:00Z",
+    "expected_interval_s": 600
+  },
+  "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every record",
+    "started_at": "2026-01-01T00:52:00Z",
+    "finished_at": "2026-01-01T00:52:01Z",
+    "provider_status": "ok",
+    "quota_cost": 0,
+    "observed_start": "2026-01-01T00:15:00Z",
+    "observed_end": "2026-01-01T00:25:00Z"
+  },
+  "provider_response": {
+    "records": [
+      {
+        "record_id": "SYN-VES-001",
+        "observed_time": "2026-01-01T00:20:00Z",
+        "source_published_time": "2026-01-01T00:51:30Z",
+        "lon": 0.135,
+        "lat": 0.268,
+        "alt_m": null,
+        "confidence": 0.95,
+        "quality_flags": [
+          "corrected_by_source"
+        ]
+      }
+    ]
+  }
+}

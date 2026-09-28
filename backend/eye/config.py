@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +22,7 @@ AUTH_ADAPTERS = ("demo", "private")
 CONTAINER_ENV_VAR = "EYE_CONTAINER"
 
 _ALLOWED_KEYS: dict[str, set[str]] = {
-    "": {"schema_version", "runtime", "server", "auth", "data", "providers"},
+    "": {"schema_version", "runtime", "server", "auth", "data", "database", "providers"},
     "runtime": {"mode"},
     "server": {
         "bind_host",
@@ -32,7 +33,8 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "max_connections",
     },
     "auth": {"adapter", "private_adapter_module"},
-    "data": {"fixture"},
+    "data": {"fixture", "capture_fixtures"},
+    "database": {"url_env"},
     "providers": {"enabled"},
 }
 
@@ -64,6 +66,8 @@ class EyeConfig:
     server: ServerConfig
     auth: AuthConfig
     fixture: Path
+    capture_fixtures: Path | None
+    database_url_env: str
     enabled_providers: tuple[str, ...]
 
 
@@ -142,6 +146,20 @@ def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None)
     fixture = Path(fixture_value)
     if not fixture.is_absolute():
         fixture = (source.parent / fixture).resolve()
+    captures_value = data.get("capture_fixtures")
+    capture_fixtures = None
+    if captures_value is not None:
+        if not isinstance(captures_value, str) or not captures_value:
+            raise ConfigError("data.capture_fixtures must name a directory")
+        capture_fixtures = Path(captures_value)
+        if not capture_fixtures.is_absolute():
+            capture_fixtures = (source.parent / capture_fixtures).resolve()
+
+    # The URL itself (with any password) lives only in the environment or a
+    # private runtime secret; configuration names the variable that holds it.
+    url_env = _table(raw, "database").get("url_env", "EYE_DATABASE_URL")
+    if not isinstance(url_env, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", url_env):
+        raise ConfigError("database.url_env must be an environment variable name")
 
     enabled = _table(raw, "providers").get("enabled", [])
     if not isinstance(enabled, list) or not all(isinstance(p, str) for p in enabled):
@@ -193,6 +211,8 @@ def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None)
         server=server,
         auth=auth,
         fixture=fixture,
+        capture_fixtures=capture_fixtures,
+        database_url_env=url_env,
         enabled_providers=tuple(enabled),
     )
 

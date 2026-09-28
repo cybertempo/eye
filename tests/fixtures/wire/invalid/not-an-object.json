@@ -1,0 +1,7 @@
+{
+  "entry": "ServerMessage",
+  "note": "top level must be an object",
+  "message": [
+    "health"
+  ]
+}

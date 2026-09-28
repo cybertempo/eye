@@ -9,10 +9,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     EYE_CONTAINER=1
 
 WORKDIR /app
-# Runtime code uses the standard library only, so no packages are installed.
+# The demo server uses the standard library only; the database code (and its
+# pg8000 dependency) is not part of the demo image.
 COPY backend/eye /app/backend/eye
+COPY schemas /app/schemas
 COPY web/index.html web/demo.css /app/web/
-COPY web/dist/demo.js /app/web/dist/demo.js
+COPY web/dist /app/web/dist
 COPY tests/fixtures/synthetic /app/tests/fixtures/synthetic
 COPY deploy/dev/eye.container.toml /app/deploy/dev/eye.container.toml
 
