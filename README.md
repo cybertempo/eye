@@ -41,7 +41,9 @@ Check a file without starting anything (developer laptop):
 
 The loader refuses, before opening a socket:
 
-- a non-loopback `bind_host` in demo mode (exit code 2);
+- a non-loopback `bind_host` in demo mode, except the explicit dev-container
+  flag pair described in [ADR 0001](docs/adr/0001-package-0-foundation.md)
+  (exit code 2);
 - any entry in `providers.enabled` (no provider has an approved
   [source-policy](docs/source-policy-register.md) row);
 - unknown keys;

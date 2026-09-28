@@ -106,6 +106,10 @@ class DemoHandler(BaseHTTPRequestHandler):
         print(f"eye-demo: {format % args}", flush=True)
 
     def _send(self, status: HTTPStatus, body: bytes, content_type: str) -> None:
+        if len(body) > self.server.config.server.max_response_bytes:
+            status = HTTPStatus.SERVICE_UNAVAILABLE
+            body = b'{"error":"response exceeds configured limit","status":503}'
+            content_type = "application/json"
         self.send_response(status)
         for name, value in SECURITY_HEADERS.items():
             self.send_header(name, value)
@@ -144,6 +148,9 @@ class DemoHandler(BaseHTTPRequestHandler):
             return
         static = STATIC_FILES.get(path)
         if static is not None and static[0].is_file():
+            if static[0].stat().st_size > self.server.config.server.max_response_bytes:
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, "response exceeds configured limit")
+                return
             self._send(HTTPStatus.OK, static[0].read_bytes(), static[1])
             return
         self._error(HTTPStatus.NOT_FOUND, "not found")

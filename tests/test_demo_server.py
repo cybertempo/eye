@@ -8,9 +8,13 @@ import os
 import re
 import subprocess
 import sys
+import threading
 
 import pytest
 from conftest import REPO_ROOT
+from eye.api.auth import DemoAuth
+from eye.api.server import STATIC_FILES, build_server
+from eye.config import load_config
 
 
 @pytest.fixture
@@ -85,3 +89,33 @@ def test_demo_page_served(demo):
     assert b"SYNTHETIC DATA" in body
     missing, _ = request(demo, "/../config/eye.example.toml")
     assert missing.status == 404
+
+
+def test_response_limit_applies_to_static_and_snapshot(
+    example_raw, write_config, tmp_path, monkeypatch
+):
+    example_raw["server"]["port"] = 0
+    example_raw["server"]["max_response_bytes"] = 4096
+    oversized = tmp_path / "oversized.txt"
+    oversized.write_bytes(b"x" * 4097)
+    monkeypatch.setitem(STATIC_FILES, "/static/oversized.txt", (oversized, "text/plain"))
+    server = build_server(load_config(write_config(example_raw)), DemoAuth("demo"))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    address = server.server_address[:2]
+    try:
+        permitted, _ = request(address, "/")
+        assert permitted.status == 200
+
+        refused, body = request(address, "/static/oversized.txt")
+        assert refused.status == 503
+        assert len(body) <= 4096
+
+        server.snapshot = b"x" * 4097
+        refused, body = request(address, "/api/v0/snapshot")
+        assert refused.status == 503
+        assert len(body) <= 4096
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

@@ -16,10 +16,12 @@ Date: 2026-09-28. Status: proposed (awaiting owner review).
    configuration and refuses if it is missing, lacks `create_auth_port`, or
    returns demo auth. Production serving is not implemented yet and exits after
    the adapter check.
-4. **Container binds all interfaces only inside its namespace.** Allowed only
-   when both `server.container_internal_bind = true` and `EYE_CONTAINER=1`
-   (set by the Dockerfile). Compose publishes on `127.0.0.1` only; a test
-   enforces it and the smoke test checks the published address.
+4. **The supplied container publishes on host loopback.** A wildcard bind is
+   allowed only when both `server.container_internal_bind = true` and
+   `EYE_CONTAINER=1` (set by the Dockerfile). Those two settings are an operator
+   assertion, not proof of a container namespace; do not set them on a host.
+   The supported Compose file publishes on `127.0.0.1` only; a test enforces
+   that mapping and the smoke test checks the published address.
 5. **Hash-locked tools and digest-pinned images/actions** (see
    `docs/dependencies.md`).
 6. **Repository boundary check** (`scripts/check_repo_boundary.py`) scans the
