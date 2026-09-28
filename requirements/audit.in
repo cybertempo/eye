@@ -1,0 +1,2 @@
+# Dependency-scan tool, installed only by the CI dependency-scan job.
+pip-audit==2.10.1

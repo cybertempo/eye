@@ -1,0 +1,4 @@
+# Developer and CI tools. Runtime code uses the Python standard library only.
+# Regenerate requirements/dev.lock with the command in docs/dependencies.md.
+pytest==9.1.1
+ruff==0.16.9
