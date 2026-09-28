@@ -1,0 +1,169 @@
+{
+ "capture_format": "eye.synthetic-capture/2",
+ "synthetic": true,
+ "source_id": "synthetic-ais",
+ "adapter_version": "synthetic-ais-adapter/1",
+ "layer": "vessel",
+ "note": "The missing reports arrive late, byte-identical to the originals.",
+ "request": {
+  "bbox": [
+   0.1,
+   -0.1,
+   0.5,
+   0.1
+  ],
+  "start": "2026-02-01T12:15:00Z",
+  "end": "2026-02-01T12:40:00Z",
+  "expected_interval_s": 60
+ },
+ "attempt": {
+  "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every record",
+  "started_at": "2026-02-01T13:20:00Z",
+  "finished_at": "2026-02-01T13:20:02Z",
+  "provider_status": "ok",
+  "quota_cost": 0,
+  "observed_start": "2026-02-01T12:15:00Z",
+  "observed_end": "2026-02-01T12:40:00Z"
+ },
+ "provider_response": {
+  "format": "synthetic-ais/1",
+  "messages": [
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:20:00Z",
+    "sent_time": "2026-02-01T12:20:03Z",
+    "lon": 0.2647511,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:21:00Z",
+    "sent_time": "2026-02-01T12:21:03Z",
+    "lon": 0.2690678,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:22:00Z",
+    "sent_time": "2026-02-01T12:22:03Z",
+    "lon": 0.2733845,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:23:00Z",
+    "sent_time": "2026-02-01T12:23:03Z",
+    "lon": 0.2777013,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:24:00Z",
+    "sent_time": "2026-02-01T12:24:03Z",
+    "lon": 0.282018,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:25:00Z",
+    "sent_time": "2026-02-01T12:25:03Z",
+    "lon": 0.2863348,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:26:00Z",
+    "sent_time": "2026-02-01T12:26:03Z",
+    "lon": 0.2906515,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:27:00Z",
+    "sent_time": "2026-02-01T12:27:03Z",
+    "lon": 0.2949682,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:28:00Z",
+    "sent_time": "2026-02-01T12:28:03Z",
+    "lon": 0.299285,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:29:00Z",
+    "sent_time": "2026-02-01T12:29:03Z",
+    "lon": 0.3036017,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:30:00Z",
+    "sent_time": "2026-02-01T12:30:03Z",
+    "lon": 0.3079184,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:31:00Z",
+    "sent_time": "2026-02-01T12:31:03Z",
+    "lon": 0.3122352,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:32:00Z",
+    "sent_time": "2026-02-01T12:32:03Z",
+    "lon": 0.3165519,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:33:00Z",
+    "sent_time": "2026-02-01T12:33:03Z",
+    "lon": 0.3208687,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:34:00Z",
+    "sent_time": "2026-02-01T12:34:03Z",
+    "lon": 0.3251854,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:35:00Z",
+    "sent_time": "2026-02-01T12:35:03Z",
+    "lon": 0.3295021,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0001",
+    "position_time": "2026-02-01T12:36:00Z",
+    "sent_time": "2026-02-01T12:36:03Z",
+    "lon": 0.3338189,
+    "lat": 0.0,
+    "accuracy": "high"
+   }
+  ]
+ }
+}

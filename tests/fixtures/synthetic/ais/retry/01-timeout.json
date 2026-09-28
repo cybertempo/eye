@@ -1,0 +1,30 @@
+{
+ "capture_format": "eye.synthetic-capture/2",
+ "synthetic": true,
+ "source_id": "synthetic-ais",
+ "adapter_version": "synthetic-ais-adapter/1",
+ "layer": "vessel",
+ "note": "Provider timed out: nothing observed.",
+ "request": {
+  "bbox": [
+   0.1,
+   -0.1,
+   0.5,
+   0.1
+  ],
+  "start": "2026-02-01T12:00:00Z",
+  "end": "2026-02-01T13:00:00Z",
+  "expected_interval_s": 60
+ },
+ "attempt": {
+  "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every record",
+  "started_at": "2026-02-01T13:00:00Z",
+  "finished_at": "2026-02-01T13:00:30Z",
+  "provider_status": "timeout",
+  "quota_cost": 0
+ },
+ "provider_response": {
+  "format": "synthetic-ais/1",
+  "messages": []
+ }
+}

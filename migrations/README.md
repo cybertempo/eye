@@ -20,6 +20,15 @@ Forward-only SQL files named `NNNN_lower_snake_name.sql`, applied in order by
 - Raw evidence, observations and coverage are append-only (triggers). Deletion
   arrives with the checked retention transition in Package 5.
 
+## Applied migrations
+
+| Version | Adds |
+|---|---|
+| 0001 | capture batches, raw evidence, observations, receipts, coverage, version view |
+| 0002 | count lines, derivation-run log with input batches, current vessel tracks, track gaps, line crossings and transit counts, immutable per-run crossings, gaps and counts |
+
+Merged migrations are never edited; a change is a new file.
+
 ## Review checklist for a new migration
 
 - Transactional DDL only (no `CREATE INDEX CONCURRENTLY`, no `VACUUM`).

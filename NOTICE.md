@@ -6,7 +6,7 @@ licence status in [`README.md`](README.md).
 
 ## Upstream code, assets, models and datasets in the repository
 
-None. Packages 0 and 1 import no upstream code, media, models or datasets. Before
+None. Packages 0 to 2 import no upstream code, media, models or datasets. Before
 anything is imported, add a row here with source URL, exact commit or version,
 licence, attribution text, files copied and reviewer.
 
@@ -37,5 +37,7 @@ metadata on 2026-09-28.
 
 ## Data
 
-All data in `tests/fixtures/` is invented for this repository. No real
-observation, capture or provider response is included.
+All data in `tests/fixtures/` and `reference/lines/` is invented for this
+repository, including the synthetic AIS reports and the placeholder count line.
+No real observation, capture, vessel identifier, provider response or real
+Golden Gate geometry is included.

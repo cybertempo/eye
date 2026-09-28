@@ -1,0 +1,257 @@
+{
+ "capture_format": "eye.synthetic-capture/2",
+ "synthetic": true,
+ "source_id": "synthetic-ais",
+ "adapter_version": "synthetic-ais-adapter/1",
+ "layer": "vessel",
+ "note": "Silent for 16 minutes about 1 km west of the line, reappearing on the same side.",
+ "request": {
+  "bbox": [
+   0.1,
+   -0.1,
+   0.5,
+   0.1
+  ],
+  "start": "2026-02-01T12:00:00Z",
+  "end": "2026-02-01T13:00:00Z",
+  "expected_interval_s": 60
+ },
+ "attempt": {
+  "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every record",
+  "started_at": "2026-02-01T13:00:00Z",
+  "finished_at": "2026-02-01T13:00:05Z",
+  "provider_status": "ok",
+  "quota_cost": 0,
+  "observed_start": "2026-02-01T12:00:00Z",
+  "observed_end": "2026-02-01T13:00:00Z"
+ },
+ "provider_response": {
+  "format": "synthetic-ais/1",
+  "messages": [
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:05:00Z",
+    "sent_time": "2026-02-01T12:05:03Z",
+    "lon": 0.22,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:06:00Z",
+    "sent_time": "2026-02-01T12:06:03Z",
+    "lon": 0.2243167,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:07:00Z",
+    "sent_time": "2026-02-01T12:07:03Z",
+    "lon": 0.2286335,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:08:00Z",
+    "sent_time": "2026-02-01T12:08:03Z",
+    "lon": 0.2329502,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:09:00Z",
+    "sent_time": "2026-02-01T12:09:03Z",
+    "lon": 0.237267,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:10:00Z",
+    "sent_time": "2026-02-01T12:10:03Z",
+    "lon": 0.2415837,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:11:00Z",
+    "sent_time": "2026-02-01T12:11:03Z",
+    "lon": 0.2459004,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:12:00Z",
+    "sent_time": "2026-02-01T12:12:03Z",
+    "lon": 0.2502172,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:13:00Z",
+    "sent_time": "2026-02-01T12:13:03Z",
+    "lon": 0.2545339,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:14:00Z",
+    "sent_time": "2026-02-01T12:14:03Z",
+    "lon": 0.2588506,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:15:00Z",
+    "sent_time": "2026-02-01T12:15:03Z",
+    "lon": 0.2631674,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:16:00Z",
+    "sent_time": "2026-02-01T12:16:03Z",
+    "lon": 0.2674841,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:17:00Z",
+    "sent_time": "2026-02-01T12:17:03Z",
+    "lon": 0.2718009,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:18:00Z",
+    "sent_time": "2026-02-01T12:18:03Z",
+    "lon": 0.2761176,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:19:00Z",
+    "sent_time": "2026-02-01T12:19:03Z",
+    "lon": 0.2804343,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:20:00Z",
+    "sent_time": "2026-02-01T12:20:03Z",
+    "lon": 0.2847511,
+    "lat": 0.0,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:37:00Z",
+    "sent_time": "2026-02-01T12:37:03Z",
+    "lon": 0.227878,
+    "lat": 0.004,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:38:00Z",
+    "sent_time": "2026-02-01T12:38:03Z",
+    "lon": 0.2235612,
+    "lat": 0.004,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:39:00Z",
+    "sent_time": "2026-02-01T12:39:03Z",
+    "lon": 0.2192445,
+    "lat": 0.004,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:40:00Z",
+    "sent_time": "2026-02-01T12:40:03Z",
+    "lon": 0.2149278,
+    "lat": 0.004,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:41:00Z",
+    "sent_time": "2026-02-01T12:41:03Z",
+    "lon": 0.210611,
+    "lat": 0.004,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:42:00Z",
+    "sent_time": "2026-02-01T12:42:03Z",
+    "lon": 0.2062943,
+    "lat": 0.004,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:43:00Z",
+    "sent_time": "2026-02-01T12:43:03Z",
+    "lon": 0.2019776,
+    "lat": 0.004,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:44:00Z",
+    "sent_time": "2026-02-01T12:44:03Z",
+    "lon": 0.1976608,
+    "lat": 0.004,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:45:00Z",
+    "sent_time": "2026-02-01T12:45:03Z",
+    "lon": 0.1933441,
+    "lat": 0.004,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:46:00Z",
+    "sent_time": "2026-02-01T12:46:03Z",
+    "lon": 0.1890273,
+    "lat": 0.004,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:47:00Z",
+    "sent_time": "2026-02-01T12:47:03Z",
+    "lon": 0.1847106,
+    "lat": 0.004,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0007",
+    "position_time": "2026-02-01T12:48:00Z",
+    "sent_time": "2026-02-01T12:48:03Z",
+    "lon": 0.1803939,
+    "lat": 0.004,
+    "accuracy": "high"
+   }
+  ]
+ }
+}

@@ -32,6 +32,10 @@ private_adapter_module = ""
 fixture = "../tests/fixtures/synthetic/demo_snapshot.json"
 # Synthetic capture batches loaded by `python -m eye db-load-fixtures` (demo only).
 capture_fixtures = "../tests/fixtures/synthetic/captures"
+# Synthetic AIS captures (Package 2) loaded by the same command (demo only).
+ais_capture_fixtures = "../tests/fixtures/synthetic/ais/transit"
+# Versioned count lines used by `python -m eye db-derive-transits`.
+count_lines = "../reference/lines"
 
 [database]
 # Name of the environment variable holding the PostgreSQL URL. The URL (and

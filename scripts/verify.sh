@@ -24,6 +24,9 @@ step "lint and format"
 step "generated wire types are current"
 "$PY" scripts/gen_wire_types.py --check
 
+step "generated synthetic AIS fixtures are current"
+"$PY" scripts/gen_ais_fixtures.py --check
+
 step "web typecheck"
 npm run --prefix web typecheck
 

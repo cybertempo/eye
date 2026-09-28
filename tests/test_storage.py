@@ -25,11 +25,16 @@ from eye.storage.migrate import (
     MigrationError,
     Statement,
     applied,
+    discover,
     execute_statements,
     migrate,
     status,
 )
 from pg8000.exceptions import DatabaseError
+
+# The repository's own migrations; tests add the next version after them.
+EXISTING = [m.version for m in discover()]
+NEXT = EXISTING[-1] + 1
 
 
 def fingerprint(conn) -> dict:
@@ -93,9 +98,9 @@ def vessel_versions(conn):
 
 def test_clean_database_migrates_and_rerun_is_a_no_op(make_db):
     conn = connect(make_db())
-    assert migrate(conn) == [1]
+    assert migrate(conn) == EXISTING
     assert migrate(conn) == []
-    assert status(conn) == {"applied": [1], "pending": []}
+    assert status(conn) == {"applied": EXISTING, "pending": []}
     assert conn.run("SELECT PostGIS_Lib_Version()")[0][0].startswith("3.")
 
 
@@ -113,7 +118,7 @@ def test_failed_migration_leaves_prior_data_intact_and_good_one_applies(make_db,
     before = fingerprint(conn)
     assert before["observations"], "control: fixtures produced data"
 
-    broken = migrations / "0002_add_note_column.sql"
+    broken = migrations / f"{NEXT:04d}_add_note_column.sql"
     broken.write_text(
         "ALTER TABLE eye.observation ADD COLUMN note text;\n"
         "CREATE TABLE eye.half_done (x int);\n"
@@ -123,7 +128,7 @@ def test_failed_migration_leaves_prior_data_intact_and_good_one_applies(make_db,
     with pytest.raises(MigrationError, match="rolled back"):
         migrate(conn, migrations)
     assert fingerprint(conn) == before
-    assert status(conn, migrations) == {"applied": [1], "pending": [2]}
+    assert status(conn, migrations) == {"applied": EXISTING, "pending": [NEXT]}
     assert conn.run("SELECT to_regclass('eye.half_done')") == [[None]]
     columns = conn.run(
         "SELECT column_name FROM information_schema.columns "
@@ -133,9 +138,9 @@ def test_failed_migration_leaves_prior_data_intact_and_good_one_applies(make_db,
 
     # Positive control: the corrected migration applies over the same data.
     broken.write_text("ALTER TABLE eye.observation ADD COLUMN note text;\n", encoding="utf-8")
-    assert migrate(conn, migrations) == [2]
+    assert migrate(conn, migrations) == [NEXT]
     assert fingerprint(conn) == before
-    assert status(conn, migrations) == {"applied": [1, 2], "pending": []}
+    assert status(conn, migrations) == {"applied": [*EXISTING, NEXT], "pending": []}
 
 
 PLPGSQL_MIGRATION = """
@@ -165,15 +170,15 @@ def test_commit_on_the_same_line_cannot_commit_partial_work(make_db, tmp_path, s
     migrations = copy_migrations(tmp_path)
     conn = connect(make_db())
     migrate(conn, migrations)
-    (migrations / "0002_sneaky.sql").write_text(sql, encoding="utf-8")
+    (migrations / f"{NEXT:04d}_sneaky.sql").write_text(sql, encoding="utf-8")
     with pytest.raises(MigrationError, match="transaction control"):
         migrate(conn, migrations)
     assert conn.run("SELECT to_regclass('eye.leak'), to_regclass('eye.leak2')") == [[None, None]]
-    assert sorted(applied(conn)) == [1]  # nothing from the refused file was recorded
+    assert sorted(applied(conn)) == EXISTING  # nothing from the refused file was recorded
 
     # Positive control: a valid PL/pgSQL function migration applies.
-    (migrations / "0002_sneaky.sql").write_text(PLPGSQL_MIGRATION, encoding="utf-8")
-    assert migrate(conn, migrations) == [2]
+    (migrations / f"{NEXT:04d}_sneaky.sql").write_text(PLPGSQL_MIGRATION, encoding="utf-8")
+    assert migrate(conn, migrations) == [NEXT]
     assert conn.run("SELECT eye.add_one(41)") == [[42]]
 
 
@@ -205,11 +210,14 @@ def test_edited_applied_migration_is_refused(make_db, tmp_path):
 
 def test_migration_files_are_checked_before_running(tmp_path):
     migrations = copy_migrations(tmp_path)
-    (migrations / "0003_gap.sql").write_text("SELECT 1;\n", encoding="utf-8")
+    gap = migrations / f"{NEXT + 1:04d}_gap.sql"
+    gap.write_text("SELECT 1;\n", encoding="utf-8")
     with pytest.raises(MigrationError, match="without gaps"):
         migrate(None, migrations)
-    (migrations / "0003_gap.sql").unlink()
-    (migrations / "0002_open_quote.sql").write_text("SELECT 'unterminated;\n", encoding="utf-8")
+    gap.unlink()
+    (migrations / f"{NEXT:04d}_open_quote.sql").write_text(
+        "SELECT 'unterminated;\n", encoding="utf-8"
+    )
     with pytest.raises(MigrationError, match="unterminated"):
         migrate(None, migrations)
 
