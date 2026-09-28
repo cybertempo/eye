@@ -12,6 +12,9 @@ produced with their evidence links (``eye.run_crossing``, ``eye.run_gap``,
 ``eye.run_count``). ``verify`` checks the current rows against current
 evidence; ``audit_run`` re-derives any past run from exactly the batches it
 used and compares, so an original and a revised count can both be audited.
+Both take the intervals that must have counts from an independent source: the
+run manifest (``derivation_run.count_intervals``, immutable) and the hourly
+bins spanning capture coverage, never from the count rows being checked.
 
 Rules (all distances in metres on a local equirectangular projection centred
 on the line; adequate at the few-kilometre scale of one count line):
@@ -598,16 +601,35 @@ def hourly_intervals(inputs: Inputs) -> list[tuple[datetime, datetime]]:
     return out
 
 
-def _stored_intervals(conn, source_id, line) -> list[tuple[datetime, datetime]]:
+def _parse_manifest(value) -> list[tuple[datetime, datetime]]:
+    doc = json.loads(value) if isinstance(value, str) else value
+    return [(datetime.fromisoformat(a), datetime.fromisoformat(b)) for a, b in doc]
+
+
+def latest_run(conn, source_id, line) -> tuple[str | None, list[tuple[datetime, datetime]]]:
+    """The newest recorded run for this scope and the intervals it was asked to count.
+
+    Read from the immutable run manifest, never from the count rows, so deleting
+    count rows cannot shrink what verification expects to find.
+    """
     rows = conn.run(
-        "SELECT interval_start, interval_end FROM eye.transit_count WHERE source_id = :s "
-        "AND line_id = :l AND line_version = :v AND algorithm_version = :a",
+        "SELECT run_id::text, count_intervals FROM eye.derivation_run WHERE source_id = :s "
+        "AND line_id = :l AND line_version = :v AND algorithm_version = :a "
+        "ORDER BY derived_at DESC, run_id DESC LIMIT 1",
         s=source_id,
         l=line.line_id,
         v=line.version,
         a=ALGORITHM_VERSION,
     )
-    return [(_utc(a), _utc(b)) for a, b in rows]
+    if not rows:
+        return None, []
+    return rows[0][0], _parse_manifest(rows[0][1])
+
+
+def expected_intervals(conn, source_id, line, inputs: Inputs) -> list[tuple[datetime, datetime]]:
+    """Intervals that must have counts: the latest run's manifest plus every hour of coverage."""
+    _, manifest = latest_run(conn, source_id, line)
+    return sorted(set(manifest) | set(hourly_intervals(inputs)))
 
 
 def store(
@@ -623,8 +645,8 @@ def store(
             k=f"{KIND}:{source_id}:{line.line_id}",
         )
         register_line(conn, line)
-        wanted = sorted(set(intervals) | set(_stored_intervals(conn, source_id, line)))
         inputs = read_inputs(conn, source_id, line)
+        wanted = sorted(set(intervals) | set(expected_intervals(conn, source_id, line, inputs)))
         derived = derive(inputs, line, wanted)
         run_id = stable_id(
             "run",
@@ -646,9 +668,10 @@ def store(
         }
         created = conn.run(
             "INSERT INTO eye.derivation_run (run_id, kind, source_id, line_id, line_version, "
-            "algorithm_version, input_fingerprint, input_batch_ids, observation_count, "
-            "coverage_ids, summary) VALUES (:id, :kind, :s, :l, :v, :a, :fp, "
-            "CAST(:batches AS uuid[]), :n, CAST(:cov AS uuid[]), CAST(:summary AS jsonb)) "
+            "algorithm_version, input_fingerprint, input_batch_ids, count_intervals, "
+            "observation_count, coverage_ids, summary) VALUES (:id, :kind, :s, :l, :v, :a, "
+            ":fp, CAST(:batches AS uuid[]), CAST(:intervals AS jsonb), :n, "
+            "CAST(:cov AS uuid[]), CAST(:summary AS jsonb)) "
             "ON CONFLICT (run_id) DO NOTHING RETURNING run_id",
             id=run_id,
             kind=KIND,
@@ -658,6 +681,7 @@ def store(
             a=ALGORITHM_VERSION,
             fp=inputs.fingerprint,
             batches=inputs.batch_ids,
+            intervals=json.dumps([[iso(a), iso(b)] for a, b in wanted]),
             n=len(inputs.points),
             cov=sorted(c.coverage_id for c in inputs.coverage),
             summary=json.dumps(summary, sort_keys=True),
@@ -953,15 +977,30 @@ def _compare(expected: Derivation, stored: Derivation, labels, problems: list[st
 def verify(conn: Connection, source_id: str, line: CountLine) -> list[str]:
     """Re-derive from current evidence and compare with every current derived value."""
     problems: list[str] = []
-    intervals = _stored_intervals(conn, source_id, line)
     inputs = read_inputs(conn, source_id, line)
-    expected = derive(inputs, line, sorted(set(intervals)))
+    expected = derive(inputs, line, expected_intervals(conn, source_id, line, inputs))
     _compare(
         expected,
         read_stored(conn, source_id, line),
         ("tracks", "gaps", "crossings", "counts"),
         problems,
     )
+    latest, _ = latest_run(conn, source_id, line)
+    referenced = {
+        r
+        for (r,) in conn.run(
+            "SELECT DISTINCT run_id::text FROM eye.transit_count WHERE source_id = :s "
+            "AND line_id = :l AND line_version = :v AND algorithm_version = :a "
+            "UNION SELECT DISTINCT run_id::text FROM eye.line_crossing WHERE source_id = :s "
+            "AND line_id = :l AND line_version = :v AND algorithm_version = :a",
+            s=source_id,
+            l=line.line_id,
+            v=line.version,
+            a=ALGORITHM_VERSION,
+        )
+    }
+    if referenced - {latest}:
+        problems.append(f"current rows come from run(s) other than the latest run {latest}")
     return problems
 
 
@@ -984,12 +1023,13 @@ def audit_run(conn: Connection, run_id: str, line: CountLine) -> list[str]:
     """Re-derive one recorded run from exactly the batches it used and compare."""
     rows = conn.run(
         "SELECT source_id, line_id, line_version, algorithm_version, input_fingerprint, "
-        "input_batch_ids::text[] FROM eye.derivation_run WHERE run_id = CAST(:run AS uuid)",
+        "input_batch_ids::text[], count_intervals FROM eye.derivation_run "
+        "WHERE run_id = CAST(:run AS uuid)",
         run=run_id,
     )
     if not rows:
         return [f"run {run_id}: not recorded"]
-    source_id, line_id, line_version, algorithm, fingerprint, batch_ids = rows[0]
+    source_id, line_id, line_version, algorithm, fingerprint, batch_ids, manifest = rows[0]
     if (line_id, line_version, algorithm) != (line.line_id, line.version, ALGORITHM_VERSION):
         return [f"run {run_id}: recorded for {line_id} v{line_version} {algorithm}"]
     problems: list[str] = []
@@ -997,9 +1037,7 @@ def audit_run(conn: Connection, run_id: str, line: CountLine) -> list[str]:
     if inputs.fingerprint != fingerprint:
         problems.append(f"run {run_id}: its input batches no longer give the recorded evidence")
     recorded = read_run(conn, run_id)
-    intervals = sorted(
-        (datetime.fromisoformat(c[0]), datetime.fromisoformat(c[1]))
-        for c in recorded.counts.values()
-    )
+    # The intervals come from the run's own manifest, not from its count rows.
+    intervals = _parse_manifest(manifest)
     _compare(derive(inputs, line, intervals), recorded, ("gaps", "crossings", "counts"), problems)
     return problems

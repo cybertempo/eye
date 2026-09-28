@@ -645,7 +645,15 @@ def test_replay_audits_every_recorded_run(make_db):
     derive(conn)
     ingest(conn, backfill)
     derive(conn)
-    env_url = url
+    code, report = replay(url)
+    assert code == 0, report
+    assert report["discrepancies"] == [] and report["audited_runs"] == 2
+
+
+# --- O42: expected intervals come from the run manifest and capture hours ---------------
+
+
+def replay(url: str) -> tuple[int, dict]:
     result = subprocess.run(
         [
             sys.executable,
@@ -662,9 +670,140 @@ def test_replay_audits_every_recorded_run(make_db):
         env={
             "PATH": "/usr/bin:/bin",
             "PYTHONPATH": str(REPO_ROOT / "backend"),
-            "EYE_DATABASE_URL": env_url,
+            "EYE_DATABASE_URL": url,
         },
     )
-    assert result.returncode == 0, result.stdout + result.stderr
-    report = json.loads(result.stdout)
-    assert report["discrepancies"] == [] and report["audited_runs"] == 2
+    return result.returncode, json.loads(result.stdout)
+
+
+DELETIONS = {
+    "no count row": None,
+    "one current count row": "DELETE FROM eye.transit_count WHERE interval_start = :a",
+    "every current count row": "DELETE FROM eye.transit_count",
+    "one recorded count row": "DELETE FROM eye.run_count WHERE interval_start = :a",
+    "every recorded count row": "DELETE FROM eye.run_count",
+}
+
+
+@pytest.mark.parametrize("deletion", DELETIONS)
+def test_replay_detects_deleted_count_rows(make_db, deletion):
+    url = make_db()
+    conn = connect(url)
+    migrate(conn)
+    load(conn, "transit")
+    run_id, _ = derive(conn, HOURS_3)
+    table = "run_count" if "recorded" in deletion else "transit_count"
+    before = conn.run(f"SELECT count(*) FROM eye.{table}")[0][0]  # noqa: S608
+    assert before >= len(HOURS_3)
+    # The manifest recorded with the run is independent of the count rows.
+    manifest = conn.run(
+        "SELECT jsonb_array_length(count_intervals) FROM eye.derivation_run "
+        "WHERE run_id = CAST(:run AS uuid)",
+        run=run_id,
+    )[0][0]
+    assert manifest == before
+    statement = DELETIONS[deletion]
+    if statement:
+        conn.run("ALTER TABLE eye.run_count DISABLE TRIGGER run_count_append_only")
+        conn.run(statement, a=NOON)
+    after = conn.run(f"SELECT count(*) FROM eye.{table}")[0][0]  # noqa: S608
+    deleted = before - after
+    assert deleted == {"no": 0, "one": 1, "every": before}[deletion.split()[0]]
+    conn.close()
+
+    code, report = replay(url)
+    missing = [p for p in report["discrepancies"] if "derivable from evidence but not stored" in p]
+    if deleted == 0:  # the clean-run control
+        assert (code, report["discrepancies"], report["audited_runs"]) == (0, [], 1)
+    else:
+        assert code == 5, report
+        assert len(missing) == deleted, report["discrepancies"]
+        assert all(p.startswith("counts ") for p in missing)
+        assert report["discrepancies"] == missing  # nothing else is reported
+
+
+def test_every_interval_deleted_is_still_expected_from_capture_hours(fresh):
+    conn = fresh()
+    load(conn, "transit")
+    derive(conn)
+    inputs = transits.read_inputs(conn, SOURCE, LINE)
+    capture_hours = set(transits.hourly_intervals(inputs))
+    assert capture_hours  # control: the capture itself names hours to count
+    conn.run("DELETE FROM eye.transit_count")
+    problems = transits.verify(conn, SOURCE, LINE)
+    assert len(problems) == len(set(HOUR) | capture_hours), problems
+
+
+# --- O43: recorded counts obey the same rules as current counts ---------------------------
+
+
+COUNT_CASES = [
+    # (state, inbound, outbound, total, ambiguous, boundary, insufficient, reason, refused by)
+    ("unknown", 0, 0, 0, 0, 0, 0, "outage", "missing_is_null"),
+    ("unknown", None, None, None, 0, 0, 0, None, "missing_is_null"),
+    ("failed", 0, 0, 0, 0, 0, 0, "capture failed", "missing_is_null"),
+    ("qualified", 1, 0, 2, 0, 0, 0, None, "missing_is_null"),
+    ("qualified", 1, 0, None, 0, 0, 0, None, "missing_is_null"),
+    ("partial", None, None, None, 1, 0, 0, "lower bound", "missing_is_null"),
+    ("qualified", 1, 0, 1, 1, 0, 0, None, "qualified_is_certain"),
+    ("qualified", 1, 0, 1, 0, 1, 0, None, "qualified_is_certain"),
+    ("qualified", 1, 0, 1, 0, 0, 1, None, "qualified_is_certain"),
+    ("partial", 1, 0, 1, 1, 0, 0, None, "partial_has_reason"),
+    ("qualified", -1, 1, 0, 0, 0, 0, None, "inbound_check"),
+    ("qualified", 0, 0, 0, 0, 0, 0, None, "empty interval"),
+    # Accepted rows: the positive controls, checked on the same table.
+    ("qualified", 1, 1, 2, 0, 0, 0, None, None),
+    ("qualified", 0, 0, 0, 0, 0, 0, None, None),
+    ("partial", 1, 0, 1, 1, 1, 0, "lower bound", None),
+    ("unknown", None, None, None, 0, 0, 1, "insufficient evidence", None),
+    ("failed", None, None, None, 0, 0, 0, "capture failed", None),
+]
+COUNT_COLUMNS = (
+    "count_id, interval_start, interval_end, state, inbound, outbound, total, "
+    "ambiguous_crossings, boundary_crossings, insufficient_gaps, reason, coverage_ids, "
+    "crossing_ids, insufficient_gap_ids"
+)
+COUNT_VALUES = (
+    "gen_random_uuid(), :a, :b, CAST(:state AS eye.coverage_state), :i, :o, :t, :amb, "
+    ":bnd, :ins, :reason, '{}', '{}', '{}'"
+)
+COUNT_INSERTS = {
+    "transit_count": (
+        f"INSERT INTO eye.transit_count (run_id, source_id, line_id, line_version, "  # noqa: S608
+        f"algorithm_version, {COUNT_COLUMNS}) VALUES (CAST(:run AS uuid), 'synthetic-ais', "
+        f"'synthetic-golden-gate', 1, 'probe', {COUNT_VALUES})"
+    ),
+    "run_count": (
+        f"INSERT INTO eye.run_count (run_id, {COUNT_COLUMNS}) "  # noqa: S608
+        f"VALUES (CAST(:run AS uuid), {COUNT_VALUES})"
+    ),
+}
+
+
+@pytest.mark.parametrize("table", COUNT_INSERTS)
+def test_count_tables_refuse_invalid_rows_and_accept_valid_rows(fresh, table):
+    conn = fresh()
+    load(conn, "quiet")
+    run_id, _ = derive(conn)
+    base = datetime(2026, 3, 1, tzinfo=UTC)
+    outcomes = []
+    for n, (state, i, o, t, amb, bnd, ins, reason, refused_by) in enumerate(COUNT_CASES):
+        start = base.replace(day=1 + n)
+        end = start if refused_by == "empty interval" else start.replace(hour=1)
+        params = dict(run=run_id, a=start, b=end, state=state, i=i, o=o, t=t)
+        params.update(amb=amb, bnd=bnd, ins=ins, reason=reason)
+        try:
+            conn.run(COUNT_INSERTS[table], **params)
+            outcomes.append((n, None))
+        except DatabaseError as exc:
+            outcomes.append((n, exc.args[0].get("n", str(exc))))
+    names = {None: None, "empty interval": f"{table}_check"}
+    expected = [
+        (n, names.get(case[-1], f"{table}_{case[-1]}")) for n, case in enumerate(COUNT_CASES)
+    ]
+    assert outcomes == expected
+    accepted = conn.run(
+        f"SELECT count(*) FROM eye.{table} WHERE interval_start >= :a",  # noqa: S608
+        a=base,
+    )
+    assert accepted == [[sum(case[-1] is None for case in COUNT_CASES)]]

@@ -58,9 +58,14 @@ Date: 2026-09-28. Status: proposed (awaiting owner review).
    - `qualified` with exact counts: everything else. Only this state can be a
      measured zero.
 
-   The database enforces NULL counts for unknown/failed
-   (`transit_count_missing_is_null`) and refuses `qualified` when ambiguous,
-   boundary-uncertain or insufficient items exist.
+   The database enforces these rules with the same named constraints on the
+   current table and on the immutable run record (O43):
+   `*_missing_is_null` (unknown/failed have NULL counts and a reason;
+   qualified/partial have non-NULL counts with `total = inbound + outbound`),
+   `*_partial_has_reason` and `*_qualified_is_certain` (no ambiguous,
+   boundary-uncertain or insufficient items), for both `eye.transit_count` and
+   `eye.run_count`. Recorded crossings and gaps carry the matching status,
+   reason, window and enum checks.
 9. **Current rows are replaced; every run is recorded immutably (O41).** The
    current tracks, gaps, crossings and counts are replaced for one (source,
    line, line version, algorithm version) scope in one transaction. Each run is
@@ -74,6 +79,14 @@ Date: 2026-09-28. Status: proposed (awaiting owner review).
     gaps, crossings and counts from current evidence, and re-derives every
     recorded run from exactly its input batches (`audit_run`), reporting any
     missing, extra, different or stale row.
+11. **Expected count intervals never come from the count rows being checked
+    (O42).** Each run records the intervals it was asked to count in an
+    immutable manifest (`eye.derivation_run.count_intervals`). Verification of
+    the current tables expects the latest run's manifest plus every hour spanned
+    by capture coverage; auditing a recorded run expects its own manifest.
+    Deleting one count row, or every count row, is therefore reported as a
+    count that is derivable from evidence but not stored. Verification also
+    reports current rows that do not come from the latest run.
 
 ## Consequences
 

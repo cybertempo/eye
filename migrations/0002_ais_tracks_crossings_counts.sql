@@ -41,6 +41,9 @@ CREATE TABLE eye.derivation_run (
     algorithm_version text NOT NULL,
     input_fingerprint eye.sha256_hex NOT NULL,
     input_batch_ids   uuid[] NOT NULL,
+    -- The intervals this run was asked to count, as [[start, end], ...]. It is
+    -- the independent manifest that replay checks count rows against.
+    count_intervals   jsonb NOT NULL CHECK (jsonb_typeof(count_intervals) = 'array'),
     observation_count integer NOT NULL CHECK (observation_count >= 0),
     coverage_ids      uuid[] NOT NULL,
     summary           jsonb NOT NULL,
@@ -156,11 +159,14 @@ CREATE TABLE eye.transit_count (
         (state IN ('unknown', 'failed') AND inbound IS NULL AND outbound IS NULL
          AND total IS NULL AND reason IS NOT NULL)
         OR (state IN ('qualified', 'partial') AND inbound IS NOT NULL
-            AND outbound IS NOT NULL AND total = inbound + outbound)
+            AND outbound IS NOT NULL AND total IS NOT NULL
+            AND total = inbound + outbound)
     ),
-    CHECK (state <> 'partial' OR reason IS NOT NULL),
-    CHECK (state <> 'qualified' OR (ambiguous_crossings = 0 AND boundary_crossings = 0
-                                    AND insufficient_gaps = 0)),
+    CONSTRAINT transit_count_partial_has_reason CHECK (state <> 'partial' OR reason IS NOT NULL),
+    CONSTRAINT transit_count_qualified_is_certain CHECK (
+        state <> 'qualified' OR (ambiguous_crossings = 0 AND boundary_crossings = 0
+                                 AND insufficient_gaps = 0)
+    ),
     UNIQUE (source_id, line_id, line_version, algorithm_version, interval_start, interval_end)
 );
 
@@ -182,7 +188,9 @@ CREATE TABLE eye.run_crossing (
     crossing_lon          double precision NOT NULL,
     crossing_lat          double precision NOT NULL,
     evidence_batch_ids    uuid[] NOT NULL CHECK (cardinality(evidence_batch_ids) >= 1),
-    PRIMARY KEY (run_id, crossing_id)
+    PRIMARY KEY (run_id, crossing_id),
+    CHECK ((status = 'definite') = (reason IS NULL)),
+    CHECK (window_start < window_end AND crossing_time BETWEEN window_start AND window_end)
 );
 
 CREATE TABLE eye.run_gap (
@@ -193,31 +201,45 @@ CREATE TABLE eye.run_gap (
     after_observation_id  uuid REFERENCES eye.observation (observation_id),
     gap_start             timestamptz,
     gap_end               timestamptz,
-    reason                text NOT NULL,
-    effect                text NOT NULL,
+    reason                text NOT NULL CHECK (reason IN ('time_gap', 'implausible_jump',
+                                                          'track_start', 'track_end')),
+    effect                text NOT NULL CHECK (effect IN ('none', 'ambiguous_crossing',
+                                                          'insufficient_evidence')),
     PRIMARY KEY (run_id, gap_id)
 );
 
+-- The same rules as eye.transit_count: an immutable record may not hold a
+-- zero for an unknown count, a wrong total, or an exact count with uncertainty.
 CREATE TABLE eye.run_count (
     run_id               uuid NOT NULL REFERENCES eye.derivation_run (run_id),
     count_id             uuid NOT NULL,
     interval_start       timestamptz NOT NULL,
     interval_end         timestamptz NOT NULL,
     state                eye.coverage_state NOT NULL,
-    inbound              integer,
-    outbound             integer,
-    total                integer,
-    ambiguous_crossings  integer NOT NULL,
-    boundary_crossings   integer NOT NULL,
-    insufficient_gaps    integer NOT NULL,
-    reason               text,
+    inbound              integer CHECK (inbound >= 0),
+    outbound             integer CHECK (outbound >= 0),
+    total                integer CHECK (total >= 0),
+    ambiguous_crossings  integer NOT NULL CHECK (ambiguous_crossings >= 0),
+    boundary_crossings   integer NOT NULL CHECK (boundary_crossings >= 0),
+    insufficient_gaps    integer NOT NULL CHECK (insufficient_gaps >= 0),
+    reason               text CHECK (reason IS NULL OR length(reason) BETWEEN 1 AND 500),
     coverage_ids         uuid[] NOT NULL,
     crossing_ids         uuid[] NOT NULL,
     insufficient_gap_ids uuid[] NOT NULL,
     PRIMARY KEY (run_id, count_id),
+    UNIQUE (run_id, interval_start, interval_end),
+    CHECK (interval_end > interval_start),
     CONSTRAINT run_count_missing_is_null CHECK (
-        (state IN ('unknown', 'failed') AND total IS NULL AND reason IS NOT NULL)
-        OR (state IN ('qualified', 'partial') AND total = inbound + outbound)
+        (state IN ('unknown', 'failed') AND inbound IS NULL AND outbound IS NULL
+         AND total IS NULL AND reason IS NOT NULL)
+        OR (state IN ('qualified', 'partial') AND inbound IS NOT NULL
+            AND outbound IS NOT NULL AND total IS NOT NULL
+            AND total = inbound + outbound)
+    ),
+    CONSTRAINT run_count_partial_has_reason CHECK (state <> 'partial' OR reason IS NOT NULL),
+    CONSTRAINT run_count_qualified_is_certain CHECK (
+        state <> 'qualified' OR (ambiguous_crossings = 0 AND boundary_crossings = 0
+                                 AND insufficient_gaps = 0)
     )
 );
 
