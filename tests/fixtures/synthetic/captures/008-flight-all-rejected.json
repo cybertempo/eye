@@ -1,0 +1,53 @@
+{
+  "capture_format": "eye.synthetic-capture/2",
+  "synthetic": true,
+  "source_id": "synthetic-fixture",
+  "adapter_version": "synthetic-adapter/2",
+  "note": "Provider answered ok but every record is unusable (a provider-supplied receipt time; published before observed): failed, metric null, never zero.",
+  "layer": "flight",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-01-01T00:30:00Z",
+    "end": "2026-01-01T00:45:00Z",
+    "expected_interval_s": 300
+  },
+  "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every record",
+    "started_at": "2026-01-01T00:45:00Z",
+    "finished_at": "2026-01-01T00:45:01Z",
+    "provider_status": "ok",
+    "quota_cost": 0,
+    "observed_start": "2026-01-01T00:30:00Z",
+    "observed_end": "2026-01-01T00:45:00Z"
+  },
+  "provider_response": {
+    "records": [
+      {
+        "record_id": "SYN-FLT-002",
+        "observed_time": "2026-01-01T00:31:00Z",
+        "source_published_time": "2026-01-01T00:31:05Z",
+        "lon": -0.3,
+        "lat": -0.1,
+        "alt_m": 9000,
+        "confidence": 0.9,
+        "quality_flags": [],
+        "received_time": "2026-01-01T00:31:06Z"
+      },
+      {
+        "record_id": "SYN-FLT-003",
+        "observed_time": "2026-01-01T00:40:00Z",
+        "source_published_time": "2026-01-01T00:39:00Z",
+        "lon": -0.2,
+        "lat": -0.1,
+        "alt_m": 9000,
+        "confidence": 0.9,
+        "quality_flags": []
+      }
+    ]
+  }
+}

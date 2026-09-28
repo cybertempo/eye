@@ -33,7 +33,7 @@ def test_db_commands_end_to_end(make_db):
     loaded = run_eye("db-load-fixtures", url=url)
     assert loaded.returncode == 0, loaded.stderr
     first = json.loads(loaded.stdout)
-    assert first["created"] == first["batches"] == 7
+    assert first["created"] == first["batches"] == 8
     again = json.loads(run_eye("db-load-fixtures", url=url).stdout)
     assert again["created"] == 0
     replay = run_eye("db-replay", url=url)

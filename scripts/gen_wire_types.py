@@ -44,6 +44,12 @@ def ts_type(node: dict, indent: str = "") -> str:
     for name in names:
         if name == "object":
             parts.append(object_type(node, indent))
+        elif name == "array" and "prefixItems" in node:
+            members = [ts_type(child, indent) for child in node["prefixItems"]]
+            rest = node.get("items", False)
+            if rest is not False:
+                members.append(f"...({ts_type(rest, indent)})[]")
+            parts.append(f"readonly [{', '.join(members)}]")
         elif name == "array":
             item = ts_type(node.get("items", {}), indent)
             parts.append(f"({item})[]" if " " in item else f"{item}[]")

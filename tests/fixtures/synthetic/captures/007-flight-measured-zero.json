@@ -1,9 +1,9 @@
 {
-  "capture_format": "eye.synthetic-capture/1",
+  "capture_format": "eye.synthetic-capture/2",
   "synthetic": true,
   "source_id": "synthetic-fixture",
-  "adapter_version": "synthetic-adapter/1",
-  "note": "Flight feed healthy but nothing in the area: a genuine measured zero.",
+  "adapter_version": "synthetic-adapter/2",
+  "note": "Flight feed healthy and empty for the area: a genuine measured zero.",
   "layer": "flight",
   "request": {
     "bbox": [
@@ -17,6 +17,7 @@
     "expected_interval_s": 300
   },
   "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every record",
     "started_at": "2026-01-01T00:30:00Z",
     "finished_at": "2026-01-01T00:30:01Z",
     "provider_status": "ok",
@@ -24,5 +25,7 @@
     "observed_start": "2026-01-01T00:15:00Z",
     "observed_end": "2026-01-01T00:30:00Z"
   },
-  "records": []
+  "provider_response": {
+    "records": []
+  }
 }

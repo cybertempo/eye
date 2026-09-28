@@ -3,8 +3,10 @@
 -- Review notes (see migrations/README.md for process and restore):
 -- * Forward only. The runner applies this file in one transaction with the
 --   version row, so a failure leaves the database exactly as it was.
--- * Source time (observed_time) and server receipt time (received_time) are
---   separate NOT NULL columns and are never merged.
+-- * Source event time (observation.observed_time), source publication time and
+--   EYE receipt time (observation_receipt.received_time, stamped by EYE's capture
+--   adapter) are separate NOT NULL columns in separate rows and never merged.
+-- * Correction order comes from the source's publication time, not load order.
 -- * Coverage in state unknown/failed must have a NULL metric; a zero is only
 --   valid for qualified/partial coverage (brief section 4).
 -- * Raw evidence, observations and coverage are append-only; retention and
@@ -20,6 +22,12 @@ CREATE DOMAIN eye.identifier AS text
 
 CREATE DOMAIN eye.sha256_hex AS text
     CHECK (VALUE ~ '^[0-9a-f]{64}$');
+
+-- Canonical text form of an instant, used wherever stored times are compared
+-- or exported: RFC 3339, UTC, microseconds, Z suffix.
+CREATE FUNCTION eye.iso_utc(t timestamptz) RETURNS text LANGUAGE sql IMMUTABLE STRICT AS $$
+    SELECT to_char(t AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+$$;
 
 CREATE TYPE eye.coverage_state AS ENUM ('qualified', 'partial', 'unknown', 'failed');
 CREATE TYPE eye.batch_status AS ENUM ('pending', 'committed', 'failed');
@@ -50,6 +58,8 @@ CREATE TABLE eye.capture_batch (
     committed_at        timestamptz,
     CHECK (requested_end > requested_start),
     CHECK (attempt_finished_at >= attempt_started_at),
+    -- EYE cannot have received data about an interval that had not ended.
+    CHECK (attempt_finished_at >= requested_end),
     CHECK (status = 'pending' OR (accepted_count IS NOT NULL AND rejected_count IS NOT NULL
                                   AND committed_at IS NOT NULL))
 );
@@ -65,32 +75,97 @@ CREATE TABLE eye.raw_evidence (
     CHECK (octet_length(content) = byte_size)
 );
 
--- One observed state. The id is derived from source, record, source time and
--- content, so replay reproduces it. A later record for the same source record
--- and time is a correction that points at what it supersedes.
+-- One observed state as the source published it: content only. The id is
+-- derived from source, record, observed time, source publication time and
+-- content, so rebuilds and replays reproduce it. Receipts live separately.
 CREATE TABLE eye.observation (
-    observation_id           uuid PRIMARY KEY,
-    source_id                eye.identifier NOT NULL,
-    source_record_id         eye.identifier NOT NULL,
-    layer                    eye.identifier NOT NULL,
-    display_type             eye.display_type NOT NULL DEFAULT 'observed',
-    observed_time            timestamptz NOT NULL,
-    received_time            timestamptz NOT NULL,
-    position                 geometry(Point, 4326) NOT NULL,
-    altitude_m               double precision CHECK (altitude_m BETWEEN -12000 AND 100000),
-    confidence               real CHECK (confidence BETWEEN 0 AND 1),
-    quality_flags            text[] NOT NULL DEFAULT '{}' CHECK (cardinality(quality_flags) <= 16),
-    content_sha256           eye.sha256_hex NOT NULL,
-    supersedes_observation_id uuid REFERENCES eye.observation (observation_id),
-    batch_id                 uuid NOT NULL REFERENCES eye.capture_batch (batch_id),
-    evidence_id              uuid NOT NULL REFERENCES eye.raw_evidence (evidence_id),
-    schema_version           text NOT NULL,
-    adapter_version          text NOT NULL,
-    CHECK (ST_X(position) BETWEEN -180 AND 180 AND ST_Y(position) BETWEEN -90 AND 90)
+    observation_id        uuid PRIMARY KEY,
+    source_id             eye.identifier NOT NULL,
+    source_record_id      eye.identifier NOT NULL,
+    layer                 eye.identifier NOT NULL,
+    display_type          eye.display_type NOT NULL DEFAULT 'observed',
+    observed_time         timestamptz NOT NULL,
+    source_published_time timestamptz NOT NULL,
+    position              geometry(Point, 4326) NOT NULL,
+    altitude_m            double precision CHECK (altitude_m BETWEEN -12000 AND 100000),
+    confidence            double precision CHECK (confidence BETWEEN 0 AND 1),
+    quality_flags         text[] NOT NULL DEFAULT '{}' CHECK (cardinality(quality_flags) <= 16),
+    content_sha256        eye.sha256_hex NOT NULL,
+    CHECK (ST_X(position) BETWEEN -180 AND 180 AND ST_Y(position) BETWEEN -90 AND 90),
+    -- A source cannot publish an observation before it happened.
+    CHECK (source_published_time >= observed_time)
 );
-CREATE INDEX observation_record_idx ON eye.observation (source_id, source_record_id, observed_time);
+COMMENT ON COLUMN eye.observation.observed_time IS
+    'Source event time: when the source says the state was observed. Never a receipt time.';
+COMMENT ON COLUMN eye.observation.source_published_time IS
+    'When the source issued this version of the record; orders corrections.';
+CREATE INDEX observation_record_idx
+    ON eye.observation (source_id, source_record_id, observed_time, source_published_time);
 CREATE INDEX observation_time_idx ON eye.observation (observed_time);
 CREATE INDEX observation_position_idx ON eye.observation USING gist (position);
+
+-- Each delivery of an observation to EYE. received_time is stamped by EYE's
+-- capture adapter when the provider response arrived (the batch's
+-- attempt_finished_at); a provider can never supply it. A duplicate delivery
+-- adds a receipt, not an observation.
+CREATE TABLE eye.observation_receipt (
+    observation_id  uuid NOT NULL REFERENCES eye.observation (observation_id),
+    batch_id        uuid NOT NULL REFERENCES eye.capture_batch (batch_id),
+    evidence_id     uuid NOT NULL REFERENCES eye.raw_evidence (evidence_id),
+    received_time   timestamptz NOT NULL,
+    schema_version  text NOT NULL,
+    adapter_version text NOT NULL,
+    PRIMARY KEY (observation_id, batch_id)
+);
+COMMENT ON COLUMN eye.observation_receipt.received_time IS
+    'EYE receipt time, stamped by the capture adapter; equals the batch attempt_finished_at.';
+CREATE INDEX observation_receipt_batch_idx ON eye.observation_receipt (batch_id);
+
+-- Receipt chronology is enforced, not assumed.
+CREATE FUNCTION eye.check_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    finished timestamptz;
+    published timestamptz;
+BEGIN
+    SELECT attempt_finished_at INTO finished FROM eye.capture_batch WHERE batch_id = NEW.batch_id;
+    SELECT source_published_time INTO published
+        FROM eye.observation WHERE observation_id = NEW.observation_id;
+    IF NEW.received_time IS DISTINCT FROM finished THEN
+        RAISE EXCEPTION 'eye.observation_receipt: received_time % is not the batch receipt time %',
+            NEW.received_time, finished USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.received_time < published THEN
+        RAISE EXCEPTION 'eye.observation_receipt: received % before the source published it %',
+            NEW.received_time, published USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER observation_receipt_chronology BEFORE INSERT ON eye.observation_receipt
+    FOR EACH ROW EXECUTE FUNCTION eye.check_receipt();
+
+-- Versions of one source record at one observed time, ordered by the source's
+-- publication time (then id), never by load order. Derived, so it cannot drift.
+CREATE VIEW eye.observation_version AS
+SELECT o.observation_id,
+       o.source_id,
+       o.source_record_id,
+       o.observed_time,
+       o.source_published_time,
+       r.first_received_time,
+       r.receipt_count,
+       row_number() OVER w AS version,
+       lag(o.observation_id) OVER w AS supersedes_observation_id,
+       lead(o.observation_id) OVER w IS NULL AS is_current,
+       count(*) OVER (PARTITION BY o.source_id, o.source_record_id, o.observed_time,
+                      o.source_published_time) > 1 AS publication_conflict
+FROM eye.observation o
+JOIN (SELECT observation_id, min(received_time) AS first_received_time, count(*) AS receipt_count
+      FROM eye.observation_receipt GROUP BY observation_id) r USING (observation_id)
+WINDOW w AS (PARTITION BY o.source_id, o.source_record_id, o.observed_time
+             ORDER BY o.source_published_time, o.observation_id);
+COMMENT ON VIEW eye.observation_version IS
+    'publication_conflict: two different versions share a publication time; neither is authoritative.';
 
 -- Coverage for one batch and layer. Missing data is NULL, never zero.
 CREATE TABLE eye.coverage (
@@ -124,6 +199,8 @@ $$;
 CREATE TRIGGER raw_evidence_append_only BEFORE UPDATE OR DELETE ON eye.raw_evidence
     FOR EACH ROW EXECUTE FUNCTION eye.refuse_change();
 CREATE TRIGGER observation_append_only BEFORE UPDATE OR DELETE ON eye.observation
+    FOR EACH ROW EXECUTE FUNCTION eye.refuse_change();
+CREATE TRIGGER observation_receipt_append_only BEFORE UPDATE OR DELETE ON eye.observation_receipt
     FOR EACH ROW EXECUTE FUNCTION eye.refuse_change();
 CREATE TRIGGER coverage_append_only BEFORE UPDATE OR DELETE ON eye.coverage
     FOR EACH ROW EXECUTE FUNCTION eye.refuse_change();

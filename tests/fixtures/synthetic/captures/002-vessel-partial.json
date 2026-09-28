@@ -1,8 +1,8 @@
 {
-  "capture_format": "eye.synthetic-capture/1",
+  "capture_format": "eye.synthetic-capture/2",
   "synthetic": true,
   "source_id": "synthetic-fixture",
-  "adapter_version": "synthetic-adapter/1",
+  "adapter_version": "synthetic-adapter/2",
   "note": "Vessel feed covered only part of the request, and one record is malformed: partial.",
   "layer": "vessel",
   "request": {
@@ -17,6 +17,7 @@
     "expected_interval_s": 600
   },
   "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every record",
     "started_at": "2026-01-01T00:45:00Z",
     "finished_at": "2026-01-01T00:45:03Z",
     "provider_status": "ok",
@@ -24,38 +25,40 @@
     "observed_start": "2026-01-01T00:10:00Z",
     "observed_end": "2026-01-01T00:45:00Z"
   },
-  "records": [
-    {
-      "record_id": "SYN-VES-001",
-      "observed_time": "2026-01-01T00:20:00Z",
-      "received_time": "2026-01-01T00:20:40Z",
-      "lon": 0.13,
-      "lat": 0.27,
-      "alt_m": null,
-      "confidence": 0.9,
-      "quality_flags": [
-        "position_gap_before_first_point"
-      ]
-    },
-    {
-      "record_id": "SYN-VES-001",
-      "observed_time": "2026-01-01T00:40:00Z",
-      "received_time": "2026-01-01T00:41:10Z",
-      "lon": 0.16,
-      "lat": 0.24,
-      "alt_m": null,
-      "confidence": 0.9,
-      "quality_flags": []
-    },
-    {
-      "record_id": "SYN-VES-002",
-      "observed_time": "2026-01-01T00:30:00Z",
-      "received_time": "2026-01-01T00:30:20Z",
-      "lon": 0.2,
-      "lat": 95.0,
-      "alt_m": null,
-      "confidence": 0.9,
-      "quality_flags": []
-    }
-  ]
+  "provider_response": {
+    "records": [
+      {
+        "record_id": "SYN-VES-001",
+        "observed_time": "2026-01-01T00:20:00Z",
+        "source_published_time": "2026-01-01T00:20:30Z",
+        "lon": 0.13,
+        "lat": 0.27,
+        "alt_m": null,
+        "confidence": 0.9,
+        "quality_flags": [
+          "position_gap_before_first_point"
+        ]
+      },
+      {
+        "record_id": "SYN-VES-001",
+        "observed_time": "2026-01-01T00:40:00Z",
+        "source_published_time": "2026-01-01T00:40:50Z",
+        "lon": 0.16,
+        "lat": 0.24,
+        "alt_m": null,
+        "confidence": 0.9,
+        "quality_flags": []
+      },
+      {
+        "record_id": "SYN-VES-002",
+        "observed_time": "2026-01-01T00:30:00Z",
+        "source_published_time": "2026-01-01T00:30:15Z",
+        "lon": 0.2,
+        "lat": 95.0,
+        "alt_m": null,
+        "confidence": 0.9,
+        "quality_flags": []
+      }
+    ]
+  }
 }

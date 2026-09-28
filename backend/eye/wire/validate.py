@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from datetime import datetime
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,8 @@ SUPPORTED_KEYWORDS = frozenset(
         "enum",
         "const",
         "items",
+        "prefixItems",
+        "format",
         "minItems",
         "maxItems",
         "minimum",
@@ -48,6 +51,23 @@ SUPPORTED_KEYWORDS = frozenset(
     }
 )
 TYPES = frozenset({"object", "array", "string", "number", "integer", "boolean", "null"})
+FORMATS = frozenset({"date-time"})
+DATE_TIME = re.compile(
+    r"([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(\.[0-9]{1,6})?Z"
+)
+
+
+def valid_date_time(value: str) -> bool:
+    """RFC 3339 UTC instant on a real calendar date (leap years; no leap seconds)."""
+    match = DATE_TIME.fullmatch(value)
+    if match is None:
+        return False
+    year, month, day, hour, minute, second = (int(g) for g in match.groups()[:6])
+    try:
+        datetime(year, month, day, hour, minute, second)
+    except ValueError:
+        return False
+    return True
 
 
 class WireValidationError(ValueError):
@@ -68,6 +88,8 @@ def _check_schema_node(node: Any, path: str) -> None:
     unknown = set(node) - SUPPORTED_KEYWORDS
     if unknown:
         raise SchemaDefinitionError(f"{path}: unsupported keyword(s) {sorted(unknown)}")
+    if "format" in node and node["format"] not in FORMATS:
+        raise SchemaDefinitionError(f"{path}: unsupported format {node['format']!r}")
     if "additionalProperties" in node and node["additionalProperties"] is not False:
         raise SchemaDefinitionError(f"{path}: additionalProperties must be false")
     if (
@@ -90,8 +112,12 @@ def _check_schema_node(node: Any, path: str) -> None:
         _check_schema_node(child, f"{path}/$defs/{name}")
     for name, child in node.get("properties", {}).items():
         _check_schema_node(child, f"{path}/properties/{name}")
-    if "items" in node:
+    if "items" in node and node["items"] is not False:
         _check_schema_node(node["items"], f"{path}/items")
+    if "prefixItems" in node and "items" not in node:
+        raise SchemaDefinitionError(f"{path}: prefixItems needs items (false or a schema)")
+    for index, child in enumerate(node.get("prefixItems", [])):
+        _check_schema_node(child, f"{path}/prefixItems/{index}")
     for index, child in enumerate(node.get("oneOf", [])):
         _check_schema_node(child, f"{path}/oneOf/{index}")
 
@@ -138,10 +164,11 @@ class WireSchema:
         for key in ("$defs", "properties"):
             for name, child in node.get(key, {}).items():
                 yield from self._walk(child, f"{path}/{key}/{name}")
-        if "items" in node:
+        if isinstance(node.get("items"), dict):
             yield from self._walk(node["items"], f"{path}/items")
-        for index, child in enumerate(node.get("oneOf", [])):
-            yield from self._walk(child, f"{path}/oneOf/{index}")
+        for key in ("prefixItems", "oneOf"):
+            for index, child in enumerate(node.get(key, [])):
+                yield from self._walk(child, f"{path}/{key}/{index}")
 
     def _pattern_ok(self, pattern: str, value: str) -> bool:
         compiled = self._patterns.get(pattern)
@@ -186,6 +213,8 @@ class WireSchema:
                 errors.append(f"{path}: longer than {node['maxLength']}")
             if "pattern" in node and not self._pattern_ok(node["pattern"], value):
                 errors.append(f"{path}: does not match the required format")
+            elif node.get("format") == "date-time" and not valid_date_time(value):
+                errors.append(f"{path}: not a real calendar date and time")
         if _json_type_matches(value, "number"):
             if "minimum" in node and value < node["minimum"]:
                 errors.append(f"{path}: below minimum {node['minimum']}")
@@ -197,9 +226,15 @@ class WireSchema:
             if "maxItems" in node and len(value) > node["maxItems"]:
                 errors.append(f"{path}: more than {node['maxItems']} items")
                 return
-            if "items" in node:
-                for index, item in enumerate(value):
-                    self._check(item, node["items"], f"{path}[{index}]", errors)
+            prefix = node.get("prefixItems", [])
+            for index, (item, child) in enumerate(zip(value, prefix, strict=False)):
+                self._check(item, child, f"{path}[{index}]", errors)
+            items = node.get("items")
+            if items is False and len(value) > len(prefix):
+                errors.append(f"{path}: at most {len(prefix)} items")
+            elif isinstance(items, dict):
+                for index in range(len(prefix), len(value)):
+                    self._check(value[index], items, f"{path}[{index}]", errors)
         if isinstance(value, dict):
             properties = node.get("properties", {})
             for name in node.get("required", []):

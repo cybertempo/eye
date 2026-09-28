@@ -9,8 +9,14 @@ Forward-only SQL files named `NNNN_lower_snake_name.sql`, applied in order by
   lock. A failure rolls the whole file back; prior schema and data are untouched
   (proved by `tests/test_storage.py::test_failed_migration_leaves_prior_data_intact_and_good_one_applies`).
 - Applied files are checksummed in `public.eye_schema_migrations`; editing one
-  after it ran is refused. Versions must run 1..n without gaps. Files must not
-  contain `BEGIN;`, `COMMIT;`, `ROLLBACK;` or `START TRANSACTION;`.
+  after it ran is refused. Versions must run 1..n without gaps.
+- A migration cannot commit partial work. Top-level transaction control
+  (`BEGIN`, `START`, `COMMIT`, `END`, `ROLLBACK`, `ABORT`, `SAVEPOINT`, `RELEASE`,
+  `PREPARE`) is refused anywhere, including after another statement on the same
+  line; quotes, comments and dollar-quoted PL/pgSQL bodies are understood.
+  Each statement is sent unaltered in its own Parse message, which PostgreSQL
+  refuses if it holds two commands, and PostgreSQL refuses `COMMIT` inside
+  `DO`/`CALL` here. The transaction id is checked after every statement.
 - Raw evidence, observations and coverage are append-only (triggers). Deletion
   arrives with the checked retention transition in Package 5.
 

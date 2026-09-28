@@ -1,9 +1,9 @@
 {
-  "capture_format": "eye.synthetic-capture/1",
+  "capture_format": "eye.synthetic-capture/2",
   "synthetic": true,
   "source_id": "synthetic-fixture",
-  "adapter_version": "synthetic-adapter/1",
-  "note": "Duplicate delivery of an already stored flight record: no new observation.",
+  "adapter_version": "synthetic-adapter/2",
+  "note": "The same source version of the 00:05 flight record delivered again: a second receipt, no new observation.",
   "layer": "flight",
   "request": {
     "bbox": [
@@ -17,6 +17,7 @@
     "expected_interval_s": 300
   },
   "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every record",
     "started_at": "2026-01-01T00:10:30Z",
     "finished_at": "2026-01-01T00:10:31Z",
     "provider_status": "ok",
@@ -24,16 +25,18 @@
     "observed_start": "2026-01-01T00:05:00Z",
     "observed_end": "2026-01-01T00:10:00Z"
   },
-  "records": [
-    {
-      "record_id": "SYN-FLT-001",
-      "observed_time": "2026-01-01T00:05:00Z",
-      "received_time": "2026-01-01T00:10:30Z",
-      "lon": -0.25,
-      "lat": -0.12,
-      "alt_m": 9150,
-      "confidence": 0.9,
-      "quality_flags": []
-    }
-  ]
+  "provider_response": {
+    "records": [
+      {
+        "record_id": "SYN-FLT-001",
+        "observed_time": "2026-01-01T00:05:00Z",
+        "source_published_time": "2026-01-01T00:05:03Z",
+        "lon": -0.25,
+        "lat": -0.12,
+        "alt_m": 9150,
+        "confidence": 0.9,
+        "quality_flags": []
+      }
+    ]
+  }
 }

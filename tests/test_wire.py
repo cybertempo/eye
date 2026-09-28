@@ -76,7 +76,47 @@ def test_invalid_messages_fail_python_and_reference(path):
     test = case(path)
     with pytest.raises(WireValidationError):
         validate_message(json.dumps(test["message"]), test["entry"])
-    assert not reference_valid(test["entry"], test["message"]), "reference accepted it"
+    if "reference_divergence" in test:
+        # Documented: the reference does not assert "format". Pin that, so a
+        # change in the reference is noticed rather than silently absorbed.
+        assert reference_valid(test["entry"], test["message"]), test["reference_divergence"]
+    else:
+        assert not reference_valid(test["entry"], test["message"]), "reference accepted it"
+
+
+CALENDAR = {
+    "2024-02-29T00:00:00Z": True,
+    "2000-02-29T00:00:00Z": True,
+    "2026-12-31T23:59:59.5Z": True,
+    "2026-01-31T00:00:00Z": True,
+    "2026-02-28T00:00:00Z": True,
+    "2026-02-29T00:00:00Z": False,
+    "2026-02-30T00:00:00Z": False,
+    "1900-02-29T00:00:00Z": False,
+    "2026-04-31T00:00:00Z": False,
+    "2026-06-31T00:00:00Z": False,
+    "2026-11-31T00:00:00Z": False,
+}
+
+
+def test_calendar_rule_agrees_across_python_and_browser(tmp_path):
+    """Python's datetime and the browser's own leap-year rule are independent checks."""
+    base = case(CORPUS / "valid" / "snapshot.json")["message"]
+    files = {}
+    for index, (value, expected) in enumerate(CALENDAR.items()):
+        message = {**base, "generated_at": value}
+        python_ok = not load_schema().errors(message, "ServerMessage")
+        assert python_ok is expected, value
+        target = tmp_path / f"date-{index}.json"
+        target.write_text(json.dumps({"entry": "ServerMessage", "message": message}))
+        files[str(target)] = expected
+    node = shutil.which("node")
+    assert node, "Node.js is required (scripts/setup.sh)"
+    result = subprocess.run(
+        [node, str(NODE_CHECK), *files], capture_output=True, text=True, timeout=60, check=True
+    )
+    verdicts = json.loads(result.stdout)
+    assert {f: verdicts[f]["valid"] for f in files} == files
 
 
 def test_browser_validator_agrees_on_corpus(tmp_path):
@@ -129,8 +169,15 @@ def test_message_size_bound():
 def test_schema_with_unsupported_keyword_is_refused():
     WireSchema(copy.deepcopy(SCHEMA))  # positive control
     broken = copy.deepcopy(SCHEMA)
-    broken["$defs"]["Timestamp"]["format"] = "date-time"
+    broken["$defs"]["Timestamp"]["contentEncoding"] = "base64"
     with pytest.raises(SchemaDefinitionError, match="unsupported keyword"):
+        WireSchema(broken)
+
+
+def test_schema_with_unsupported_format_is_refused():
+    broken = copy.deepcopy(SCHEMA)
+    broken["$defs"]["Timestamp"]["format"] = "email"
+    with pytest.raises(SchemaDefinitionError, match="unsupported format"):
         WireSchema(broken)
 
 

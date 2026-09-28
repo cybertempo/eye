@@ -17,10 +17,17 @@ response and WebSocket message (protocol version `eye.wire/1`). Entry points:
 ## Rules
 
 - Keyword subset only: `$defs`, `$ref` (local), `type`, `properties`, `required`,
-  `additionalProperties: false`, `enum`, `const`, `items`, `minItems`, `maxItems`,
+  `additionalProperties: false`, `enum`, `const`, `items` (a schema or `false`),
+  `prefixItems` (tuples such as `[longitude, latitude]`), `format: "date-time"`
+  (a real calendar date: leap years, month lengths), `minItems`, `maxItems`,
   `minimum`, `maximum`, `minLength`, `maxLength`, `pattern`, `oneOf`, plus
   `title`/`description`. Anything else is refused when the schema loads.
 - Every object is closed and every array and string is bounded.
+- Positions are `[longitude, latitude]` and bounding boxes are
+  `[west, south, east, north]`; latitudes outside -90..90 are refused.
+- The reference library treats `format` as an annotation, so corpus cases that
+  test calendar dates carry a `reference_divergence` note; Python's `datetime`
+  and the browser's own leap-year rule are cross-checked instead.
 - Coverage in state `unknown`/`failed` must carry `"value": null` and a reason;
   a number there is invalid. Observed and received times are separate required
   fields.

@@ -1,8 +1,8 @@
 {
-  "capture_format": "eye.synthetic-capture/1",
+  "capture_format": "eye.synthetic-capture/2",
   "synthetic": true,
   "source_id": "synthetic-fixture",
-  "adapter_version": "synthetic-adapter/1",
+  "adapter_version": "synthetic-adapter/2",
   "note": "Provider timed out: coverage failed, metric null, no observations.",
   "layer": "vessel",
   "request": {
@@ -17,10 +17,13 @@
     "expected_interval_s": 600
   },
   "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every record",
     "started_at": "2026-01-01T01:00:00Z",
     "finished_at": "2026-01-01T01:00:30Z",
     "provider_status": "timeout",
     "quota_cost": 0
   },
-  "records": []
+  "provider_response": {
+    "records": []
+  }
 }

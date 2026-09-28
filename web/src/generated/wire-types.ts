@@ -4,7 +4,7 @@
 /** Wire protocol version carried by every message. */
 export type SchemaVersion = "eye.wire/1";
 
-/** RFC 3339 instant in UTC with a Z suffix. */
+/** RFC 3339 instant in UTC with a Z suffix, on a real calendar date. */
 export type Timestamp = string;
 
 export type Identifier = string;
@@ -19,7 +19,10 @@ export type Longitude = number;
 export type Latitude = number;
 
 /** [west, south, east, north] in WGS 84 degrees. */
-export type BBox = number[];
+export type BBox = readonly [Longitude, Latitude, Longitude, Latitude];
+
+/** [longitude, latitude] in WGS 84 degrees. */
+export type Position = readonly [Longitude, Latitude];
 
 export type Interval = {
   readonly start: Timestamp;
@@ -55,13 +58,13 @@ export type Track = {
 
 export type PointLocation = {
   readonly type: "point";
-  readonly coords: number[];
+  readonly coords: Position;
   readonly precision_m: number;
 };
 
 export type SegmentLocation = {
   readonly type: "segment";
-  readonly coords: number[][];
+  readonly coords: Position[];
   readonly precision_m: number;
 };
 

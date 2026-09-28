@@ -24,7 +24,9 @@ interface SchemaNode {
   maximum?: number;
   minItems?: number;
   maxItems?: number;
-  items?: SchemaNode;
+  items?: SchemaNode | false;
+  prefixItems?: SchemaNode[];
+  format?: string;
   properties?: Record<string, SchemaNode>;
   required?: string[];
   additionalProperties?: boolean;
@@ -65,6 +67,19 @@ function patternOk(pattern: string, value: string): boolean {
   return compiled.test(value);
 }
 
+const DATE_TIME = /^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(\.[0-9]{1,6})?Z$/;
+
+/** RFC 3339 UTC instant on a real calendar date (leap years; no leap seconds). */
+export function validDateTime(value: string): boolean {
+  const match = DATE_TIME.exec(value);
+  if (!match) return false;
+  const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number) as
+    [number, number, number, number, number, number];
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return days !== undefined && day >= 1 && day <= days && hour <= 23 && minute <= 59 && second <= 59;
+}
+
 function resolve(ref: string): SchemaNode {
   const node = schema.$defs[ref.split("/").pop() ?? ""];
   if (!node) throw new Error(`dangling schema reference ${ref}`);
@@ -101,6 +116,7 @@ function check(value: unknown, node: SchemaNode, path: string, errors: string[])
     if (node.minLength !== undefined && length < node.minLength) errors.push(`${path}: shorter than ${node.minLength}`);
     if (node.maxLength !== undefined && length > node.maxLength) errors.push(`${path}: longer than ${node.maxLength}`);
     if (node.pattern !== undefined && !patternOk(node.pattern, value)) errors.push(`${path}: does not match the required format`);
+    else if (node.format === "date-time" && !validDateTime(value)) errors.push(`${path}: not a real calendar date and time`);
   }
   if (typeMatches(value, "number")) {
     const n = value as number;
@@ -113,9 +129,14 @@ function check(value: unknown, node: SchemaNode, path: string, errors: string[])
       errors.push(`${path}: more than ${node.maxItems} items`);
       return;
     }
-    if (node.items !== undefined) {
-      const items = node.items;
-      value.forEach((item, index) => check(item, items, `${path}[${index}]`, errors));
+    const prefix = node.prefixItems ?? [];
+    prefix.forEach((child, index) => {
+      if (index < value.length) check(value[index], child, `${path}[${index}]`, errors);
+    });
+    const items = node.items;
+    if (items === false && value.length > prefix.length) errors.push(`${path}: at most ${prefix.length} items`);
+    else if (items !== undefined && items !== false) {
+      for (let index = prefix.length; index < value.length; index++) check(value[index], items, `${path}[${index}]`, errors);
     }
   }
   if (typeMatches(value, "object")) {
