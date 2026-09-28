@@ -58,7 +58,10 @@ DATE_TIME = re.compile(
 
 
 def valid_date_time(value: str) -> bool:
-    """RFC 3339 UTC instant on a real calendar date (leap years; no leap seconds)."""
+    """RFC 3339 UTC instant on a real calendar date (leap years; no leap seconds).
+
+    Years 0001-9999 only: datetime refuses year 0000, and the browser matches.
+    """
     match = DATE_TIME.fullmatch(value)
     if match is None:
         return False

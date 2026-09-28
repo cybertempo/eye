@@ -69,7 +69,7 @@ function patternOk(pattern: string, value: string): boolean {
 
 const DATE_TIME = /^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(\.[0-9]{1,6})?Z$/;
 
-/** RFC 3339 UTC instant on a real calendar date (leap years; no leap seconds). */
+/** RFC 3339 UTC instant on a real calendar date (leap years; no leap seconds; year >= 1). */
 export function validDateTime(value: string): boolean {
   const match = DATE_TIME.exec(value);
   if (!match) return false;
@@ -77,7 +77,8 @@ export function validDateTime(value: string): boolean {
     [number, number, number, number, number, number];
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
   const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
-  return days !== undefined && day >= 1 && day <= days && hour <= 23 && minute <= 59 && second <= 59;
+  // Years 0001-9999 only, matching Python's datetime (year 0000 is refused on both sides).
+  return year >= 1 && days !== undefined && day >= 1 && day <= days && hour <= 23 && minute <= 59 && second <= 59;
 }
 
 function resolve(ref: string): SchemaNode {

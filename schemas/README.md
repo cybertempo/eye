@@ -19,7 +19,7 @@ response and WebSocket message (protocol version `eye.wire/1`). Entry points:
 - Keyword subset only: `$defs`, `$ref` (local), `type`, `properties`, `required`,
   `additionalProperties: false`, `enum`, `const`, `items` (a schema or `false`),
   `prefixItems` (tuples such as `[longitude, latitude]`), `format: "date-time"`
-  (a real calendar date: leap years, month lengths), `minItems`, `maxItems`,
+  (a real calendar date: leap years, month lengths, years 0001-9999), `minItems`, `maxItems`,
   `minimum`, `maximum`, `minLength`, `maxLength`, `pattern`, `oneOf`, plus
   `title`/`description`. Anything else is refused when the schema loads.
 - Every object is closed and every array and string is bounded.

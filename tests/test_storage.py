@@ -315,6 +315,41 @@ TAMPERING = {
         "ST_SetSRID(ST_MakePoint(0, 0), 4326), repeat('a', 64))",
         "stored but not derivable",
     ),
+    "capture provider status": (
+        "capture_batch_guard",
+        "UPDATE eye.capture_batch SET provider_status = 'error' WHERE provider_status = 'timeout'",
+        "provider_status",
+    ),
+    "capture requested interval": (
+        "capture_batch_guard",
+        "UPDATE eye.capture_batch SET requested_end = requested_end - interval '1 minute' "
+        "WHERE batch_id = (SELECT min(batch_id::text)::uuid FROM eye.capture_batch)",
+        "requested_end",
+    ),
+    "capture requested area": (
+        "capture_batch_guard",
+        "UPDATE eye.capture_batch SET requested_area = ST_MakeEnvelope(-1, -1, 1, 1, 4326) "
+        "WHERE batch_id = (SELECT min(batch_id::text)::uuid FROM eye.capture_batch)",
+        "requested_area.west",
+    ),
+    "capture receipt time": (
+        "capture_batch_guard",
+        "UPDATE eye.capture_batch SET attempt_finished_at = attempt_finished_at "
+        "+ interval '1 second' WHERE provider_status = 'indeterminate'",
+        "attempt_finished_at",
+    ),
+    "capture quota and adapter": (
+        "capture_batch_guard",
+        "UPDATE eye.capture_batch SET quota_cost = 5, adapter_version = 'other' "
+        "WHERE batch_id = (SELECT min(batch_id::text)::uuid FROM eye.capture_batch)",
+        "adapter_version, quota_cost",
+    ),
+    "evidence checksum column": (
+        "raw_evidence_append_only",
+        "UPDATE eye.raw_evidence SET sha256 = repeat('0', 64) "
+        "WHERE batch_id = (SELECT min(batch_id::text)::uuid FROM eye.capture_batch)",
+        "stored metadata",
+    ),
     "evidence bytes": (
         "raw_evidence_append_only",
         "UPDATE eye.raw_evidence SET content = overlay(content placing 'X' from 3 for 1) "
@@ -496,35 +531,58 @@ def test_capture_claiming_receipt_before_the_interval_ended_is_refused(db):
     assert ingest(db, raw("001-flight-ok.json")).status == "committed"  # control
 
 
-def test_database_refuses_a_receipt_that_breaks_chronology(db):
+def test_database_refuses_an_invalid_receipt_and_accepts_a_genuine_one(db):
     load_fixtures(db, CAPTURES)
     # The correction was published by the source at 00:51:30.
-    oid, eid = db.run(
-        "SELECT o.observation_id::text, r.evidence_id::text FROM eye.observation o "
-        "JOIN eye.observation_receipt r USING (observation_id) "
-        "WHERE 'corrected_by_source' = ANY(o.quality_flags)"
-    )[0]
+    oid = db.run(
+        "SELECT observation_id::text FROM eye.observation "
+        "WHERE 'corrected_by_source' = ANY(quality_flags)"
+    )[0][0]
 
-    def batch_finished_at(moment: str) -> str:
-        return db.run(
-            "SELECT batch_id::text FROM eye.capture_batch "
-            "WHERE attempt_finished_at = CAST(:t AS timestamptz)",
-            t=moment,
-        )[0][0]
+    def batch_finished_at(moment: str) -> tuple[str, str]:
+        return tuple(
+            db.run(
+                "SELECT b.batch_id::text, e.evidence_id::text FROM eye.capture_batch b "
+                "JOIN eye.raw_evidence e USING (batch_id) "
+                "WHERE b.attempt_finished_at = CAST(:t AS timestamptz)",
+                t=moment,
+            )[0]
+        )
 
     insert = (
         "INSERT INTO eye.observation_receipt (observation_id, batch_id, evidence_id, "
         "received_time, schema_version, adapter_version) VALUES (CAST(:o AS uuid), "
-        "CAST(:b AS uuid), CAST(:e AS uuid), CAST(:t AS timestamptz), 'eye.wire/1', 'test')"
+        "CAST(:b AS uuid), CAST(:e AS uuid), CAST(:t AS timestamptz), 'eye.wire/1', "
+        "'synthetic-adapter/2')"
     )
-    timeout_batch = batch_finished_at("2026-01-01T01:00:30Z")
+    timeout_batch, timeout_evidence = batch_finished_at("2026-01-01T01:00:30Z")
+    early_batch, early_evidence = batch_finished_at("2026-01-01T00:10:31Z")
+    # Evidence from a different batch.
+    with pytest.raises(DatabaseError, match="receipt_evidence_of_batch"):
+        db.run(insert, o=oid, b=timeout_batch, e=early_evidence, t="2026-01-01T01:00:30Z")
+    # A receipt time that is not the batch's own receipt time.
     with pytest.raises(DatabaseError, match="not the batch receipt time"):
-        db.run(insert, o=oid, b=timeout_batch, e=eid, t="2026-01-01T01:00:29Z")
-    early_batch = batch_finished_at("2026-01-01T00:10:31Z")
+        db.run(insert, o=oid, b=timeout_batch, e=timeout_evidence, t="2026-01-01T01:00:29Z")
+    # Received (00:10:31) before the source published it (00:51:30).
     with pytest.raises(DatabaseError, match="before the source published"):
-        db.run(insert, o=oid, b=early_batch, e=eid, t="2026-01-01T00:10:31Z")
-    # Positive control: that batch's own receipt time, after publication, is accepted.
-    db.run(insert, o=oid, b=timeout_batch, e=eid, t="2026-01-01T01:00:30Z")
+        db.run(insert, o=oid, b=early_batch, e=early_evidence, t="2026-01-01T00:10:31Z")
+
+    # Positive control: a batch that genuinely re-delivers the correction.
+    redelivery = edited(
+        "004-vessel-correction.json",
+        lambda d: d["attempt"].update(
+            started_at="2026-01-01T00:59:00Z", finished_at="2026-01-01T00:59:02Z"
+        ),
+    )
+    parsed = archive(db, redelivery)  # pending: archived, not yet committed
+    db.run(insert, o=oid, b=parsed.batch_id, e=parsed.evidence_id, t="2026-01-01T00:59:02Z")
+    # Committing derives exactly that receipt, and replay finds nothing to report.
+    assert commit_batch(db, parsed.batch_id).status == "committed"
+    assert db.run(
+        "SELECT count(*) FROM eye.observation_receipt WHERE batch_id = CAST(:b AS uuid)",
+        b=parsed.batch_id,
+    ) == [[1]]
+    assert verify_replay(db) == []
 
 
 # --- corrections, duplicates and append-only history -----------------------
@@ -552,20 +610,57 @@ def test_correction_meaning_is_independent_of_load_order(make_db):
     assert results["correction first"] == expected
 
 
-def test_same_publication_time_with_different_content_is_flagged(db):
+def vessel_version_rows(conn):
+    return conn.run(
+        "SELECT eye.iso_utc(v.source_published_time), ST_X(o.position), v.version, "
+        "v.is_current, s.source_published_time IS NOT NULL, v.publication_conflict "
+        "FROM eye.observation_version v JOIN eye.observation o USING (observation_id) "
+        "LEFT JOIN eye.observation s ON s.observation_id = v.supersedes_observation_id "
+        "WHERE v.source_record_id = 'SYN-VES-001' AND v.observed_time = '2026-01-01T00:20:00Z' "
+        "ORDER BY v.source_published_time, ST_X(o.position)"
+    )
+
+
+def test_conflicting_latest_publication_leaves_current_unknown(db):
     load_fixtures(db, CAPTURES)
-    assert db.run("SELECT count(*) FROM eye.observation_version WHERE publication_conflict") == [
-        [0]
-    ]  # control: the fixtures have no conflicts
+    # Control: a unique later publication supersedes and is current.
+    assert vessel_version_rows(db) == [
+        ["2026-01-01T00:20:30.000000Z", 0.13, 1, False, False, False],
+        ["2026-01-01T00:51:30.000000Z", 0.135, 2, True, True, False],
+    ]
     rival = edited(
         "004-vessel-correction.json",
-        lambda d: d["provider_response"]["records"][0].update(
-            source_published_time="2026-01-01T00:20:30.000000Z", lon=0.14
-        ),
+        lambda d: d["provider_response"]["records"][0].update(lon=0.14),
     )
     ingest(db, rival)
-    assert db.run("SELECT count(*) FROM eye.observation_version WHERE publication_conflict") == [
-        [2]
+    # Two versions share the latest publication time: current is unknown,
+    # neither supersedes anything, and they share a version number.
+    assert vessel_version_rows(db) == [
+        ["2026-01-01T00:20:30.000000Z", 0.13, 1, False, False, False],
+        ["2026-01-01T00:51:30.000000Z", 0.135, 2, None, False, True],
+        ["2026-01-01T00:51:30.000000Z", 0.14, 2, None, False, True],
+    ]
+    assert verify_replay(db) == []
+
+    # A later unique publication becomes current, but does not claim to
+    # correct either contested version.
+    settled = edited(
+        "004-vessel-correction.json",
+        lambda d: (
+            d["attempt"].update(
+                started_at="2026-01-01T00:58:10Z", finished_at="2026-01-01T00:58:11Z"
+            ),
+            d["provider_response"]["records"][0].update(
+                source_published_time="2026-01-01T00:58:00Z", lon=0.137
+            ),
+        ),
+    )
+    ingest(db, settled)
+    assert vessel_version_rows(db) == [
+        ["2026-01-01T00:20:30.000000Z", 0.13, 1, False, False, False],
+        ["2026-01-01T00:51:30.000000Z", 0.135, 2, False, False, True],
+        ["2026-01-01T00:51:30.000000Z", 0.14, 2, False, False, True],
+        ["2026-01-01T00:58:00.000000Z", 0.137, 3, True, False, False],
     ]
     assert verify_replay(db) == []
 

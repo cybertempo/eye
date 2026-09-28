@@ -635,24 +635,29 @@ def _rows(conn: Connection, sql: str) -> list[tuple]:
 
 
 def expected_versions(observations: dict[str, tuple]) -> dict[str, tuple]:
-    """Version chain per source record and observed time, by publication time then id."""
-    groups: dict[tuple, list[tuple[str, str]]] = {}
+    """Version facts per source record and observed time (mirrors eye.observation_version).
+
+    Versions are ranked by source publication time. Versions sharing a
+    publication time are a conflict: same version number, no supersedes link
+    in either direction, and when they are the latest, current is unknown (None).
+    """
+    groups: dict[tuple, dict[str, list[str]]] = {}
     for oid, row in observations.items():
         source, record, observed, published = row[0], row[1], row[4], row[5]
-        groups.setdefault((source, record, observed), []).append((published, oid))
+        groups.setdefault((source, record, observed), {}).setdefault(published, []).append(oid)
     result: dict[str, tuple] = {}
-    for members in groups.values():
-        members.sort()
-        published_counts: dict[str, int] = {}
-        for published, _ in members:
-            published_counts[published] = published_counts.get(published, 0) + 1
-        for index, (published, oid) in enumerate(members):
-            result[oid] = (
-                index + 1,
-                members[index - 1][1] if index else None,
-                index == len(members) - 1,
-                published_counts[published] > 1,
-            )
+    for tiers in groups.values():
+        ordered = sorted(tiers)
+        latest = ordered[-1]
+        for rank, published in enumerate(ordered, start=1):
+            members = tiers[published]
+            unique = len(members) == 1
+            previous = tiers[ordered[rank - 2]] if rank > 1 else []
+            supersedes = previous[0] if unique and len(previous) == 1 else None
+            # Latest and contested: unknown (None), never an arbitrary pick.
+            current = (unique or None) if published == latest else False
+            for oid in members:
+                result[oid] = (rank, supersedes, current, not unique)
     return result
 
 
@@ -666,12 +671,103 @@ def _compare(label: str, expected: dict, actual: dict, problems: list[str]) -> N
             problems.append(f"{label} {key}: stored {actual[key]!r}, derived {expected[key]!r}")
 
 
+ARCHIVE_FACTS = """
+    SELECT b.batch_id::text, b.source_id, b.layer, b.adapter_version, b.capture_format,
+           ST_XMin(b.requested_area), ST_YMin(b.requested_area), ST_XMax(b.requested_area),
+           ST_YMax(b.requested_area), ST_Equals(b.requested_area, ST_Envelope(b.requested_area)),
+           eye.iso_utc(b.requested_start), eye.iso_utc(b.requested_end), b.expected_interval_s,
+           eye.iso_utc(b.attempt_started_at), eye.iso_utc(b.attempt_finished_at),
+           b.provider_status, b.quota_cost, b.evidence_sha256,
+           e.evidence_id::text, e.sha256, e.byte_size, e.media_type, e.content
+    FROM eye.capture_batch b LEFT JOIN eye.raw_evidence e USING (batch_id)
+    ORDER BY b.batch_id
+"""
+
+
+def _verify_archive(conn: Connection, problems: list[str]) -> None:
+    """Compare each batch's stored capture facts and evidence metadata with its bytes."""
+    for row in conn.run(ARCHIVE_FACTS):
+        batch_id, facts, evidence, content = row[0], row[1:18], row[18:22], row[22]
+        if content is None:
+            problems.append(f"capture {batch_id}: archived batch has no raw evidence")
+            continue
+        content = bytes(content)
+        sha = hashlib.sha256(content).hexdigest()
+        stored_evidence = tuple(_normalise(v) for v in evidence)
+        expected_evidence = (stable_id("evidence", sha), sha, len(content), "application/json")
+        if stored_evidence != expected_evidence:
+            problems.append(
+                f"evidence {batch_id}: stored metadata {stored_evidence!r}, "
+                f"archived bytes give {expected_evidence!r}"
+            )
+        try:
+            parsed = parse_capture(content)
+        except CaptureRejected as exc:
+            problems.append(f"capture {batch_id}: archived bytes are unreadable ({exc})")
+            continue
+        west, south, east, north = parsed.bbox
+        expected_facts = (
+            parsed.source_id,
+            parsed.layer,
+            parsed.adapter_version,
+            CAPTURE_FORMAT,
+            west,
+            south,
+            east,
+            north,
+            True,
+            iso(parsed.requested_start),
+            iso(parsed.requested_end),
+            parsed.expected_interval_s,
+            iso(parsed.started_at),
+            iso(parsed.finished_at),
+            parsed.provider_status,
+            parsed.quota_cost,
+            sha,
+        )
+        stored_facts = tuple(_normalise(v) for v in facts)
+        if stored_facts != expected_facts:
+            fields = [
+                name
+                for name, got, want in zip(
+                    CAPTURE_FACT_NAMES, stored_facts, expected_facts, strict=True
+                )
+                if got != want
+            ]
+            problems.append(
+                f"capture {batch_id}: stored facts differ from archived bytes: {', '.join(fields)}"
+            )
+
+
+CAPTURE_FACT_NAMES = (
+    "source_id",
+    "layer",
+    "adapter_version",
+    "capture_format",
+    "requested_area.west",
+    "requested_area.south",
+    "requested_area.east",
+    "requested_area.north",
+    "requested_area.is_rectangle",
+    "requested_start",
+    "requested_end",
+    "expected_interval_s",
+    "attempt_started_at",
+    "attempt_finished_at",
+    "provider_status",
+    "quota_cost",
+    "evidence_sha256",
+)
+
+
 def verify_replay(conn: Connection) -> list[str]:
     """Re-derive every row from stored evidence and compare every value and link.
 
-    Returns discrepancies; an empty list means replaying the evidence would
+    Returns discrepancies; an empty list means the stored capture facts and
+    evidence metadata match the archived bytes, and replaying the evidence would
     reproduce the database exactly (ids, values, receipts, coverage, batch
-    outcomes and version links).
+    outcomes and version links). It cannot detect bytes and every checksum
+    rewritten consistently; that needs the independent backup (Package 5).
     """
     problems: list[str] = []
     expected_batches: dict[str, tuple] = {}
@@ -698,6 +794,8 @@ def verify_replay(conn: Connection) -> list[str]:
         observations.update(derived.observations)
         receipts.update(derived.receipts)
         coverage.update(derived.coverage)
+
+    _verify_archive(conn, problems)
 
     actual_batches = {
         r[0]: r[1:]

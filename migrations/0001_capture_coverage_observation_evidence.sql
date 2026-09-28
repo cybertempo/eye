@@ -72,7 +72,8 @@ CREATE TABLE eye.raw_evidence (
     byte_size    integer NOT NULL CHECK (byte_size BETWEEN 1 AND 1048576),
     media_type   text NOT NULL CHECK (media_type = 'application/json'),
     content      bytea NOT NULL,
-    CHECK (octet_length(content) = byte_size)
+    CHECK (octet_length(content) = byte_size),
+    UNIQUE (evidence_id, batch_id)  -- target of the receipt's evidence-batch key
 );
 
 -- One observed state as the source published it: content only. The id is
@@ -111,11 +112,14 @@ CREATE INDEX observation_position_idx ON eye.observation USING gist (position);
 CREATE TABLE eye.observation_receipt (
     observation_id  uuid NOT NULL REFERENCES eye.observation (observation_id),
     batch_id        uuid NOT NULL REFERENCES eye.capture_batch (batch_id),
-    evidence_id     uuid NOT NULL REFERENCES eye.raw_evidence (evidence_id),
+    evidence_id     uuid NOT NULL,
     received_time   timestamptz NOT NULL,
     schema_version  text NOT NULL,
     adapter_version text NOT NULL,
-    PRIMARY KEY (observation_id, batch_id)
+    PRIMARY KEY (observation_id, batch_id),
+    -- The evidence cited by a receipt must be the evidence of that same batch.
+    CONSTRAINT receipt_evidence_of_batch FOREIGN KEY (evidence_id, batch_id)
+        REFERENCES eye.raw_evidence (evidence_id, batch_id)
 );
 COMMENT ON COLUMN eye.observation_receipt.received_time IS
     'EYE receipt time, stamped by the capture adapter; equals the batch attempt_finished_at.';
@@ -145,27 +149,41 @@ CREATE TRIGGER observation_receipt_chronology BEFORE INSERT ON eye.observation_r
     FOR EACH ROW EXECUTE FUNCTION eye.check_receipt();
 
 -- Versions of one source record at one observed time, ordered by the source's
--- publication time (then id), never by load order. Derived, so it cannot drift.
+-- publication time, never by load order. Derived, so it cannot drift.
+-- Versions sharing a publication time are a conflict: they get the same
+-- version number, neither supersedes the other, nothing after them claims to
+-- supersede either, and if they are the latest the current version is unknown
+-- (is_current NULL) rather than chosen arbitrarily.
 CREATE VIEW eye.observation_version AS
-SELECT o.observation_id,
-       o.source_id,
-       o.source_record_id,
-       o.observed_time,
-       o.source_published_time,
-       r.first_received_time,
-       r.receipt_count,
-       row_number() OVER w AS version,
-       lag(o.observation_id) OVER w AS supersedes_observation_id,
-       lead(o.observation_id) OVER w IS NULL AS is_current,
-       count(*) OVER (PARTITION BY o.source_id, o.source_record_id, o.observed_time,
-                      o.source_published_time) > 1 AS publication_conflict
-FROM eye.observation o
-JOIN (SELECT observation_id, min(received_time) AS first_received_time, count(*) AS receipt_count
-      FROM eye.observation_receipt GROUP BY observation_id) r USING (observation_id)
-WINDOW w AS (PARTITION BY o.source_id, o.source_record_id, o.observed_time
-             ORDER BY o.source_published_time, o.observation_id);
+WITH receipts AS (
+    SELECT observation_id, min(received_time) AS first_received_time,
+           count(*) AS receipt_count
+    FROM eye.observation_receipt GROUP BY observation_id
+), ranked AS (
+    SELECT o.observation_id, o.source_id, o.source_record_id, o.observed_time,
+           o.source_published_time, r.first_received_time, r.receipt_count,
+           dense_rank() OVER (PARTITION BY o.source_id, o.source_record_id, o.observed_time
+                              ORDER BY o.source_published_time) AS version,
+           count(*) OVER (PARTITION BY o.source_id, o.source_record_id, o.observed_time,
+                          o.source_published_time) AS tier_size,
+           max(o.source_published_time) OVER (PARTITION BY o.source_id, o.source_record_id,
+                                                o.observed_time) AS latest_published
+    FROM eye.observation o JOIN receipts r USING (observation_id)
+)
+SELECT v.observation_id, v.source_id, v.source_record_id, v.observed_time,
+       v.source_published_time, v.first_received_time, v.receipt_count, v.version,
+       CASE WHEN v.tier_size = 1 THEN p.observation_id END AS supersedes_observation_id,
+       CASE WHEN v.source_published_time < v.latest_published THEN false
+            WHEN v.tier_size = 1 THEN true
+            END AS is_current,
+       v.tier_size > 1 AS publication_conflict
+FROM ranked v
+LEFT JOIN ranked p
+       ON p.source_id = v.source_id AND p.source_record_id = v.source_record_id
+      AND p.observed_time = v.observed_time AND p.version = v.version - 1
+      AND p.tier_size = 1;
 COMMENT ON VIEW eye.observation_version IS
-    'publication_conflict: two different versions share a publication time; neither is authoritative.';
+    'is_current NULL: the latest publication time holds conflicting versions; unknown, not chosen.';
 
 -- Coverage for one batch and layer. Missing data is NULL, never zero.
 CREATE TABLE eye.coverage (

@@ -96,6 +96,11 @@ CALENDAR = {
     "2026-04-31T00:00:00Z": False,
     "2026-06-31T00:00:00Z": False,
     "2026-11-31T00:00:00Z": False,
+    # Year 0000 is refused on both sides; year 0001 is the positive control.
+    "0000-01-01T00:00:00Z": False,
+    "0000-02-29T00:00:00Z": False,
+    "0001-01-01T00:00:00Z": True,
+    "9999-12-31T23:59:59Z": True,
 }
 
 

@@ -37,24 +37,33 @@ Date: 2026-09-28. Status: proposed (awaiting owner review).
    a discoverable pending batch that `db-replay` completes.
 9. **Corrections append; meaning is derived.** A later version of the same
    source record and observed time is a new row. `eye.observation_version`
-   orders versions by source publication time (then id) and derives version,
-   supersedes link and current flag, so load order cannot change them. Two
-   versions with the same publication time are flagged `publication_conflict`.
+   ranks versions by source publication time and derives version, supersedes
+   link and current flag, so load order cannot change them. Versions sharing a
+   publication time are a `publication_conflict`: they share a version number,
+   neither supersedes the other, the next version does not claim to supersede
+   either, and when they are the latest, `is_current` is NULL (unknown) rather
+   than an arbitrary pick.
 10. **Time provenance.** Three separate facts: `observed_time` (source event
     time, from the provider record), `source_published_time` (when the source
     issued that version, from the provider record) and `received_time` (EYE
     receipt, stamped by EYE's capture adapter as the attempt's `finished_at` and
     stored per delivery in `eye.observation_receipt`). A provider record that
-    carries its own receipt time is rejected. Enforced chronology: observed <=
+    carries its own receipt time is rejected. A receipt's evidence must be the
+    evidence of the same batch (composite foreign key). Enforced chronology: observed <=
     published <= received = attempt finished >= requested interval end, in the
     parser and in database constraints and triggers.
 11. **Nothing usable is not zero.** A provider `ok` response whose records are
     all rejected is `failed` with a NULL metric; only an `ok` response with no
     records is a measured `qualified` zero.
-12. **Replay verification compares values.** `db-replay` re-derives every batch
-    outcome, observation value, receipt, coverage row and version link from the
-    stored evidence with the same derivation used to commit, and reports any
-    missing, extra or different row, plus evidence that fails its checksum.
+12. **Replay verification compares values.** `db-replay` checks each batch's
+    stored capture facts (source, layer, adapter, format, requested area and
+    interval, expected interval, attempt times, provider status, quota,
+    checksum) and evidence metadata (id, checksum, size, media type) against
+    the archived bytes, then re-derives every batch outcome, observation value,
+    receipt, coverage row and version link with the same derivation used to
+    commit, and reports any missing, extra or different row. It cannot detect
+    bytes and every checksum rewritten consistently; that needs the independent
+    backup of Package 5.
 13. **Migration 0001 amended before release.** PR #2 changed 0001 in place
     (receipts table, version view, confidence as double precision,
     `eye.iso_utc`). It had not been merged or applied outside disposable test
