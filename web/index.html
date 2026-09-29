@@ -68,6 +68,15 @@
       <table id="transit-counts"></table>
       <table id="transit-crossings"></table>
       <table id="transit-coverage"></table>
+
+      <h2 id="events-heading">DESK: world events</h2>
+      <p class="note">Each case is what its source published, with every correction and retraction kept. Only a
+        sourced report can name an accident, casualty or collision; a lost signal, AIS gap or slowdown is a review
+        candidate and says nothing about the outcome. The reported event location and a track's last observed
+        position are shown separately. Where no event-report source covers the view, events are unknown.</p>
+      <h3>Event-report coverage</h3>
+      <div id="event-coverage" aria-live="polite"></div>
+      <table id="event-facts" aria-describedby="events-heading"></table>
     </section>
   </main>
 </body>

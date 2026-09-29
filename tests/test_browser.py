@@ -12,29 +12,10 @@ import re
 
 import pytest
 from conftest import AIS_DEMO
-from playwright.sync_api import Page, expect, sync_playwright
+from playwright.sync_api import Page, expect
 
 DEMO_FILES = sorted(AIS_DEMO.glob("*.json"))
 WAIT = 15_000
-
-
-@pytest.fixture(scope="module")
-def browser():
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        yield browser
-        browser.close()
-
-
-@pytest.fixture
-def page(browser):
-    context = browser.new_context(viewport={"width": 1280, "height": 900})
-    page = context.new_page()
-    errors: list[str] = []
-    page.on("pageerror", lambda error: errors.append(str(error)))
-    yield page
-    context.close()
-    assert errors == [], errors
 
 
 def open_app(page: Page, api) -> None:
@@ -111,7 +92,7 @@ def test_desk_shows_evidence_ids_timestamps_and_source_labels(api_server, page):
 def test_unavailable_counts_show_unknown_not_zero(api_server, page):
     api = api_server()
     error = {
-        "schema_version": "eye.wire/2",
+        "schema_version": "eye.wire/3",
         "kind": "error",
         "status": 503,
         "error": "database unavailable; data unknown",
@@ -866,7 +847,7 @@ def test_resolved_middle_point_draws_one_normal_route(api_server, page, tmp_path
 # --- O53: another wire version halts instead of looping -----------------------------------------
 
 
-V1, V2 = '"schema_version":"eye.wire/1"', '"schema_version":"eye.wire/2"'
+V1, V3 = '"schema_version":"eye.wire/1"', '"schema_version":"eye.wire/3"'
 
 
 class VersionRelay:
@@ -890,7 +871,7 @@ class VersionRelay:
         def from_server(message):
             if number >= self.relabel_from and isinstance(message, str):
                 message = message.replace(
-                    '"schema_version":"eye.wire/2"', '"schema_version":"eye.wire/1"'
+                    '"schema_version":"eye.wire/3"', '"schema_version":"eye.wire/1"'
                 )
             client.send(message)
 
@@ -903,7 +884,7 @@ def test_reconnect_to_another_wire_version_halts_and_asks_for_a_reload(api_serve
     relay = VersionRelay(relabel_from=2)
     page.route_web_socket("**/api/v0/stream", relay)
     page.goto(f"{api.origin}/")
-    _banner_cleared(page)  # control: the first connection speaks eye.wire/2 and is live
+    _banner_cleared(page)  # control: the first connection speaks eye.wire/3 and is live
     status = page.locator("#live-status")
     for sub in api.server.hub.subscribers():
         sub.abort("test: connection lost")

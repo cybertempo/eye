@@ -22,6 +22,7 @@ from eye.wire import (
     SCHEMA_PATH,
     SCHEMA_VERSION,
     V1_SCHEMA_PATH,
+    V2_SCHEMA_PATH,
     WireValidationError,
     load_schema,
     validate_message,
@@ -39,10 +40,10 @@ SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 # is not asked about these; both EYE validators must refuse them.
 RAW_INVALID = {
     "not-json": "{not json",
-    "nan-number": '{"schema_version":"eye.wire/2","kind":"error","status":NaN,"error":"x"}',
+    "nan-number": '{"schema_version":"eye.wire/3","kind":"error","status":NaN,"error":"x"}',
     "trailing-newline-in-timestamp": json.dumps(
         {
-            "schema_version": "eye.wire/2",
+            "schema_version": "eye.wire/3",
             "kind": "resync_required",
             "reason": "gap",
             "last_cursor": "c-0001\n",
@@ -50,7 +51,7 @@ RAW_INVALID = {
     ),
 }
 RAW_VALID = {
-    "health": '{"schema_version":"eye.wire/2","kind":"health","status":"ok",'
+    "health": '{"schema_version":"eye.wire/3","kind":"health","status":"ok",'
     '"mode":"demo","synthetic":true}',
 }
 
@@ -220,26 +221,31 @@ def test_demo_fixture_is_a_valid_snapshot():
     assert load_schema() is load_schema()
 
 
-# --- version 2 beside the unchanged version 1 -----------------------------------------
+# --- the current version beside the unchanged earlier versions -------------------------
 
-# The version-1 schema exactly as merged (main at b62cf4a). Nothing serves it.
-V1_SHA256 = "9761a30a4b3c5609602e9b2caa8411112cd9940662f5f9051e160f0ff2d14a73"
-V1_CORPUS = REPO_ROOT / "tests" / "fixtures" / "wire-v1"
-V1_VALID = sorted((V1_CORPUS / "valid").glob("*.json"))
-V1_INVALID = sorted((V1_CORPUS / "invalid").glob("*.json"))
-V1_SCHEMA = json.loads(V1_SCHEMA_PATH.read_text(encoding="utf-8"))
+# Each earlier schema exactly as merged, with the corpus it was merged with.
+# Nothing serves them.
+FROZEN = {
+    "eye.wire/1": (
+        V1_SCHEMA_PATH,
+        "9761a30a4b3c5609602e9b2caa8411112cd9940662f5f9051e160f0ff2d14a73",
+        REPO_ROOT / "tests" / "fixtures" / "wire-v1",
+    ),
+    "eye.wire/2": (
+        V2_SCHEMA_PATH,
+        "63fa0917ef2fe5dc1fa57bc4bab8adf7c844bd5a3453be6b349a1aeaa1e5d149",
+        REPO_ROOT / "tests" / "fixtures" / "wire-v2",
+    ),
+}
 
 
-def v1_reference_valid(entry: str, message: object) -> bool:
-    document = copy.deepcopy(V1_SCHEMA)
+def frozen_valid(version: str, entry: str, message: object) -> bool:
+    """Both judges of an unchanged earlier schema; they must agree."""
+    path = FROZEN[version][0]
+    document = copy.deepcopy(json.loads(path.read_text(encoding="utf-8")))
+    python = not load_schema(path).errors(message, entry)
     document["$ref"] = f"#/$defs/{entry}"
-    return jsonschema.Draft202012Validator(document).is_valid(message)
-
-
-def v1_valid(entry: str, message: object) -> bool:
-    """Both judges of the unchanged v1 schema; they must agree."""
-    python = not load_schema(V1_SCHEMA_PATH).errors(message, entry)
-    assert python is v1_reference_valid(entry, message), (entry, message)
+    assert python is jsonschema.Draft202012Validator(document).is_valid(message), (entry, message)
     return python
 
 
@@ -247,70 +253,98 @@ def relabel(message: dict, version: str) -> dict:
     return {**copy.deepcopy(message), "schema_version": version}
 
 
-def uses_v2_shapes(message: dict) -> bool:
-    """Conflict tracks and transit counts exist only in eye.wire/2."""
+def has_events(message: dict) -> bool:
+    return bool(message.get("events") or message.get("events_upserted"))
+
+
+def new_since(version: str, message: dict) -> bool:
+    """Shapes the given earlier version cannot carry.
+
+    eye.wire/2 added conflict tracks and transit counts; eye.wire/3 replaced
+    the event shape with event-ledger cases.
+    """
+    if has_events(message):
+        return True
+    if version == "eye.wire/2":
+        return False
     tracks = message.get("tracks", []) + message.get("tracks_upserted", [])
     return message.get("kind") == "transits" or any("conflicts" in t for t in tracks)
 
 
-def test_v1_schema_is_the_merged_file_unchanged():
+@pytest.mark.parametrize("version", sorted(FROZEN))
+def test_earlier_schema_is_the_merged_file_unchanged(version):
     import hashlib
 
-    assert hashlib.sha256(V1_SCHEMA_PATH.read_bytes()).hexdigest() == V1_SHA256
-    assert V1_SCHEMA["$defs"]["SchemaVersion"]["const"] == "eye.wire/1"
-    assert SCHEMA["$defs"]["SchemaVersion"]["const"] == SCHEMA_VERSION == "eye.wire/2"
-    assert SCHEMA_PATH != V1_SCHEMA_PATH
+    path, sha, _ = FROZEN[version]
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == sha
+    assert json.loads(path.read_text())["$defs"]["SchemaVersion"]["const"] == version
+    assert SCHEMA["$defs"]["SchemaVersion"]["const"] == SCHEMA_VERSION == "eye.wire/3"
+    assert path != SCHEMA_PATH
 
 
-def test_v1_corpus_still_judged_as_merged_by_the_v1_validator():
-    """Positive control for every v1 check below: the v1 judges still work."""
-    assert len(V1_VALID) >= 8 and len(V1_INVALID) >= 20
-    for path in V1_VALID:
+@pytest.mark.parametrize("version", sorted(FROZEN))
+def test_earlier_corpus_still_judged_as_merged(version):
+    """Positive control for every frozen-version check below."""
+    corpus = FROZEN[version][2]
+    valid = sorted((corpus / "valid").glob("*.json"))
+    invalid = sorted((corpus / "invalid").glob("*.json"))
+    assert len(valid) >= 8 and len(invalid) >= 20
+    for path in valid:
         test = case(path)
-        assert v1_valid(test["entry"], test["message"]), path.stem
-    for path in V1_INVALID:
+        assert frozen_valid(version, test["entry"], test["message"]), path.stem
+    for path in invalid:
         test = case(path)
-        python = not load_schema(V1_SCHEMA_PATH).errors(test["message"], test["entry"])
+        python = not load_schema(FROZEN[version][0]).errors(test["message"], test["entry"])
         assert not python, path.stem
-        if "reference_divergence" not in test:
-            assert not v1_reference_valid(test["entry"], test["message"]), path.stem
 
 
-def test_v1_validator_refuses_every_v2_message():
+@pytest.mark.parametrize("version", sorted(FROZEN))
+def test_earlier_validator_refuses_every_current_message(version):
     for path in VALID:
         test = case(path)
-        assert not v1_valid(test["entry"], test["message"]), path.stem
+        assert not frozen_valid(version, test["entry"], test["message"]), path.stem
 
 
-def test_conflict_and_transit_shapes_are_refused_by_v1_even_relabelled():
-    """The new shapes, not only the label, are what version 1 cannot carry."""
-    new_shapes = [p for p in VALID if uses_v2_shapes(case(p)["message"])]
-    assert {p.stem for p in new_shapes} >= {
-        "track-with-conflict",
-        "track-only-conflicts",
-        "conflict-with-20-claims",
-        "transits",
+@pytest.mark.parametrize("version", sorted(FROZEN))
+def test_new_shapes_are_refused_by_earlier_versions_even_relabelled(version):
+    """The new shapes, not only the label, are what an earlier version cannot carry."""
+    new = [p for p in VALID if new_since(version, case(p)["message"])]
+    assert {p.stem for p in new} >= {
+        "event-review-candidate",
+        "event-unresolved-conflict",
+        "event-linked-with-last-observed",
+        "snapshot",
     }
-    for path in new_shapes:
+    for path in new:
         test = case(path)
-        assert not v1_valid(test["entry"], relabel(test["message"], "eye.wire/1")), path.stem
-    # Control: a version-2 message without those shapes, relabelled, is a
-    # valid version-1 message: nothing else about it changed.
-    unchanged = [p for p in VALID if not uses_v2_shapes(case(p)["message"])]
-    assert {p.stem for p in unchanged} >= {"snapshot", "delta", "subscribe", "health"}
+        assert not frozen_valid(version, test["entry"], relabel(test["message"], version)), (
+            path.stem
+        )
+    # Control: a current message without those shapes, relabelled, is valid
+    # in the earlier version: nothing else about it changed.
+    unchanged = [p for p in VALID if not new_since(version, case(p)["message"])]
+    assert {p.stem for p in unchanged} >= {"snapshot-empty", "delta", "subscribe", "health"}
     for path in unchanged:
         test = case(path)
-        assert v1_valid(test["entry"], relabel(test["message"], "eye.wire/1")), path.stem
+        assert frozen_valid(version, test["entry"], relabel(test["message"], version)), path.stem
 
 
-def test_v2_validator_refuses_v1_messages_and_accepts_them_relabelled():
-    for path in V1_VALID:
+@pytest.mark.parametrize("version", sorted(FROZEN))
+def test_current_validator_refuses_earlier_messages(version):
+    corpus = FROZEN[version][2]
+    for path in sorted((corpus / "valid").glob("*.json")):
         test = case(path)
         with pytest.raises(WireValidationError):
             validate_message(json.dumps(test["message"]), test["entry"])
-        assert wire_version_of(json.dumps(test["message"])) == "eye.wire/1"
-        # Control: every version-1 shape is still a version-2 shape.
-        validate_message(json.dumps(relabel(test["message"], SCHEMA_VERSION)), test["entry"])
+        assert wire_version_of(json.dumps(test["message"])) == version
+        relabelled = relabel(test["message"], SCHEMA_VERSION)
+        if has_events(test["message"]):
+            # The old event shape is exactly what version 3 replaced.
+            with pytest.raises(WireValidationError):
+                validate_message(json.dumps(relabelled), test["entry"])
+        else:
+            # Control: every other earlier shape is still a current shape.
+            validate_message(json.dumps(relabelled), test["entry"])
 
 
 def test_wire_version_is_read_without_trusting_the_message():

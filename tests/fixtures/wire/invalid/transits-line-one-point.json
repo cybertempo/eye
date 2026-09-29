@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "a count line has exactly two ends",
   "message": {
-    "schema_version": "eye.wire/2",
+    "schema_version": "eye.wire/3",
     "kind": "transits",
     "generated_at": "2026-02-01T16:00:00Z",
     "synthetic": true,

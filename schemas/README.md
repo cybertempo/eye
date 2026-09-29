@@ -1,18 +1,23 @@
 # Wire schemas
 
-`eye-wire.v2.schema.json` is the single authoritative definition of every REST
-response and WebSocket message (protocol version `eye.wire/2`). Entry points:
+`eye-wire.v3.schema.json` is the single authoritative definition of every REST
+response and WebSocket message (protocol version `eye.wire/3`). Entry points:
 `ServerMessage` (health, error, snapshot, delta, resync_required, transits) and
 `ClientMessage` (subscribe, unsubscribe).
 
-`eye-wire.v1.schema.json` is version 1 exactly as merged before Package 3, kept
-byte for byte (its SHA-256 is pinned in `tests/test_wire.py`). Nothing serves
-or accepts it. Tests use it, with its own corpus in `tests/fixtures/wire-v1`,
-to show that version-2 messages are refused by the unchanged version-1
-validator. Version 2 adds two shapes that version 1 cannot carry: tracks with
-contested positions (`conflicts`, and tracks with no route) and transit counts.
-Every other version-1 message is also a valid version-2 message once it is
-relabelled.
+Earlier versions are kept byte for byte as merged, each with the corpus it was
+merged with; their SHA-256 values are pinned in `tests/test_wire.py`. Nothing
+serves or accepts them. Tests show the unchanged earlier validators refuse
+every current message, and the new shapes even when relabelled:
+
+- `eye-wire.v1.schema.json` (`tests/fixtures/wire-v1`): as merged before
+  Package 3. Version 2 added tracks with contested positions (`conflicts`,
+  tracks with no route) and transit counts.
+- `eye-wire.v2.schema.json` (`tests/fixtures/wire-v2`): as merged with Package
+  3. Version 3 replaced the placeholder `Event` (never sent) with event-ledger
+  cases (`EventCase`, below).
+
+Every other earlier message is still a current message once relabelled.
 
 - **Server side:** `backend/eye/wire/validate.py` validates every outgoing body
   and any incoming client message at runtime.
@@ -52,6 +57,22 @@ relabelled.
   request (413, naming the record and time) rather than send more or fewer.
   A client breaks the drawn route at every contested time that falls between
   two resolved points.
+- An event case (`EventCase`) is one source's case with every version as
+  `claims`, oldest first. A claim is either a `ReportClaim` (official or
+  operator basis, a report kind and status, a required `evidence_ref`) or a
+  `CandidateClaim` (basis `motion_inference`, a motion kind such as
+  `signal_lost`, `ais_gap`, `vessel_stopped` or `traffic_slowdown`, status
+  `candidate`, no evidence reference); a candidate can never carry an
+  accident, casualty or collision kind. `reported_event_location` is a point,
+  a segment with its affected `direction`, or a closed area ring, each with
+  `precision_m`. `last_observed_position` is separate, comes from a track, and
+  is present only when `link.state` is `linked`. `standing` and
+  `current_claim_id` follow the current claim; conflicting latest claims have
+  `is_current: null` and the case is `unresolved`. The browser refuses a case
+  whose standing, current claim or link disagree.
+- Event-report coverage uses coverage rows with metric `event_reports`. A part
+  of the view no event source covered is sent as `unknown` with a reason,
+  never omitted, so absent reports are never read as "no events".
 - Transit counts (`transits`) have three forms:
   `qualified` (exact numbers, every uncertainty count 0, no reason), `partial`
   (numbers are lower bounds, reason required) and `unknown`/`failed` (null

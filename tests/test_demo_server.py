@@ -70,7 +70,7 @@ def test_health_snapshot_and_transits(demo):
     response, body = request(demo, "/api/v0/health")
     assert response.status == 200
     assert json.loads(body) == {
-        "schema_version": "eye.wire/2",
+        "schema_version": "eye.wire/3",
         "kind": "health",
         "mode": "demo",
         "status": "ok",
@@ -164,7 +164,7 @@ def test_an_outgoing_message_that_breaks_the_schema_is_never_sent(api_server, mo
     response, body = api.get("/api/v0/snapshot")
     assert response.status == 500
     assert json.loads(body) == {
-        "schema_version": "eye.wire/2",
+        "schema_version": "eye.wire/3",
         "kind": "error",
         "status": 500,
         "error": "internal error: invalid outgoing message",

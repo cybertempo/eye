@@ -109,7 +109,7 @@ export class LiveFeed {
     if (!this.subscription || this.socket?.readyState !== WebSocket.OPEN) return;
     this.awaitingSnapshot = true;
     const message: SubscribeMessage = {
-      schema_version: "eye.wire/2",
+      schema_version: WIRE_SCHEMA_VERSION,
       kind: "subscribe",
       bbox: this.subscription.bbox,
       interval: this.subscription.interval,

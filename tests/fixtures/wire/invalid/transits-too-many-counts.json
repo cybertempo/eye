@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "at most 168 counts (one week of hours) per response",
   "message": {
-    "schema_version": "eye.wire/2",
+    "schema_version": "eye.wire/3",
     "kind": "transits",
     "generated_at": "2026-02-01T16:00:00Z",
     "synthetic": true,

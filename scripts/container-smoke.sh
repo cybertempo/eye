@@ -32,7 +32,15 @@ base="http://127.0.0.1:${port}"
 for _ in $(seq 1 90); do
   if curl -fsS "${base}/api/v0/health"; then
     echo
-    curl -fsS -o /dev/null "${base}/api/v0/snapshot"
+    # Event ledger: sourced reports and review candidates, never mixed up.
+    curl -fsS "${base}/api/v0/snapshot" | python3 -c '
+import json, sys
+events = json.load(sys.stdin)["events"]
+standing = sorted((e["case_id"], e["standing"]) for e in events)
+candidates = {e["case_id"] for e in events if e["standing"] == "review_candidate"}
+ok = len(events) == 7 and candidates == {"SYN-SL-1", "SYN-GAP-21", "SYN-TS-1"}
+sys.exit(0 if ok else f"container-smoke: unexpected event cases {standing}")
+'
     # The four demo hours: exact, partial, outage (unknown, never zero), measured zero.
     curl -fsS "${base}/api/v0/transits" | python3 -c '
 import json, sys
@@ -41,7 +49,7 @@ states = [(c["state"], c["total"]) for c in counts]
 expected = [("qualified", 1), ("partial", 1), ("unknown", None), ("qualified", 0)]
 sys.exit(0 if states == expected else f"container-smoke: unexpected transit counts {states}")
 '
-    echo "container-smoke: health, snapshot and transit counts OK on 127.0.0.1:${port}"
+    echo "container-smoke: health, snapshot, event cases and transit counts OK on 127.0.0.1:${port}"
     exit 0
   fi
   sleep 1

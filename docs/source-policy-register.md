@@ -10,12 +10,19 @@ exists.** The only data sources are the synthetic fixture sets in
 Gate) is decided, but its NOAA/MarineCadastre historical subset and any live
 AIS source still need their own rows here before any adapter is enabled.
 
+Package 4c status: the event-claim ledger is source-independent. **No aviation,
+marine or road occurrence-report source is approved and no adapter for one
+exists.** Each needs its own row (brief §6: occurrence reports are separate
+from position feeds), recording whether it is automatic, licensed or
+manual-document entry, before an adapter is enabled.
+
 ## Register
 
 | Source id | Status | Adapter | Reviewed |
 |---|---|---|---|
 | `synthetic-fixture` | Approved for demo and tests | built-in fixture files; `backend/eye/ingest/capture.py` | 2026-09-28 |
 | `synthetic-ais` | Approved for demo and tests | invented AIS reports from `scripts/gen_ais_fixtures.py`; `backend/eye/ingest/synthetic_ais.py` (only `SYNV-` vessel ids) | 2026-09-28 |
+| `synthetic-events` | Approved for demo and tests | invented event-report claims in `tests/fixtures/synthetic/events/` (format `eye.synthetic-event-claims/1`); parsed by the source-independent `backend/eye/ingest/event_claims.py`. Case ids, evidence references (`synthetic-doc:…`) and summaries are invented; no real authority, aircraft, vessel or road is described | 2026-09-29 |
 
 ## Row template
 

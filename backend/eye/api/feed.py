@@ -1,6 +1,6 @@
 """Bounded, database-backed wire messages for the browser API (Package 3).
 
-Everything here reads the database and returns ``eye.wire/2`` message dicts;
+Everything here reads the database and returns ``eye.wire/3`` message dicts;
 nothing writes. Callers pass a connection opened by ``open_reader`` (read-only
 session, statement timeout). Every query is bounded by area, interval, layer
 and row limits; a request that would exceed a limit is refused with
@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from eye.ingest.capture import APPROVED_SOURCES
+from eye.api import events as event_ledger
+from eye.ingest.capture import APPROVED_SOURCES, EVENT_CAPTURE_FORMAT
 from eye.storage.db import Connection, connect
 from eye.wire import SCHEMA_VERSION
 
@@ -29,6 +30,7 @@ SYNTHETIC_SOURCES = APPROVED_SOURCES  # every approved source is invented data t
 SOURCE_LABELS = {
     "synthetic-ais": "Synthetic AIS (invented vessels; not a real AIS feed)",
     "synthetic-fixture": "Synthetic fixture (invented records)",
+    "synthetic-events": "Synthetic event reports (invented cases; not a real authority)",
 }
 SYNTHETIC_NOTICE = (
     "Invented data for the public demo. No record describes a real aircraft, vessel, road or event."
@@ -60,6 +62,7 @@ class Limits:
     max_coverage: int
     max_counts: int
     max_crossings: int
+    max_events: int
     max_changes: int
     query_timeout_ms: int
     default_view_hours: int
@@ -112,6 +115,11 @@ def parse_time(text: str, what: str) -> datetime:
         return datetime.fromisoformat(text)
     except ValueError as exc:
         raise QueryRefused(400, f"{what} is not a real calendar time") from exc
+
+
+def iso_parse(text: str) -> datetime:
+    """A stored wire time (already valid) as a datetime."""
+    return datetime.fromisoformat(text)
 
 
 def make_cursor(epoch: str, seq: int) -> str:
@@ -430,13 +438,25 @@ def _synthetic(conn, sources: set[str]) -> bool:
     return all(source in SYNTHETIC_SOURCES for source in sources)
 
 
+def _events(conn, query: Query, limits: Limits, keys: list[str] | None) -> list[dict]:
+    try:
+        return event_ledger.cases(conn, _params(query), limits, keys, SOURCE_LABELS)
+    except event_ledger.EventsRefused as exc:
+        raise QueryRefused(exc.status, str(exc)) from exc
+
+
 def snapshot(conn: Connection, query: Query, limits: Limits, area_name: str) -> dict:
     _begin(conn)
     try:
         epoch, seq = head(conn)
         tracks = _tracks(conn, query, limits, None)
         coverage, sources = _coverage(conn, query, limits, None)
-        sources |= {t["source"] for t in tracks}
+        # Where no event-report source covered the view, events are unknown.
+        coverage += event_ledger.coverage_gaps(
+            coverage, query.layers, iso(query.start), iso(query.end)
+        )
+        events = _events(conn, query, limits, None)
+        sources |= {t["source"] for t in tracks} | {e["source"] for e in events}
         synthetic = _synthetic(conn, sources)
     finally:
         _end(conn)
@@ -449,7 +469,7 @@ def snapshot(conn: Connection, query: Query, limits: Limits, area_name: str) -> 
         "area": {"name": area_name, "bbox": list(query.bbox)},
         "interval": {"start": iso(query.start), "end": iso(query.end)},
         "tracks": tracks,
-        "events": [],
+        "events": events,
         "coverage": coverage,
     }
     if synthetic:
@@ -479,8 +499,20 @@ def delta(
     """The delta for one change row, restricted to one subscription."""
     seq, kind, batch_id, _run_id, layer = change
     tracks: list[dict] = []
+    events: list[dict] = []
     coverage: list[dict] = []
+    fmt = None
     if kind == "capture_batch" and layer in query.layers:
+        fmt = conn.run(
+            "SELECT capture_format FROM eye.capture_batch WHERE batch_id = CAST(:b AS uuid)",
+            b=batch_id,
+        )[0][0]
+    if fmt == EVENT_CAPTURE_FORMAT:
+        events = _event_delta(conn, query, limits, batch_id)
+        coverage, _ = _coverage(conn, query, limits, batch_id)
+        if len(events) > DELTA_MAX_ITEMS or len(coverage) > DELTA_MAX_ITEMS:
+            raise QueryRefused(413, "batch is larger than one delta allows")
+    elif kind == "capture_batch" and layer in query.layers:
         limit = min(limits.max_tracks, DELTA_MAX_ITEMS)
         # The records this batch changed that have, or had, any version inside
         # the subscription: a correction can move a record's current point out
@@ -512,7 +544,10 @@ def delta(
             # be told to drop it: it needs a fresh snapshot instead.
             raise QueryRefused(409, "a change removed a track from the view")
         coverage, _ = _coverage(conn, query, limits, batch_id)
-        if len(tracks) > limit or len(coverage) > DELTA_MAX_ITEMS:
+        # New positions can change which track an event links to, and its
+        # last observed position: resend every case in view that names one.
+        events = _linked_events(conn, query, limits, touched)
+        if len(tracks) > limit or len(coverage) > DELTA_MAX_ITEMS or len(events) > DELTA_MAX_ITEMS:
             raise QueryRefused(413, "batch is larger than one delta allows")
     # A derivation run changes transit counts only; the delta advances the
     # cursor so the client knows to re-read /api/v0/transits.
@@ -523,9 +558,57 @@ def delta(
         "cursor": make_cursor(epoch, seq),
         "previous_cursor": make_cursor(epoch, previous_seq),
         "tracks_upserted": tracks,
-        "events_upserted": [],
+        "events_upserted": events,
         "coverage_upserted": coverage,
     }
+
+
+def _event_delta(conn, query: Query, limits: Limits, batch_id: str) -> list[dict]:
+    """Cases an event batch changed that have, or had, any version in view."""
+    limit = min(limits.max_events, DELTA_MAX_ITEMS)
+    params = _params(query)
+    touched = conn.run(
+        "SELECT DISTINCT c.source_id, c.layer, c.case_id FROM eye.event_claim_receipt r "
+        "JOIN eye.event_claim c USING (claim_id) WHERE r.batch_id = CAST(:batch AS uuid) "
+        "AND c.layer = ANY(CAST(:layers AS text[])) "
+        "AND EXISTS (SELECT 1 FROM eye.event_claim v WHERE v.source_id = c.source_id "
+        "AND v.layer = c.layer AND v.case_id = c.case_id "
+        "AND coalesce(v.event_time, v.source_published_time) >= :start "
+        "AND coalesce(v.event_time, v.source_published_time) < :end "
+        "AND ST_Intersects(v.location, ST_MakeEnvelope(:w, :s, :e, :n, 4326))) "
+        "ORDER BY 1, 2, 3 LIMIT :cap",
+        batch=batch_id,
+        cap=limit + 1,
+        **params,
+    )
+    if len(touched) > limit:
+        raise QueryRefused(413, f"batch changes more than {limit} event cases in view")
+    if not touched:
+        return []
+    keys = [f"{s} {lay} {c}" for s, lay, c in touched]
+    result = _events(conn, query, limits, keys)
+    if len(result) != len(keys):
+        # A correction moved a case out of view. Deltas only upsert, so the
+        # client needs a fresh snapshot without it.
+        raise QueryRefused(409, "a change removed an event from the view")
+    return result
+
+
+def _linked_events(conn, query: Query, limits: Limits, touched) -> list[dict]:
+    names = [f"track:{s}:{lay}:{r}" for s, lay, r in touched if lay != "road"]
+    if not names:
+        return []
+    rows = conn.run(
+        "SELECT DISTINCT source_id, layer, case_id FROM eye.event_claim "
+        "WHERE subject_identifiers && CAST(:names AS text[]) ORDER BY 1, 2, 3 LIMIT :cap",
+        names=names,
+        cap=DELTA_MAX_ITEMS + 1,
+    )
+    if not rows:
+        return []
+    if len(rows) > DELTA_MAX_ITEMS:
+        raise QueryRefused(413, "batch changes more event links than one delta allows")
+    return _events(conn, query, limits, [f"{s} {lay} {c}" for s, lay, c in rows])
 
 
 # --- transit counts ----------------------------------------------------------------

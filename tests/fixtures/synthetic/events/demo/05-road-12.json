@@ -1,0 +1,113 @@
+{
+  "capture_format": "eye.synthetic-event-claims/1",
+  "synthetic": true,
+  "source_id": "synthetic-events",
+  "adapter_version": "synthetic-events/1",
+  "note": "Invented road event reports for the demo: congestion bulletin, slowdown candidate and a collision on a directional segment.",
+  "layer": "road",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-02-01T12:00:00Z",
+    "end": "2026-02-01T13:00:00Z",
+    "expected_interval_s": 3600
+  },
+  "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every claim",
+    "started_at": "2026-02-01T13:00:05Z",
+    "finished_at": "2026-02-01T13:00:10Z",
+    "provider_status": "ok",
+    "quota_cost": 0,
+    "observed_start": "2026-02-01T12:00:00Z",
+    "observed_end": "2026-02-01T13:00:00Z"
+  },
+  "provider_response": {
+    "claims": [
+      {
+        "case_id": "SYN-RD-1",
+        "basis": "official_report",
+        "kind": "road_congestion",
+        "status": "reported",
+        "event_time": "2026-02-01T12:15:00Z",
+        "event_time_uncertainty_s": 300,
+        "source_published_time": "2026-02-01T12:20:00Z",
+        "location": {
+          "type": "segment",
+          "coords": [
+            [
+              -0.3,
+              -0.3
+            ],
+            [
+              -0.1,
+              -0.3
+            ]
+          ],
+          "precision_m": 100,
+          "direction": "both"
+        },
+        "evidence_ref": "synthetic-doc:SYN-RD-1:traffic-bulletin",
+        "subject": null,
+        "summary": "Invented congestion bulletin: slow traffic; no collision reported."
+      },
+      {
+        "case_id": "SYN-TS-1",
+        "basis": "motion_inference",
+        "kind": "traffic_slowdown",
+        "status": "candidate",
+        "event_time": "2026-02-01T12:30:00Z",
+        "event_time_uncertainty_s": 300,
+        "source_published_time": "2026-02-01T12:40:00Z",
+        "location": {
+          "type": "segment",
+          "coords": [
+            [
+              -0.4,
+              0.1
+            ],
+            [
+              -0.3,
+              0.1
+            ]
+          ],
+          "precision_m": 200,
+          "direction": "forward"
+        },
+        "evidence_ref": null,
+        "subject": null,
+        "summary": "Slower traffic than usual. Review candidate only; a slowdown is not a collision."
+      },
+      {
+        "case_id": "SYN-RD-2",
+        "basis": "official_report",
+        "kind": "road_collision",
+        "status": "reported",
+        "event_time": "2026-02-01T12:40:00Z",
+        "event_time_uncertainty_s": 120,
+        "source_published_time": "2026-02-01T12:48:00Z",
+        "location": {
+          "type": "segment",
+          "coords": [
+            [
+              -0.3,
+              -0.2
+            ],
+            [
+              -0.2,
+              -0.2
+            ]
+          ],
+          "precision_m": 50,
+          "direction": "forward"
+        },
+        "evidence_ref": "synthetic-doc:SYN-RD-2:incident-log",
+        "subject": null,
+        "summary": "Invented collision report on the eastbound carriageway only."
+      }
+    ]
+  }
+}

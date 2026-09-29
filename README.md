@@ -1,16 +1,19 @@
 # EYE
 
 EYE is a planned self-hosted geospatial and solar-system observation and research
-application. This repository holds its public source. **Status: Package 3
-(browser and API) on Packages 0 to 2.** It contains the layout, tooling, CI, the
+application. This repository holds its public source. **Status: the
+source-independent part of Package 4c (world-event ledger) on Packages 0 to 3.**
+It contains the layout, tooling, CI, the
 versioned wire schema with validation on both sides, PostgreSQL/PostGIS storage
 for captures, evidence, observations and coverage, a synthetic vessel adapter
 with track splitting, crossings of a versioned synthetic count line and
 coverage-aware transit counts, and a database-backed API (bounded REST snapshots
 and a WebSocket feed of sequenced deltas) serving a browser client with a
-token-free THEATRE globe and a DESK observed-transit panel. All data is
-invented. No real data feed, real Golden Gate geometry, basemap, CesiumJS
-renderer, private installation or AI feature exists yet.
+token-free THEATRE globe and a DESK observed-transit panel, and an append-only
+event-claim ledger whose sourced reports, review candidates, corrections and
+conflicts the API and browser show. All data is invented. No real data feed or
+event-report adapter, real Golden Gate geometry, basemap, CesiumJS renderer,
+private installation or AI feature exists yet.
 
 The design brief is [`docs/public-repo-build-brief.md`](docs/public-repo-build-brief.md);
 contributor and agent rules are in [`CLAUDE.md`](CLAUDE.md).
@@ -106,6 +109,34 @@ query time, database connections, live sockets and a hard per-client outbound
 byte cap (a slow client is disconnected). See
 [ADR 0004](docs/adr/0004-package-3-browser-api.md).
 
+## World events (Package 4c, source-independent part)
+
+Snapshots and deltas carry **event cases** from an append-only claim ledger
+(migration 0005, wire `eye.wire/3`). Each case keeps every version its source
+published, with the reported event location at its stated precision (a point,
+a road segment with its affected direction, or an area), event time and
+uncertainty, evidence reference and receipt batches. DESK's *world events*
+table shows, in separate columns, the reported location and a linked track's
+last observed position; THEATRE draws the two as separate marks.
+
+- Only a sourced report (official or operator, citing evidence) can name an
+  accident, casualty or collision. A lost flight signal, an AIS gap, a stopped
+  vessel or a traffic slowdown is a *review candidate* that reports nothing;
+  the capture parser, a database constraint and the wire schema each refuse
+  anything else.
+- Corrections are later versions; claims published together that disagree are
+  *unresolved* until a later claim settles them. Duplicate deliveries add
+  receipts, not claims, and replay re-derives every claim.
+- A case links to a track only when exactly one named track was observed in
+  its window near the reported location; otherwise it stays unlinked, with the
+  reason.
+- Where no event-report source covered part of the view, event coverage is
+  *unknown*, never "no events".
+
+The only event source is `synthetic-events`, invented fixtures in
+`tests/fixtures/synthetic/events/`. See
+[ADR 0005](docs/adr/0005-package-4c-event-ledger.md).
+
 ## Layout
 
 ```text
@@ -122,7 +153,7 @@ docs/                 brief, source-policy register, dependencies, ADRs
 migrations/           forward-only PostgreSQL/PostGIS migrations
 reference/lines/      versioned synthetic count lines
 requirements/         hash-locked Python tool manifests
-schemas/              versioned wire schema (eye.wire/2; v1 kept unchanged)
+schemas/              versioned wire schema (eye.wire/3; v1 and v2 kept unchanged)
 scripts/              setup, verify, demo, boundary check, fixture generators
 tests/                tests and synthetic fixtures
 web/                  browser client: THEATRE globe and DESK panel
@@ -132,8 +163,10 @@ web/                  browser client: THEATRE globe and DESK panel
 
 - THEATRE is a 2D-canvas orthographic globe without a basemap, terrain or
   imagery; it is illustrative, not a measurement surface. The CesiumJS renderer,
-  presets with the floating-origin pipeline, event-claim storage (4c) and every
-  real adapter are later packages. The snapshot carries no events yet.
+  presets with the floating-origin pipeline and every real adapter (including
+  aviation, marine and road occurrence-report sources for 4c) are later
+  packages. Review candidates are ingested as claims; no worker yet derives
+  them from tracks.
 - The server is standard-library HTTP with a small WebSocket implementation,
   sized for a single-user loopback demo; the private gateway, shared login and
   live revocation proofs belong to the private integration (Package 8).

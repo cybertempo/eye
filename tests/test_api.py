@@ -126,7 +126,11 @@ def test_snapshot_refuses_unbounded_or_malformed_queries(api_server, query, stat
 def test_empty_result_is_still_marked_by_its_sources(api_server):
     api = api_server()
     empty = body(api.get("/api/v0/snapshot?bbox=-0.5,-0.5,-0.4,-0.4&layers=road"))
-    assert empty["tracks"] == [] and empty["coverage"] == []
+    assert empty["tracks"] == [] and empty["events"] == []
+    # No event-report source covers it: events are unknown there, not absent.
+    assert [(c["state"], c["metric"]) for c in empty["coverage"]] == [
+        ("unknown", {"name": "event_reports", "value": None})
+    ]
     assert empty["synthetic"] is True  # every source in this database is invented
     api.conn.run("ALTER TABLE eye.capture_batch DISABLE TRIGGER capture_batch_guard")
     api.conn.run("UPDATE eye.capture_batch SET source_id = 'not-synthetic' WHERE layer = 'road'")
@@ -327,7 +331,7 @@ def test_reconnect_with_a_valid_cursor_gets_a_fresh_snapshot(api_server):
     resumed.send(subscribe(AREA, DAY, resume=cursor))
     notice = resumed.recv()
     assert notice == {
-        "schema_version": "eye.wire/2",
+        "schema_version": "eye.wire/3",
         "kind": "resync_required",
         "reason": "reconnect",
         "last_cursor": cursor,
@@ -343,20 +347,20 @@ def test_reconnect_in_another_wire_version_is_refused_by_name(api_server):
     """A page speaking eye.wire/1 that reconnects with its cursor is told which
     version this server speaks and closed with 1003 (unsupported data); a
     resubscribe or reconnect would meet the same answer, so no snapshot, no
-    subscription. Control: the same request in eye.wire/2 resumes normally."""
+    subscription. Control: the same request in eye.wire/3 resumes normally."""
     api = _partial_demo(api_server)
     first = ws(api)
     first.send(subscribe(AREA, DAY))
     cursor = first.recv()["cursor"]
     first.sock.close()
-    for version in ("eye.wire/1", "eye.wire/3"):
+    for version in ("eye.wire/1", "eye.wire/2", "eye.wire/4"):
         old = ws(api)
         old.send({**subscribe(AREA, DAY, resume=cursor), "schema_version": version})
         error = old.recv()
         assert reference_valid(error) and error["kind"] == "error" and error["status"] == 400
-        assert error["schema_version"] == "eye.wire/2"
+        assert error["schema_version"] == "eye.wire/3"
         assert error["error"] == (
-            f"unsupported wire version {version}; this server speaks eye.wire/2 only. "
+            f"unsupported wire version {version}; this server speaks eye.wire/3 only. "
             "Reload the page"
         )
         with pytest.raises(Closed) as closed:
@@ -489,7 +493,7 @@ def test_revoked_access_closes_open_sockets(api_server):
     auth.allowed = False
     api.server.hub.recheck_auth()
     assert client.recv() == {
-        "schema_version": "eye.wire/2",
+        "schema_version": "eye.wire/3",
         "kind": "error",
         "status": 403,
         "error": "not authorised",
@@ -742,11 +746,12 @@ def test_feed_failure_marks_subscribers_stale_then_resnapshots(api_server, admin
 
 
 def test_oversized_websocket_snapshot_leaves_no_active_subscription(api_server):
+    # 12 KiB: the full view (about 22 KiB) is refused; the narrow control fits.
     api = _partial_demo(
-        api_server, server={"max_response_bytes": 8192}, api={"ws_max_buffer_bytes": 16384}
+        api_server, server={"max_response_bytes": 12288}, api={"ws_max_buffer_bytes": 16384}
     )
     client = ws(api)
-    client.send(subscribe(AREA, DAY))  # four vessel tracks: far more than 8 KiB
+    client.send(subscribe(AREA, DAY))  # four vessel tracks: far more than 12 KiB
     refused = client.recv()
     assert (refused["kind"], refused["status"]) == ("error", 413)
     (sub,) = api.server.hub.subscribers()

@@ -1,0 +1,9 @@
+{
+  "entry": "ServerMessage",
+  "note": "unknown message kind",
+  "message": {
+    "schema_version": "eye.wire/2",
+    "kind": "telemetry",
+    "status": "ok"
+  }
+}

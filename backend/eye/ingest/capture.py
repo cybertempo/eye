@@ -34,24 +34,35 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from eye.ingest import synthetic_ais
+from eye.ingest import event_claims, synthetic_ais
 from eye.storage.db import Connection, transaction
 
 CAPTURE_FORMAT = "eye.synthetic-capture/2"
+EVENT_CAPTURE_FORMAT = "eye.synthetic-event-claims/1"
 # The wire version whose observation fields each receipt was recorded under.
-# eye.wire/2 changed only how tracks and counts are served, not an
-# observation's fields, so receipts keep this label and replay stays exact.
+# eye.wire/2 and eye.wire/3 changed only how tracks, counts and events are
+# served, not an observation's fields, so receipts keep this label and replay
+# stays exact.
 RECEIPT_SCHEMA_VERSION = "eye.wire/1"
-APPROVED_SOURCES = frozenset({"synthetic-fixture", "synthetic-ais"})
+APPROVED_SOURCES = frozenset({"synthetic-fixture", "synthetic-ais", "synthetic-events"})
 # Record parser per approved source; the AIS adapter maps its own message shape.
 SOURCE_LAYERS = {
     "synthetic-fixture": frozenset({"flight", "vessel", "road"}),
     "synthetic-ais": frozenset({"vessel"}),
+    "synthetic-events": frozenset({"flight", "vessel", "road"}),
 }
+# The capture format each source delivers: positions, or event claims.
+SOURCE_FORMATS = {
+    "synthetic-fixture": CAPTURE_FORMAT,
+    "synthetic-ais": CAPTURE_FORMAT,
+    "synthetic-events": EVENT_CAPTURE_FORMAT,
+}
+EVENT_METRIC_NAME = "event_reports"
 LAYERS = frozenset({"flight", "vessel", "road"})  # every layer any source may use
 PROVIDER_STATUSES = frozenset({"ok", "error", "timeout", "indeterminate"})
 MAX_EVIDENCE_BYTES = 1_048_576
 MAX_RECORDS = 10_000
+MAX_CLAIMS = 1_000
 DERIVATION_VERSION = "coverage/2"
 METRIC_NAME = "tracks_observed"
 ID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://eye.invalid/ids/v1")
@@ -145,9 +156,15 @@ class ParsedCapture:
     quota_cost: float
     observed_start: datetime | None
     observed_end: datetime | None
+    capture_format: str = CAPTURE_FORMAT
     submitted: int = 0
     records: list[Record] = field(default_factory=list)
+    claims: list[event_claims.Claim] = field(default_factory=list)
     rejected: list[str] = field(default_factory=list)
+
+    @property
+    def metric_name(self) -> str:
+        return EVENT_METRIC_NAME if self.capture_format == EVENT_CAPTURE_FORMAT else METRIC_NAME
 
     @property
     def batch_id(self) -> str:
@@ -211,8 +228,6 @@ def parse_capture(raw: bytes) -> ParsedCapture:
         doc = json.loads(raw)
         if not isinstance(doc, dict):
             raise ValueError("capture must be a JSON object")
-        if doc.get("capture_format") != CAPTURE_FORMAT:
-            raise ValueError(f"capture_format must be {CAPTURE_FORMAT}")
         if doc.get("synthetic") is not True:
             raise ValueError('only captures marked "synthetic": true are accepted')
         source_id = doc.get("source_id")
@@ -220,6 +235,9 @@ def parse_capture(raw: bytes) -> ParsedCapture:
             raise ValueError(
                 f"source {source_id!r} has no approved row in docs/source-policy-register.md"
             )
+        capture_format = SOURCE_FORMATS[source_id]
+        if doc.get("capture_format") != capture_format:
+            raise ValueError(f"capture_format for {source_id} must be {capture_format}")
         layer = doc.get("layer")
         if layer not in LAYERS:
             raise ValueError(f"layer must be one of {sorted(LAYERS)}")
@@ -261,14 +279,22 @@ def parse_capture(raw: bytes) -> ParsedCapture:
                 raise ValueError("observed interval must lie inside the requested interval")
         if layer not in SOURCE_LAYERS[source_id]:
             raise ValueError(f"source {source_id} does not provide layer {layer}")
-        if source_id == synthetic_ais.SOURCE_ID:
+        limit = MAX_RECORDS
+        if capture_format == EVENT_CAPTURE_FORMAT:
+            records = doc["provider_response"]["claims"]
+            limit = MAX_CLAIMS
+
+            def parse_item(item, index, received, layer=layer):
+                return event_claims.parse_claim(item, index, layer, received, parse_time)
+
+        elif source_id == synthetic_ais.SOURCE_ID:
             records = synthetic_ais.messages(doc["provider_response"])
             parse_item = synthetic_ais.parse_message
         else:
             records = doc["provider_response"]["records"]
             parse_item = _parse_record
-        if not isinstance(records, list) or len(records) > MAX_RECORDS:
-            raise ValueError(f"records must be a list of at most {MAX_RECORDS}")
+        if not isinstance(records, list) or len(records) > limit:
+            raise ValueError(f"records must be a list of at most {limit}")
     except (KeyError, TypeError, ValueError) as exc:
         raise CaptureRejected(f"unusable capture envelope: {exc}") from exc
 
@@ -288,6 +314,7 @@ def parse_capture(raw: bytes) -> ParsedCapture:
         quota_cost=quota,
         observed_start=observed_start,
         observed_end=observed_end,
+        capture_format=capture_format,
         submitted=len(records),
     )
     for index, item in enumerate(records):
@@ -298,6 +325,13 @@ def parse_capture(raw: bytes) -> ParsedCapture:
             record = parse_item(item, index, finished)
         except ValueError as exc:
             parsed.rejected.append(str(exc))
+            continue
+        if isinstance(record, event_claims.Claim):
+            # An event source is asked what it published during the request.
+            if not start <= record.source_published_time <= end:
+                parsed.rejected.append(f"claim {index}: published outside the request")
+                continue
+            parsed.claims.append(record)
             continue
         if not start <= record.observed_time <= end:
             parsed.rejected.append(f"record {index}: observed_time outside the request")
@@ -313,7 +347,8 @@ def derive_coverage(parsed: ParsedCapture) -> dict:
         return {"state": "failed", "value": None, "reason": f"provider status {status}"}
     if status == "indeterminate":
         return {"state": "unknown", "value": None, "reason": "provider completeness unknown"}
-    if parsed.submitted and not parsed.records:
+    usable = parsed.claims if parsed.capture_format == EVENT_CAPTURE_FORMAT else parsed.records
+    if parsed.submitted and not usable:
         # The provider answered, but nothing in the answer can be used: EYE was
         # not observing. Only an empty, healthy response is a measured zero.
         return {
@@ -321,7 +356,10 @@ def derive_coverage(parsed: ParsedCapture) -> dict:
             "value": None,
             "reason": f"all {parsed.submitted} record(s) rejected; nothing usable",
         }
-    distinct = len({r.source_record_id for r in parsed.records})
+    if parsed.capture_format == EVENT_CAPTURE_FORMAT:
+        distinct = len({c.case_id for c in parsed.claims})  # cases, not deliveries
+    else:
+        distinct = len({r.source_record_id for r in parsed.records})
     reasons = []
     if (parsed.observed_start, parsed.observed_end) != (
         parsed.requested_start,
@@ -350,6 +388,38 @@ def observation_id(source_id: str, layer: str, record: Record) -> str:
     )
 
 
+def claim_id(source_id: str, layer: str, claim: event_claims.Claim) -> str:
+    """Content-derived: a duplicate delivery of one case version is one claim."""
+    return stable_id("event_claim", source_id, layer, claim.case_id, claim.content_sha256(iso))
+
+
+def claim_row(source_id: str, layer: str, claim: event_claims.Claim) -> tuple:
+    loc = claim.location
+    coords = (loc.coords,) if loc.type == "point" else loc.coords
+    window = claim.subject_window
+    return (
+        source_id,
+        layer,
+        claim.case_id,
+        claim.basis,
+        claim.kind,
+        claim.status,
+        None if claim.event_time is None else iso(claim.event_time),
+        claim.event_time_uncertainty_s,
+        iso(claim.source_published_time),
+        loc.type,
+        tuple(tuple(p) for p in coords),
+        loc.precision_m,
+        loc.direction,
+        claim.evidence_ref,
+        tuple(sorted(claim.subject_identifiers)),
+        None if window is None else iso(window[0]),
+        None if window is None else iso(window[1]),
+        claim.summary,
+        claim.content_sha256(iso),
+    )
+
+
 @dataclass(frozen=True)
 class Derived:
     """Everything one committed batch contributes, as stored values."""
@@ -358,6 +428,8 @@ class Derived:
     observations: dict[str, tuple]
     receipts: dict[tuple[str, str], tuple]
     coverage: dict[str, tuple]
+    claims: dict[str, tuple] = field(default_factory=dict)
+    claim_receipts: dict[tuple[str, str], tuple] = field(default_factory=dict)
 
 
 def derive(parsed: ParsedCapture) -> Derived:
@@ -385,12 +457,26 @@ def derive(parsed: ParsedCapture) -> Derived:
             RECEIPT_SCHEMA_VERSION,
             parsed.adapter_version,
         )
+    claims: dict[str, tuple] = {}
+    claim_receipts: dict[tuple[str, str], tuple] = {}
+    for claim in parsed.claims:
+        cid = claim_id(parsed.source_id, parsed.layer, claim)
+        claims[cid] = claim_row(parsed.source_id, parsed.layer, claim)
+        claim_receipts[(cid, parsed.batch_id)] = (
+            parsed.evidence_id,
+            iso(parsed.received_time),
+            parsed.adapter_version,
+        )
     coverage = derive_coverage(parsed)
-    coverage_id = stable_id("coverage", parsed.batch_id, parsed.layer, METRIC_NAME)
+    metric = parsed.metric_name
+    coverage_id = stable_id("coverage", parsed.batch_id, parsed.layer, metric)
+    accepted = len(parsed.records) + len(parsed.claims)
     return Derived(
-        batch=("committed", len(parsed.records), len(parsed.rejected), None),
+        batch=("committed", accepted, len(parsed.rejected), None),
         observations=observations,
         receipts=receipts,
+        claims=claims,
+        claim_receipts=claim_receipts,
         coverage={
             coverage_id: (
                 parsed.batch_id,
@@ -400,7 +486,7 @@ def derive(parsed: ParsedCapture) -> Derived:
                 iso(parsed.requested_end),
                 coverage["state"],
                 coverage["reason"],
-                METRIC_NAME,
+                metric,
                 coverage["value"],
                 DERIVATION_VERSION,
             )
@@ -413,13 +499,14 @@ INTEGRITY_REASON = "evidence checksum mismatch"
 
 def derive_integrity_failure(batch_id: str, facts: tuple) -> Derived:
     """What a batch whose stored evidence fails its checksum must contain."""
-    source_id, layer, start, end = facts
+    source_id, layer, start, end, capture_format = facts
+    metric = EVENT_METRIC_NAME if capture_format == EVENT_CAPTURE_FORMAT else METRIC_NAME
     return Derived(
         batch=("failed", 0, 0, INTEGRITY_REASON),
         observations={},
         receipts={},
         coverage={
-            stable_id("coverage", batch_id, "integrity", METRIC_NAME): (
+            stable_id("coverage", batch_id, "integrity", metric): (
                 batch_id,
                 source_id,
                 layer,
@@ -427,7 +514,7 @@ def derive_integrity_failure(batch_id: str, facts: tuple) -> Derived:
                 end,
                 "failed",
                 INTEGRITY_REASON,
-                METRIC_NAME,
+                metric,
                 None,
                 DERIVATION_VERSION,
             )
@@ -466,7 +553,7 @@ def archive(conn: Connection, raw: bytes) -> ParsedCapture:
             source_id=parsed.source_id,
             layer=parsed.layer,
             adapter_version=parsed.adapter_version,
-            capture_format=CAPTURE_FORMAT,
+            capture_format=parsed.capture_format,
             west=west,
             south=south,
             east=east,
@@ -570,6 +657,77 @@ def _write(conn: Connection, batch_id: str, derived: Derived) -> None:
             value=value,
             derivation=derivation,
         )
+    for cid, row in derived.claims.items():
+        (
+            source,
+            layer,
+            case,
+            basis,
+            kind,
+            status,
+            event_time,
+            uncertainty,
+            published,
+            loc_type,
+            coords,
+            precision,
+            direction,
+            evidence,
+            identifiers,
+            w_start,
+            w_end,
+            summary,
+            sha,
+        ) = row
+        conn.run(
+            """
+            INSERT INTO eye.event_claim (
+                claim_id, source_id, layer, case_id, basis, kind, status, event_time,
+                event_time_uncertainty_s, source_published_time, location_type, location,
+                precision_m, segment_direction, evidence_ref, subject_identifiers,
+                subject_window_start, subject_window_end, summary, content_sha256)
+            VALUES (:id, :source, :layer, :case, CAST(:basis AS eye.claim_basis), :kind,
+                CAST(:status AS eye.claim_status), CAST(:event_time AS timestamptz), :uncertainty,
+                CAST(:published AS timestamptz), :loc_type, ST_GeomFromText(:wkt, 4326),
+                :precision, :direction, :evidence, CAST(:identifiers AS text[]),
+                CAST(:w_start AS timestamptz), CAST(:w_end AS timestamptz), :summary, :sha)
+            ON CONFLICT (claim_id) DO NOTHING
+            """,
+            id=cid,
+            source=source,
+            layer=layer,
+            case=case,
+            basis=basis,
+            kind=kind,
+            status=status,
+            event_time=event_time,
+            uncertainty=uncertainty,
+            published=published,
+            loc_type=loc_type,
+            wkt=_wkt(loc_type, coords),
+            precision=precision,
+            direction=direction,
+            evidence=evidence,
+            identifiers=list(identifiers),
+            w_start=w_start,
+            w_end=w_end,
+            summary=summary,
+            sha=sha,
+        )
+    for (cid, bid), (evidence_id, received, adapter_version) in derived.claim_receipts.items():
+        conn.run(
+            """
+            INSERT INTO eye.event_claim_receipt (
+                claim_id, batch_id, evidence_id, received_time, adapter_version)
+            VALUES (:cid, :bid, :eid, CAST(:received AS timestamptz), :adapter)
+            ON CONFLICT (claim_id, batch_id) DO NOTHING
+            """,
+            cid=cid,
+            bid=bid,
+            eid=evidence_id,
+            received=received,
+            adapter=adapter_version,
+        )
     status, accepted, rejected, reason = derived.batch
     conn.run(
         "UPDATE eye.capture_batch SET status = CAST(:status AS eye.batch_status), "
@@ -586,14 +744,20 @@ def _write(conn: Connection, batch_id: str, derived: Derived) -> None:
 BATCH_FACTS = """
     SELECT b.status::text, b.accepted_count, b.rejected_count, b.failure_reason,
            b.evidence_sha256, e.content, b.source_id, b.layer,
-           eye.iso_utc(b.requested_start), eye.iso_utc(b.requested_end)
+           eye.iso_utc(b.requested_start), eye.iso_utc(b.requested_end), b.capture_format
     FROM eye.capture_batch b JOIN eye.raw_evidence e USING (batch_id)
 """
 
 
+def _wkt(loc_type: str, coords: tuple) -> str:
+    return event_claims.Location(
+        loc_type, coords[0] if loc_type == "point" else coords, 0.0, None
+    ).wkt()
+
+
 def _expected_for(batch_id: str, row: list) -> Derived:
     """Derive what a batch must contain from its stored evidence alone."""
-    content, expected_sha, facts = bytes(row[5]), row[4], tuple(row[6:10])
+    content, expected_sha, facts = bytes(row[5]), row[4], tuple(row[6:11])
     if hashlib.sha256(content).hexdigest() != expected_sha:
         return derive_integrity_failure(batch_id, facts)
     return derive(parse_capture(content))
@@ -668,6 +832,19 @@ def expected_versions(observations: dict[str, tuple]) -> dict[str, tuple]:
         source, record, layer, observed, published = row[0], row[1], row[2], row[4], row[5]
         tiers = groups.setdefault((source, layer, record, observed), {})
         tiers.setdefault(published, []).append(oid)
+    return _version_facts(groups)
+
+
+def expected_claim_versions(claims: dict[str, tuple]) -> dict[str, tuple]:
+    """Version facts per case (mirrors eye.event_claim_version): same rules."""
+    groups: dict[tuple, dict[str, list[str]]] = {}
+    for cid, row in claims.items():
+        source, layer, case, published = row[0], row[1], row[2], row[8]
+        groups.setdefault((source, layer, case), {}).setdefault(published, []).append(cid)
+    return _version_facts(groups)
+
+
+def _version_facts(groups: dict[tuple, dict[str, list[str]]]) -> dict[str, tuple]:
     result: dict[str, tuple] = {}
     for tiers in groups.values():
         ordered = sorted(tiers)
@@ -733,7 +910,7 @@ def _verify_archive(conn: Connection, problems: list[str]) -> None:
             parsed.source_id,
             parsed.layer,
             parsed.adapter_version,
-            CAPTURE_FORMAT,
+            parsed.capture_format,
             west,
             south,
             east,
@@ -797,6 +974,8 @@ def verify_replay(conn: Connection) -> list[str]:
     observations: dict[str, tuple] = {}
     receipts: dict[tuple, tuple] = {}
     coverage: dict[str, tuple] = {}
+    claims: dict[str, tuple] = {}
+    claim_receipts: dict[tuple, tuple] = {}
     for batch_id, *row in conn.run(
         BATCH_FACTS.replace("SELECT ", "SELECT b.batch_id::text, ", 1) + " ORDER BY b.batch_id"
     ):
@@ -817,6 +996,8 @@ def verify_replay(conn: Connection) -> list[str]:
         observations.update(derived.observations)
         receipts.update(derived.receipts)
         coverage.update(derived.coverage)
+        claims.update(derived.claims)
+        claim_receipts.update(derived.claim_receipts)
 
     _verify_archive(conn, problems)
 
@@ -873,4 +1054,45 @@ def verify_replay(conn: Connection) -> list[str]:
         )
     }
     _compare("version", expected_versions(observations), actual_versions, problems)
+
+    actual_claims = {}
+    for row in conn.run(CLAIM_FACTS):
+        values = [_normalise(v) for v in row]
+        values[11] = tuple(tuple(p) for p in row[11])  # coordinates, in order
+        actual_claims[values[0]] = tuple(values[1:])
+    _compare("event claim", claims, actual_claims, problems)
+    actual_claim_receipts = {
+        (r[0], r[1]): r[2:]
+        for r in _rows(
+            conn,
+            "SELECT claim_id::text, batch_id::text, evidence_id::text, "
+            "eye.iso_utc(received_time), adapter_version FROM eye.event_claim_receipt",
+        )
+    }
+    _compare("event claim receipt", claim_receipts, actual_claim_receipts, problems)
+    actual_claim_versions = {
+        r[0]: r[1:]
+        for r in _rows(
+            conn,
+            "SELECT claim_id::text, version, supersedes_claim_id::text, is_current, "
+            "publication_conflict FROM eye.event_claim_version",
+        )
+    }
+    _compare(
+        "event claim version", expected_claim_versions(claims), actual_claim_versions, problems
+    )
     return problems
+
+
+CLAIM_FACTS = """
+    SELECT claim_id::text, source_id, layer, case_id, basis::text, kind, status::text,
+           eye.iso_utc(event_time), event_time_uncertainty_s, eye.iso_utc(source_published_time),
+           location_type,
+           (SELECT array_agg(ARRAY[ST_X(d.geom), ST_Y(d.geom)] ORDER BY d.path)
+            FROM ST_DumpPoints(location) d),
+           precision_m, segment_direction, evidence_ref,
+           ARRAY(SELECT i FROM unnest(subject_identifiers) i ORDER BY i),
+           eye.iso_utc(subject_window_start), eye.iso_utc(subject_window_end), summary,
+           content_sha256
+    FROM eye.event_claim
+"""

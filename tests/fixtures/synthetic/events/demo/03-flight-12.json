@@ -1,0 +1,88 @@
+{
+  "capture_format": "eye.synthetic-event-claims/1",
+  "synthetic": true,
+  "source_id": "synthetic-events",
+  "adapter_version": "synthetic-events/1",
+  "note": "Invented flight event reports for the demo: a sourced accident notice and a signal-loss review candidate.",
+  "layer": "flight",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-02-01T12:00:00Z",
+    "end": "2026-02-01T13:00:00Z",
+    "expected_interval_s": 3600
+  },
+  "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every claim",
+    "started_at": "2026-02-01T13:00:05Z",
+    "finished_at": "2026-02-01T13:00:10Z",
+    "provider_status": "ok",
+    "quota_cost": 0,
+    "observed_start": "2026-02-01T12:00:00Z",
+    "observed_end": "2026-02-01T13:00:00Z"
+  },
+  "provider_response": {
+    "claims": [
+      {
+        "case_id": "SYN-AV-1",
+        "basis": "official_report",
+        "kind": "aviation_accident",
+        "status": "preliminary",
+        "event_time": "2026-02-01T12:20:00Z",
+        "event_time_uncertainty_s": 600,
+        "source_published_time": "2026-02-01T12:50:00Z",
+        "location": {
+          "type": "point",
+          "coords": [
+            0.05,
+            0.3
+          ],
+          "precision_m": 2000
+        },
+        "evidence_ref": "synthetic-doc:SYN-AV-1:preliminary-notice",
+        "subject": {
+          "identifiers": [
+            "track:synthetic-fixture:flight:SYN-FLT-777"
+          ],
+          "window": {
+            "start": "2026-02-01T11:30:00Z",
+            "end": "2026-02-01T12:30:00Z"
+          }
+        },
+        "summary": "Invented aviation accident notice; site approximate."
+      },
+      {
+        "case_id": "SYN-SL-1",
+        "basis": "motion_inference",
+        "kind": "signal_lost",
+        "status": "candidate",
+        "event_time": "2026-02-01T12:10:00Z",
+        "event_time_uncertainty_s": 60,
+        "source_published_time": "2026-02-01T12:40:00Z",
+        "location": {
+          "type": "point",
+          "coords": [
+            -0.3,
+            0.2
+          ],
+          "precision_m": 5000
+        },
+        "evidence_ref": null,
+        "subject": {
+          "identifiers": [
+            "track:synthetic-fixture:flight:SYN-FLT-778"
+          ],
+          "window": {
+            "start": "2026-02-01T11:40:00Z",
+            "end": "2026-02-01T12:40:00Z"
+          }
+        },
+        "summary": "Position reports stopped after 12:10. Review candidate only; a lost signal is not an accident."
+      }
+    ]
+  }
+}

@@ -4,6 +4,8 @@
 
 import type {
   Coverage,
+  EventCase,
+  EventClaim,
   Track,
   TrackPoint,
   TransitCount,
@@ -204,4 +206,154 @@ export function routeRuns(track: Track): TrackPoint[][] {
   }
   if (run.length > 0) runs.push(run);
   return runs;
+}
+
+// --- event-ledger cases (Package 4c) -----------------------------------------------------
+
+const KIND_LABELS: Record<string, string> = {
+  aviation_accident: "Aviation accident",
+  aviation_incident: "Aviation incident",
+  emergency_declared: "Emergency declared",
+  diversion: "Diversion",
+  flight_arrival: "Flight arrival",
+  signal_lost: "Flight position reports stopped",
+  marine_casualty: "Marine casualty",
+  vessel_distress: "Vessel distress",
+  vessel_port_arrival: "Port arrival",
+  ais_gap: "AIS reports stopped",
+  vessel_stopped: "Vessel stopped",
+  road_collision: "Road collision",
+  road_incident: "Road incident",
+  road_closure: "Road closure",
+  road_congestion: "Road congestion",
+  traffic_slowdown: "Traffic slowdown",
+};
+const BASIS_LABELS: Record<string, string> = {
+  official_report: "official report",
+  operator_report: "operator report",
+  motion_inference: "inferred from motion data",
+};
+
+export function kindLabel(kind: string): string {
+  return KIND_LABELS[kind] ?? kind;
+}
+
+export function currentClaim(event: EventCase): EventClaim | undefined {
+  return event.claims.find((c) => c.claim_id === event.current_claim_id && c.is_current === true);
+}
+
+/**
+ * What the case says, in words. Only a sourced report can name an accident;
+ * a review candidate (motion data) always says it reports nothing.
+ */
+export function eventAssessment(event: EventCase): string {
+  const current = currentClaim(event);
+  if (event.standing === "unresolved" || !current) {
+    const latest = event.claims.filter((c) => c.is_current === null);
+    const when = latest[0]?.published_time ?? "the same time";
+    return `Unresolved: ${latest.length} conflicting claims published at ${when}; no current version`;
+  }
+  const kind = kindLabel(current.kind);
+  if (current.basis === "motion_inference") {
+    return `Review candidate: ${kind.toLowerCase()} (${BASIS_LABELS[current.basis]}). ` +
+      "Not a report of any accident; outcome unknown.";
+  }
+  const basis = BASIS_LABELS[current.basis] ?? current.basis;
+  switch (current.status) {
+    case "final":
+      return `${kind}: confirmed by a final ${basis}`;
+    case "preliminary":
+      return `${kind}: preliminary ${basis} (may change)`;
+    case "retracted":
+      return `${kind}: retracted by the source`;
+    case "cleared":
+      return `${kind}: cleared (${basis})`;
+    default:
+      return `${kind} reported (${basis}); not confirmed by a final report`;
+  }
+}
+
+export function locationText(location: EventClaim["reported_event_location"]): string {
+  const precision = `stated precision ±${location.precision_m} m`;
+  switch (location.type) {
+    case "point":
+      return `Point ${formatPosition(location.coords[0], location.coords[1])}, ${precision}`;
+    case "segment": {
+      const first = location.coords[0];
+      const last = location.coords[location.coords.length - 1];
+      const direction = location.direction === "forward"
+        ? "one direction only (as drawn, first to last)"
+        : "both directions";
+      return `Segment from ${first ? formatPosition(first[0], first[1]) : "?"} to ` +
+        `${last ? formatPosition(last[0], last[1]) : "?"}, ${direction}, ${precision}`;
+    }
+    default:
+      return `Area (ring of ${location.coords.length - 1} corners), ${precision}`;
+  }
+}
+
+export function eventTimeText(claim: EventClaim): string {
+  if (claim.event_time === null) return `${UNKNOWN} (the source gave no event time)`;
+  return `${claim.event_time} ± ${claim.event_time_uncertainty_s ?? 0} s`;
+}
+
+export function lastObservedText(event: EventCase): string {
+  const last = event.last_observed_position;
+  if (!last) {
+    return event.link.state === "not_applicable"
+      ? "None: the report names no tracked aircraft or vessel"
+      : `${UNKNOWN}: not linked (${event.link.reason})`;
+  }
+  return `${formatPosition(last.lon, last.lat)} at ${last.observed_time} (received ${last.received_time}), ` +
+    `track ${last.track_id} (${last.source_record_id}). An observation, not the reported site.`;
+}
+
+export function claimHistory(event: EventCase): string[] {
+  return event.claims.map((c) => {
+    const state = c.is_current === true ? "current" : c.is_current === null ? "conflicting" : "superseded";
+    return `v${c.version} (${state}), published ${c.published_time}, received ${c.received_time}: ` +
+      `${kindLabel(c.kind)}, ${c.status}, ${BASIS_LABELS[c.basis] ?? c.basis}; ` +
+      `${locationText(c.reported_event_location)}; evidence ${c.evidence_ref ?? "none (motion data)"}; ` +
+      `batches ${c.evidence_batch_ids.join(", ")}`;
+  });
+}
+
+/** Rules the schema cannot express; a case that breaks one is refused, not shown. */
+export function eventErrors(event: EventCase): string[] {
+  const errors: string[] = [];
+  const current = event.claims.filter((c) => c.is_current === true);
+  if (event.current_claim_id === null) {
+    if (current.length > 0) errors.push("a current claim without current_claim_id");
+    if (event.standing !== "unresolved") errors.push("no current claim but not unresolved");
+  } else {
+    const chosen = currentClaim(event);
+    if (!chosen || current.length !== 1) errors.push("current_claim_id is not the one current claim");
+    else {
+      const expected = chosen.status === "retracted" ? "retracted"
+        : chosen.basis === "motion_inference" ? "review_candidate" : "report";
+      if (event.standing !== expected) errors.push(`standing ${event.standing} does not match the current claim`);
+    }
+  }
+  const last = event.last_observed_position;
+  if (last && (event.link.state !== "linked" || last.track_id !== event.link.track_id)) {
+    errors.push("a last observed position without a link to that track");
+  }
+  return errors;
+}
+
+/** Event-report coverage for the view, per layer, in words; unknown is never "none". */
+export function eventCoverageText(coverage: readonly Coverage[], layers: readonly string[]): string[] {
+  return layers.map((layer) => {
+    const rows = coverage
+      .filter((c) => c.layer === layer && c.metric.name === "event_reports")
+      .sort((a, b) => compareTime(a.interval.start, b.interval.start));
+    if (rows.length === 0) return `${layer}: ${UNKNOWN}: no event-report coverage`;
+    const parts = rows.map((c) => {
+      const span = intervalText(c.interval);
+      if (c.state === "qualified") return `${span} covered (${c.metric.value} cases)`;
+      if (c.state === "partial") return `${span} partly covered (at least ${c.metric.value} cases; ${c.reason ?? ""})`;
+      return `${span} ${UNKNOWN}: ${c.reason ?? "no data"}`;
+    });
+    return `${layer}: ${parts.join("; ")}`;
+  });
 }

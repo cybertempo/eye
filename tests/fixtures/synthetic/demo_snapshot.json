@@ -1,5 +1,5 @@
 {
-  "schema_version": "eye.wire/2",
+  "schema_version": "eye.wire/3",
   "kind": "snapshot",
   "cursor": "demo-p1-0001",
   "generated_at": "2026-01-01T01:00:00Z",
@@ -86,96 +86,199 @@
   ],
   "events": [
     {
-      "id": "syn-event-road-001",
-      "kind": "road_closure",
-      "source": "synthetic-fixture",
-      "status": "reported",
-      "reported_event_location": {
-        "type": "segment",
-        "coords": [
-          [
-            0.02,
-            -0.3
-          ],
-          [
-            0.05,
-            -0.28
-          ]
-        ],
-        "precision_m": 250
-      },
-      "event_time": "2026-01-01T00:12:00Z",
-      "published_time": "2026-01-01T00:18:00Z",
-      "received_time": "2026-01-01T00:18:20Z",
-      "replayed": false,
-      "revisions": []
-    },
-    {
-      "id": "syn-event-late-001",
-      "kind": "road_incident",
-      "source": "synthetic-fixture",
-      "status": "corrected",
-      "reported_event_location": {
-        "type": "point",
-        "coords": [
-          0.08,
-          -0.26
-        ],
-        "precision_m": 500
-      },
-      "event_time": "2026-01-01T00:15:00Z",
-      "published_time": "2026-01-01T00:50:00Z",
-      "received_time": "2026-01-01T00:50:15Z",
-      "replayed": false,
-      "revisions": [
+      "id": "evt-00000000000000000000000000000001",
+      "layer": "road",
+      "source": "synthetic-events",
+      "source_label": "Synthetic event reports (invented cases; not a real authority)",
+      "case_id": "SYN-RC-1",
+      "standing": "report",
+      "current_claim_id": "clm-rc-2",
+      "claims": [
         {
-          "revision": 1,
-          "published_time": "2026-01-01T00:20:00Z",
+          "claim_id": "clm-rc-1",
+          "version": 1,
+          "is_current": false,
+          "basis": "official_report",
+          "kind": "road_closure",
           "status": "reported",
-          "location": {
-            "type": "point",
+          "event_time": "2026-01-01T00:12:00Z",
+          "event_time_uncertainty_s": 300,
+          "published_time": "2026-01-01T00:18:00Z",
+          "received_time": "2026-01-01T00:18:20Z",
+          "reported_event_location": {
+            "type": "segment",
             "coords": [
-              0.06,
-              -0.29
+              [
+                0.02,
+                -0.3
+              ],
+              [
+                0.05,
+                -0.28
+              ]
             ],
-            "precision_m": 1000
-          }
+            "precision_m": 250,
+            "direction": "forward"
+          },
+          "evidence_ref": "synthetic-doc:SYN-RC-1:notice",
+          "evidence_batch_ids": [
+            "batch-rc-1"
+          ],
+          "subject_identifiers": [],
+          "subject_window": null,
+          "summary": null
         },
         {
-          "revision": 2,
-          "published_time": "2026-01-01T00:50:00Z",
-          "status": "corrected",
-          "location": {
-            "type": "point",
+          "claim_id": "clm-rc-2",
+          "version": 2,
+          "is_current": true,
+          "basis": "official_report",
+          "kind": "road_closure",
+          "status": "reported",
+          "event_time": "2026-01-01T00:12:00Z",
+          "event_time_uncertainty_s": 300,
+          "published_time": "2026-01-01T00:40:00Z",
+          "received_time": "2026-01-01T00:40:10Z",
+          "reported_event_location": {
+            "type": "segment",
             "coords": [
-              0.08,
-              -0.26
+              [
+                0.03,
+                -0.3
+              ],
+              [
+                0.06,
+                -0.28
+              ]
             ],
-            "precision_m": 500
-          }
+            "precision_m": 100,
+            "direction": "forward"
+          },
+          "evidence_ref": "synthetic-doc:SYN-RC-1:corrected-notice",
+          "evidence_batch_ids": [
+            "batch-rc-2"
+          ],
+          "subject_identifiers": [],
+          "subject_window": null,
+          "summary": "Closure location corrected."
         }
-      ]
+      ],
+      "link": {
+        "state": "not_applicable",
+        "track_id": null,
+        "reason": "the report names no vehicle or vessel",
+        "candidate_track_ids": []
+      },
+      "last_observed_position": null
     },
     {
-      "id": "syn-event-replay-001",
-      "kind": "vessel_port_arrival",
-      "source": "synthetic-fixture",
-      "status": "reported",
-      "reported_event_location": {
-        "type": "area",
-        "bbox": [
-          0.15,
-          0.2,
-          0.2,
-          0.25
-        ],
-        "precision_m": 2000
+      "id": "evt-00000000000000000000000000000002",
+      "layer": "vessel",
+      "source": "synthetic-events",
+      "source_label": "Synthetic event reports (invented cases; not a real authority)",
+      "case_id": "SYN-PA-1",
+      "standing": "report",
+      "current_claim_id": "clm-pa-1",
+      "claims": [
+        {
+          "claim_id": "clm-pa-1",
+          "version": 1,
+          "is_current": true,
+          "basis": "official_report",
+          "kind": "vessel_port_arrival",
+          "status": "final",
+          "event_time": "2026-01-01T00:12:00Z",
+          "event_time_uncertainty_s": 300,
+          "published_time": "2026-01-01T00:30:00Z",
+          "received_time": "2026-01-01T00:30:05Z",
+          "reported_event_location": {
+            "type": "area",
+            "coords": [
+              [
+                0.3,
+                0.3
+              ],
+              [
+                0.35,
+                0.3
+              ],
+              [
+                0.35,
+                0.35
+              ],
+              [
+                0.3,
+                0.35
+              ],
+              [
+                0.3,
+                0.3
+              ]
+            ],
+            "precision_m": 500
+          },
+          "evidence_ref": "synthetic-doc:SYN-PA-1:arrival",
+          "evidence_batch_ids": [
+            "batch-pa-1",
+            "batch-pa-replay"
+          ],
+          "subject_identifiers": [],
+          "subject_window": null,
+          "summary": "Delivered twice: the replayed delivery is a second receipt, not a second claim."
+        }
+      ],
+      "link": {
+        "state": "not_applicable",
+        "track_id": null,
+        "reason": "the report names no vehicle or vessel",
+        "candidate_track_ids": []
       },
-      "event_time": "2026-01-01T00:42:00Z",
-      "published_time": "2026-01-01T00:45:00Z",
-      "received_time": "2026-01-01T00:45:05Z",
-      "replayed": true,
-      "revisions": []
+      "last_observed_position": null
+    },
+    {
+      "id": "evt-00000000000000000000000000000003",
+      "layer": "flight",
+      "source": "synthetic-events",
+      "source_label": "Synthetic event reports (invented cases; not a real authority)",
+      "case_id": "SYN-SL-9",
+      "standing": "review_candidate",
+      "current_claim_id": "clm-sl-1",
+      "claims": [
+        {
+          "claim_id": "clm-sl-1",
+          "version": 1,
+          "is_current": true,
+          "basis": "motion_inference",
+          "kind": "signal_lost",
+          "status": "candidate",
+          "event_time": "2026-01-01T00:12:00Z",
+          "event_time_uncertainty_s": 300,
+          "published_time": "2026-01-01T00:25:00Z",
+          "received_time": "2026-01-01T00:25:05Z",
+          "reported_event_location": {
+            "type": "point",
+            "coords": [
+              -0.3,
+              0.2
+            ],
+            "precision_m": 5000
+          },
+          "evidence_ref": null,
+          "evidence_batch_ids": [
+            "batch-sl-1"
+          ],
+          "subject_identifiers": [],
+          "subject_window": null,
+          "summary": "Review candidate only; a lost signal is not an accident."
+        }
+      ],
+      "link": {
+        "state": "not_applicable",
+        "track_id": null,
+        "reason": "the report names no vehicle or vessel",
+        "candidate_track_ids": []
+      },
+      "last_observed_position": null
     }
   ],
   "coverage": [

@@ -138,6 +138,8 @@ def _database_command(command: str, config: EyeConfig) -> int:
             batches = load_fixtures(conn, config.capture_fixtures)
             if config.ais_capture_fixtures is not None:
                 batches += load_fixtures(conn, config.ais_capture_fixtures)
+            if config.event_capture_fixtures is not None:
+                batches += load_fixtures(conn, config.event_capture_fixtures)
             runs = []
             for line in _lines(transits, config.count_lines):
                 intervals = transits.hourly_intervals(
@@ -151,6 +153,8 @@ def _database_command(command: str, config: EyeConfig) -> int:
             batches = load_fixtures(conn, config.capture_fixtures)
             if config.ais_capture_fixtures is not None:
                 batches += load_fixtures(conn, config.ais_capture_fixtures)
+            if config.event_capture_fixtures is not None:
+                batches += load_fixtures(conn, config.event_capture_fixtures)
             result = {
                 "batches": len(batches),
                 "created": sum(b.created for b in batches),
