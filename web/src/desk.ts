@@ -4,6 +4,7 @@
 
 import type { Coverage, Track, TransitsMessage } from "./generated/wire-types.js";
 import {
+  compareTime,
   countFigures,
   coverageMetric,
   crossingTime,
@@ -196,7 +197,7 @@ export function renderCoverage(coverage: readonly Coverage[]): void {
     "Coverage in view. A missing or failed capture is unknown, never zero.",
     ["Interval (UTC)", "Layer", "State", "Metric", "Reason"],
     [...coverage]
-      .sort((a, b) => a.interval.start.localeCompare(b.interval.start) || a.layer.localeCompare(b.layer))
+      .sort((a, b) => compareTime(a.interval.start, b.interval.start) || a.layer.localeCompare(b.layer))
       .map((c) => ({
         className: `state-${c.state}`,
         cells: [intervalText(c.interval), c.layer, c.state, coverageMetric(c), c.reason ?? "none"],

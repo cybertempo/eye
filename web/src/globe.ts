@@ -211,7 +211,7 @@ export class Globe {
     }
     let routePoints = 0;
     let claimMarkers = 0;
-    const drawnRuns: string[][][] = [];
+    const drawnRuns: Record<string, string[][]> = {};
     for (const track of this.data.tracks) {
       ctx.strokeStyle = colour(track.kind === "flight" ? "--globe-flight" : "--globe-vessel", "#0b5cad");
       ctx.lineWidth = 2;
@@ -220,7 +220,7 @@ export class Globe {
       const runs = routeRuns(track).map((run) => sampleRun(run, settings.pointStride));
       routePoints += track.points.length;
       for (const run of runs) this.path(ctx, run.map((p) => [p.lon, p.lat] as const), radius);
-      drawnRuns.push(runs.map((run) => run.map((p) => p.observed_time)));
+      drawnRuns[track.id] = runs.map((run) => run.map((p) => p.observed_time));
       // Contested claims are separate hollow markers, never joined to each
       // other or to the route.
       ctx.strokeStyle = colour("--globe-conflict", "#b00020");
@@ -237,7 +237,7 @@ export class Globe {
     }
     this.canvas.dataset.routePoints = String(routePoints);
     this.canvas.dataset.claimMarkers = String(claimMarkers);
-    // What was stroked, per track: the observed times of each drawn run.
+    // What was stroked, by track id: the observed times of each drawn run.
     this.canvas.dataset.routeRuns = JSON.stringify(drawnRuns);
   }
 }

@@ -197,6 +197,17 @@ Date: 2026-09-28. Status: proposed (awaiting owner review).
       500 for an invalid outgoing message. Over WebSocket the refusal leaves
       no active subscription, as for any refused snapshot (O46).
 
+17. **Review repair before merge (O55): times compare chronologically.** Wire
+    timestamps may carry 0 to 6 fractional digits, so string order is not time
+    order ("03:04:00Z" sorts after "03:04:00.5Z"). The browser compares them
+    with `compareTime` (`web/src/facts.ts`), which pads the fraction to six
+    digits and keeps microsecond precision without floating point. It is used
+    to split routes, to choose the last position and the latest conflict, to
+    check count intervals and to order coverage rows. Tests cover a conflict
+    at 03:04:00Z before a resolved fix at 03:04:00.5Z, and the reverse, where
+    the conflict is latest, each beside a whole-second control, in every
+    preset and in the DESK text.
+
 ## Consequences
 
 - Snapshots carry no events yet; the event-claim ledger is Package 4c.

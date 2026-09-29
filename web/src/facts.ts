@@ -63,6 +63,28 @@ export function uncertaintyText(count: TransitCount): string {
   );
 }
 
+/**
+ * A wire timestamp as a key that sorts chronologically. Wire times are UTC with
+ * a Z suffix and fixed-width date and time fields, but 0 to 6 fractional
+ * digits, so plain string order is wrong: "03:04:00Z" sorts after
+ * "03:04:00.5Z" because "Z" follows ".". Padding the fraction to six digits
+ * keeps microsecond precision (no float or Date rounding) and makes string
+ * order chronological.
+ */
+export function timeKey(time: string): string {
+  const dot = time.indexOf(".");
+  const seconds = dot === -1 ? time.slice(0, -1) : time.slice(0, dot);
+  const fraction = dot === -1 ? "" : time.slice(dot + 1, -1);
+  return `${seconds}.${fraction.padEnd(6, "0")}`;
+}
+
+/** Negative, zero or positive as ``a`` is before, at or after ``b``. */
+export function compareTime(a: string, b: string): number {
+  const left = timeKey(a);
+  const right = timeKey(b);
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 export function intervalText(interval: { start: string; end: string }): string {
   return `${interval.start} to ${interval.end}`;
 }
@@ -78,7 +100,7 @@ export function transitsErrors(message: TransitsMessage): string[] {
         errors.push(`count ${count.count_id}: total is not inbound + outbound`);
       }
     }
-    if (count.interval.end <= count.interval.start) errors.push(`count ${count.count_id}: empty interval`);
+    if (compareTime(count.interval.end, count.interval.start) <= 0) errors.push(`count ${count.count_id}: empty interval`);
     for (const id of count.crossing_ids) {
       if (!crossings.has(id)) errors.push(`count ${count.count_id}: cites missing crossing ${id}`);
     }
@@ -122,10 +144,17 @@ export function trackFacts(track: Track): TrackFacts {
   // The last position is the latest resolved point, unless a later observed
   // time is contested: then the track has no known last position, and no
   // claim is picked over another.
-  const last = track.points.at(-1);
+  // Times are compared chronologically (compareTime), never as strings.
+  const latest = <T extends { observed_time: string }>(items: readonly T[]): T | undefined =>
+    items.reduce<T | undefined>(
+      (best, item) => (best === undefined || compareTime(item.observed_time, best.observed_time) > 0 ? item : best),
+      undefined,
+    );
+  const last = latest(track.points);
   const conflicts = track.conflicts ?? [];
-  const latestConflict = conflicts.at(-1);
-  const contestedLast = latestConflict !== undefined && (!last || latestConflict.observed_time > last.observed_time);
+  const latestConflict = latest(conflicts);
+  const contestedLast =
+    latestConflict !== undefined && (!last || compareTime(latestConflict.observed_time, last.observed_time) > 0);
   const claims = conflicts.flatMap((conflict) =>
     conflict.claims.map((c) =>
       `${conflict.observed_time}: ${formatPosition(c.lon, c.lat)} (observation ${c.observation_id}, ` +
@@ -156,13 +185,14 @@ export function trackFacts(track: Track): TrackFacts {
  * of rendering, so every preset breaks the route at the same places.
  */
 export function routeRuns(track: Track): TrackPoint[][] {
-  const breaks = (track.conflicts ?? []).map((c) => c.observed_time).sort();
+  const breaks = (track.conflicts ?? []).map((c) => c.observed_time).sort(compareTime);
+  const points = [...track.points].sort((a, b) => compareTime(a.observed_time, b.observed_time));
   const runs: TrackPoint[][] = [];
   let run: TrackPoint[] = [];
   let next = 0; // first break not yet passed
-  for (const point of track.points) {
+  for (const point of points) {
     let broken = false;
-    while (next < breaks.length && (breaks[next] ?? "") < point.observed_time) {
+    while (next < breaks.length && compareTime(breaks[next] ?? "", point.observed_time) < 0) {
       broken = true;
       next += 1;
     }

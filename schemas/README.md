@@ -37,6 +37,9 @@ relabelled.
 - The reference library treats `format` as an annotation, so corpus cases that
   test calendar dates carry a `reference_divergence` note; Python's `datetime`
   and the browser's own leap-year rule are cross-checked instead.
+- Timestamps carry 0 to 6 fractional digits, so a client must compare them as
+  times, not strings ("03:04:00Z" sorts after "03:04:00.5Z" as text). The
+  browser uses `compareTime` in `web/src/facts.ts`.
 - Coverage in state `unknown`/`failed` must carry `"value": null` and a reason;
   a number there is invalid. Observed and received times are separate required
   fields.

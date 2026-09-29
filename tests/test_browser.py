@@ -811,16 +811,17 @@ def _middle_captures(tmp_path, *, resolved: bool):
     return paths
 
 
-def _drawn_runs(page) -> dict[str, list[list[str]]]:
-    """Per preset, the observed times of each run the globe stroked for the track."""
+def _drawn_runs(page, record: str = MIDDLE_REC) -> dict[str, list[list[str]]]:
+    """Per preset, the observed times of each run the globe stroked for one record."""
+    from test_identity import expected_track_id
+
+    track = expected_track_id("synthetic-fixture", "flight", record)
     canvas = page.locator("#globe")
     drawn = {}
     for preset in ("low", "balanced", "high"):
         page.get_by_label("Rendering preset").select_option(preset)
         expect(canvas).to_have_attribute("data-preset", preset)
-        runs = json.loads(canvas.get_attribute("data-route-runs"))
-        (track_runs,) = [r for r in runs if r and r[0] and r[0][0].startswith("2026-01-01T03:0")]
-        drawn[preset] = track_runs
+        drawn[preset] = json.loads(canvas.get_attribute("data-route-runs"))[track]
     return drawn
 
 
@@ -921,3 +922,100 @@ def test_reconnect_to_another_wire_version_halts_and_asks_for_a_reload(api_serve
     page.reload()
     _banner_cleared(page)
     assert status.get_attribute("data-version-mismatches") == "0"
+
+
+# --- O55: times compare chronologically, fractional seconds included ----------------------------
+
+T = "2026-01-01T03:0"
+# record: (resolved fix times, contested time, expected runs, expected last position)
+ORDER_CASES = {
+    # A conflict at 03:04:00Z between 03:03 and a resolved fix at 03:04:00.5Z.
+    # As strings "03:04:00Z" sorts after "03:04:00.500000Z".
+    "SYN-FLT-951": (
+        ["2:00Z", "3:00Z", "4:00.500000Z"],
+        "4:00Z",
+        [["2:00Z", "3:00Z"], ["4:00.500000Z"]],
+        "resolved",
+    ),
+    # Control: the same shape in whole seconds, where string order is right.
+    "SYN-FLT-952": (
+        ["2:00Z", "3:00Z", "5:00Z"],
+        "4:00Z",
+        [["2:00Z", "3:00Z"], ["5:00Z"]],
+        "resolved",
+    ),
+    # Reverse: the conflict at 03:04:00.5Z is the latest time, after a fix at 03:04:00Z.
+    "SYN-FLT-953": (
+        ["2:00Z", "3:00Z", "4:00Z"],
+        "4:00.500000Z",
+        [["2:00Z", "3:00Z", "4:00Z"]],
+        "unresolved",
+    ),
+    # Control: the conflict latest in whole seconds.
+    "SYN-FLT-954": (
+        ["2:00Z", "3:00Z", "4:00Z"],
+        "5:00Z",
+        [["2:00Z", "3:00Z", "4:00Z"]],
+        "unresolved",
+    ),
+}
+
+
+def _order_captures(tmp_path):
+    from synthetic_captures import capture, record
+
+    window = {"start": "2026-01-01T02:55:00Z", "end": "2026-01-01T03:15:00Z"}
+    paths = []
+    for n, (rec, (fixes, contested, _, _)) in enumerate(ORDER_CASES.items()):
+        lat = 0.1 * n - 0.15
+        route = [record(rec, T + f, T + f, 0.02 * i, lat) for i, f in enumerate(fixes)]
+        paths.append(
+            capture(
+                tmp_path, f"route-{rec}", "flight", route, **window, received="2026-01-01T03:15:01Z"
+            )
+        )
+        for side, lon in enumerate((0.3, -0.3)):
+            paths.append(
+                capture(
+                    tmp_path,
+                    f"claim-{rec}-{side}",
+                    "flight",
+                    [record(rec, T + contested, "2026-01-01T03:10:00Z", lon, lat)],
+                    **window,
+                    received=f"2026-01-01T03:15:0{2 + side}Z",
+                )
+            )
+    return paths
+
+
+@pytest.mark.parametrize("rec", sorted(ORDER_CASES))
+def test_fractional_seconds_order_routes_and_last_position(api_server, page, tmp_path, rec):
+    fixes, contested, runs, last = ORDER_CASES[rec]
+    api = api_server(ais_files=[])
+    for path in _order_captures(tmp_path):
+        api.ingest(path)
+    open_app_loose(page, api)
+    row = page.locator("#track-facts tbody tr", has=page.locator("th", has_text=rec))
+    expect(row).to_have_count(1, timeout=WAIT)
+    expected = [[T + f for f in run] for run in runs]
+    problems = []  # collected, so a failure reports the route and DESK text together
+    drawn = _drawn_runs(page, rec)
+    if drawn["high"] != expected:  # every resolved fix, split where expected
+        problems.append(("high runs", drawn["high"]))
+    for preset, runs_drawn in drawn.items():
+        # Thinning keeps each run's ends and never moves a break.
+        ends = [(r[0], r[-1]) for r in runs_drawn]
+        if ends != [(r[0], r[-1]) for r in expected]:
+            problems.append((f"{preset} run ends", ends))
+        elif any(not set(r) <= set(f) for r, f in zip(runs_drawn, expected, strict=True)):
+            problems.append((f"{preset} run points", runs_drawn))
+    position = cells(row)[8]
+    if last == "unresolved":
+        wanted = f"Unresolved: 2 conflicting claims at {T + contested}"
+        if position != wanted:
+            problems.append(("DESK last position", position))
+    else:
+        lon = 0.02 * (len(fixes) - 1)
+        if position.startswith("Unresolved") or f"{lon:.5f}°E" not in position:
+            problems.append(("DESK last position", position))
+    assert problems == []
