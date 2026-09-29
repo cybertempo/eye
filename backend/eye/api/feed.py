@@ -213,7 +213,7 @@ FROM eye.observation o
 JOIN eye.observation_version v USING (observation_id)
 WHERE v.is_current IS NULL
   AND o.source_id || ' ' || o.layer || ' ' || o.source_record_id || ' '
-      || eye.iso_utc(o.observed_time) = ANY(CAST(:keys AS text[]))
+      || eye.iso_utc(o.observed_time) = ANY(CAST(:contested AS text[]))
 ORDER BY o.source_id, o.layer, o.source_record_id, o.observed_time, o.observation_id
 LIMIT :cap
 """
@@ -329,8 +329,9 @@ def _tracks(conn, query: Query, limits: Limits, records: list[str] | None) -> li
     return list(tracks.values())
 
 
-def _add_conflicts(conn, tracks: dict, keys: list[str], limits: Limits) -> None:
-    claims = conn.run(CONFLICT_CLAIMS, keys=keys, cap=limits.max_points + 1)
+def _add_conflicts(conn, tracks: dict, contested: list[str], limits: Limits) -> None:
+    row_cap = limits.max_points + 1
+    claims = conn.run(CONFLICT_CLAIMS, contested=contested, cap=row_cap)
     if len(claims) > limits.max_points:
         raise QueryRefused(413, f"more than {limits.max_points} positions; narrow the request")
     for oid, source, layer, record, observed, published, received, lon, lat, alt, batches in claims:

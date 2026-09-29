@@ -48,3 +48,17 @@ let CI run the full workflow.
   copy the index digest.
 - Actions: `git ls-remote https://github.com/<owner>/<action> refs/tags/<tag>` and
   replace the SHA and the tag comment.
+
+## Secret-scan exceptions
+
+CI scans the full Git history with gitleaks. A finding is never silenced by
+disabling a rule. A verified false positive is listed by its exact
+fingerprint (commit, file, rule, line) in `.gitleaksignore`, with the reason
+here, so it covers that one occurrence only:
+
+| Fingerprint | Reason |
+|---|---|
+| `1de7d61…:backend/eye/api/feed.py:generic-api-key:333` | The Python call `conn.run(CONFLICT_CLAIMS, keys=keys, cap=limits.max_points + 1)`: a SQL parameter named `keys` and a row limit, not a credential. The argument was renamed in the next commit. |
+
+Reproduce on the developer laptop with the pinned release (v8.30.1):
+`gitleaks git . --redact --no-banner --exit-code 1`.
