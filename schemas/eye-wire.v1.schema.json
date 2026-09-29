@@ -150,7 +150,76 @@
       ],
       "additionalProperties": false
     },
-    "Track": {
+    "ConflictClaim": {
+      "description": "One claim in a publication conflict: an observation the source published at the same time as another for the same record and observed time.",
+      "type": "object",
+      "properties": {
+        "observation_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "published_time": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "received_time": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "lon": {
+          "$ref": "#/$defs/Longitude"
+        },
+        "lat": {
+          "$ref": "#/$defs/Latitude"
+        },
+        "alt_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": -12000,
+          "maximum": 100000
+        },
+        "evidence_batch_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Identifier"
+          },
+          "minItems": 1,
+          "maxItems": 100
+        }
+      },
+      "required": [
+        "observation_id",
+        "published_time",
+        "received_time",
+        "lon",
+        "lat",
+        "alt_m",
+        "evidence_batch_ids"
+      ],
+      "additionalProperties": false
+    },
+    "PositionConflict": {
+      "description": "An observed time whose latest publication is contested. Unresolved until a later, unique publication supersedes every claim.",
+      "type": "object",
+      "properties": {
+        "observed_time": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "claims": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConflictClaim"
+          },
+          "minItems": 2,
+          "maxItems": 20
+        }
+      },
+      "required": [
+        "observed_time",
+        "claims"
+      ],
+      "additionalProperties": false
+    },
+    "TrackRouted": {
       "type": "object",
       "properties": {
         "id": {
@@ -185,6 +254,13 @@
             "$ref": "#/$defs/Identifier"
           },
           "maxItems": 16
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PositionConflict"
+          },
+          "maxItems": 100
         }
       },
       "required": [
@@ -196,7 +272,76 @@
         "points",
         "quality_flags"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "A track with a route: at least one resolved point, and any unresolved conflicts."
+    },
+    "TrackUnresolved": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "kind": {
+          "enum": [
+            "flight",
+            "vessel"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "source_record_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "display_type": {
+          "$ref": "#/$defs/DisplayType"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TrackPoint"
+          },
+          "maxItems": 0
+        },
+        "quality_flags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Identifier"
+          },
+          "maxItems": 16
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PositionConflict"
+          },
+          "maxItems": 100,
+          "minItems": 1
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "source",
+        "source_record_id",
+        "display_type",
+        "points",
+        "quality_flags",
+        "conflicts"
+      ],
+      "additionalProperties": false,
+      "description": "A track whose every observed time in view is contested: no route, only conflicts."
+    },
+    "Track": {
+      "description": "One (source, layer, record). points holds resolved positions only and forms the route. conflicts holds observed times whose latest publication is contested: every claim is kept with its evidence, none is joined to the route or chosen as the position. A track has at least one point or conflict.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TrackRouted"
+        },
+        {
+          "$ref": "#/$defs/TrackUnresolved"
+        }
+      ]
     },
     "PointLocation": {
       "type": "object",

@@ -715,3 +715,64 @@ def test_invalid_resync_snapshot_does_not_clear_the_banner(api_server, page):
     relay.release()  # control: the valid snapshot clears it
     _banner_cleared(page)
     expect(page.locator("#live-status")).to_have_attribute("data-snapshots", "2")
+
+
+# --- O50 and O51: layered identity; contested positions -----------------------------------------
+
+
+def _row(page, record: str, kind: str):
+    return page.locator("#track-facts tbody tr", has=page.locator("th", has_text=record)).filter(
+        has=page.locator("td", has_text=kind)
+    )
+
+
+def test_reused_record_id_shows_one_row_per_layer(api_server, page, tmp_path):
+    from test_identity import expected_track_id, same_layer_captures, shared_id_captures
+
+    api = api_server(ais_files=[])
+    for path in shared_id_captures(tmp_path) + same_layer_captures(tmp_path):
+        api.ingest(path)
+    open_app_loose(page, api)
+    facts = page.locator("#track-facts")
+    expect(facts).to_contain_text("SYN-SHARED-1", timeout=WAIT)
+    for kind in ("flight", "vessel"):
+        row = _row(page, "SYN-SHARED-1", kind)
+        expect(row).to_have_count(1)
+        expect(row).to_contain_text(expected_track_id("synthetic-fixture", kind, "SYN-SHARED-1"))
+    # Control: the same-layer record is one row with both positions.
+    same = page.locator("#track-facts tbody tr", has=page.locator("th", has_text="SYN-SAME-1"))
+    expect(same).to_have_count(1)
+    assert cells(same)[5] == "2"
+
+
+def test_contested_last_position_is_shown_as_unresolved_then_resolved(api_server, page, tmp_path):
+    from test_identity import conflict_captures, resolution_capture
+
+    api = api_server(ais_files=[])
+    for path in conflict_captures(tmp_path):
+        api.ingest(path)
+    claims = api.conn.run(
+        "SELECT observation_id::text FROM eye.observation_version WHERE is_current IS NULL"
+    )
+    open_app_loose(page, api)
+    row = page.locator("#track-facts tbody tr", has=page.locator("th", has_text="SYN-FLT-910"))
+    expect(row).to_have_count(1, timeout=WAIT)
+    values = cells(row)
+    assert values[5] == "1"  # one resolved position
+    assert values[8] == "Unresolved: 2 conflicting claims at 2026-01-01T03:05:00Z"
+    assert "0.10000°E" not in values[8] and "0.20000°E" not in values[8]
+    for (oid,) in claims:
+        assert oid in values[9]  # every claim with its evidence
+    canvas = page.locator("#globe")
+    markers = canvas.get_attribute("data-claim-markers")
+    route = int(canvas.get_attribute("data-route-points"))
+    assert markers == "2"
+
+    # Control: a later unique correction resolves it, live.
+    api.ingest(resolution_capture(tmp_path))
+    api.server.hub.tick()
+    expect(row).to_contain_text("0.15000°E", timeout=WAIT)
+    values = cells(row)
+    assert values[5] == "2" and values[9] == "none"
+    expect(canvas).to_have_attribute("data-claim-markers", "0")
+    assert int(canvas.get_attribute("data-route-points")) == route + 1

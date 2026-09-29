@@ -142,6 +142,30 @@ Date: 2026-09-28. Status: proposed (awaiting owner review).
       that passed validation, or a delta that follows one in sequence; a
       refused snapshot leaves the banner up.
 
+15. **Review repairs before merge (O50, O51).**
+    - *O50, record identity includes the layer:* a source record is
+      `(source, layer, record id)` everywhere. The observation id is derived
+      from source, layer, record id, observed time and content; version history
+      (`eye.observation_version`, migration 0004) and replay rank versions only
+      within one such record; the API groups tracks by it; and the wire track
+      id is `trk-` plus 128 bits of SHA-256 over `[source, layer, record]`.
+      The same record id reused as a flight and a vessel is two records, two
+      histories and two tracks. Earlier ids are not derivable under this rule,
+      so migration 0004 refuses a database that already holds observations:
+      build a new one and ingest its raw evidence again.
+    - *O51, contested positions stay contested:* when the latest publications
+      for one record and observed time conflict (same publication time), the
+      track's `points` (its route) leave that time out and `conflicts` carries
+      every claim with its observation id, publication and receipt times,
+      position and evidence batches, including claims outside the view. No
+      claim is joined to the route or taken as the last position; the browser
+      says "Unresolved: n conflicting claims" and draws each claim as a
+      separate marker. A later, unique publication supersedes all claims and
+      the time rejoins the route. `Track` is now either routed (at least one
+      point) or unresolved (no points, at least one conflict), and an empty
+      track is still invalid. This adds an optional field to an existing
+      `eye.wire/1` message: messages valid before stay valid.
+
 ## Consequences
 
 - Snapshots carry no events yet; the event-claim ledger is Package 4c.

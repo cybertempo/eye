@@ -40,7 +40,10 @@ def test_migration_backfills_existing_history_in_order(make_db, tmp_path):
     load_fixtures(conn, AIS_DEMO)
     run_id = derive(conn)
     prior = facts(conn)
-    assert migrate(conn) == [3]
+    # Up to 0003 only: 0004 refuses databases that already hold observations
+    # (tests/test_identity.py covers that refusal).
+    shutil.copy(next(MIGRATIONS_DIR.glob("0003_*.sql")), before)
+    assert migrate(conn, before) == [3]
     assert facts(conn) == prior  # nothing earlier was rewritten
     rows = conn.run("SELECT kind, run_id::text FROM eye.feed_change ORDER BY change_seq")
     settled = conn.run("SELECT count(*) FROM eye.capture_batch WHERE status <> 'pending'")[0][0]

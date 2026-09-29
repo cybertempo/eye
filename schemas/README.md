@@ -31,6 +31,12 @@ response and WebSocket message (protocol version `eye.wire/1`). Entry points:
 - Coverage in state `unknown`/`failed` must carry `"value": null` and a reason;
   a number there is invalid. Observed and received times are separate required
   fields.
+- A track is one `(source, layer, record id)`; its id is `trk-` plus 128 bits of
+  SHA-256 over `[source, layer, record]`. `points` is the route and holds
+  resolved positions only. An observed time whose latest publications conflict
+  appears under `conflicts` with every claim and its evidence, never in the
+  route. A track has at least one point or one conflict (`TrackRouted` or
+  `TrackUnresolved`); `conflicts` is optional, so earlier messages stay valid.
 - Transit counts (`transits`, added in Package 3 as a backwards-compatible
   addition to `eye.wire/1`: no existing message changed) have three forms:
   `qualified` (exact numbers, every uncertainty count 0, no reason), `partial`

@@ -813,7 +813,7 @@ def test_long_record_ids_get_distinct_stable_track_ids(api_server, tmp_path):
     # Independent computation of the documented rule, and stability across calls.
     for t in tracks:
         digest = hashlib.sha256(
-            json.dumps([t["source"], t["source_record_id"]]).encode()
+            json.dumps([t["source"], t["kind"], t["source_record_id"]]).encode()
         ).hexdigest()
         assert t["id"] == f"trk-{digest[:32]}"
     assert {t["id"] for t in body(api.get(query))["tracks"]} == ids

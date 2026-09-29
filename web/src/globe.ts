@@ -70,7 +70,10 @@ export class Globe {
   /** Bounding box of the drawn tracks and count line, or null if there are none. */
   private extent(): BBox | null {
     const points: (readonly [number, number])[] = [];
-    for (const track of this.data.tracks) for (const p of track.points) points.push([p.lon, p.lat]);
+    for (const track of this.data.tracks) {
+      for (const p of track.points) points.push([p.lon, p.lat]);
+      for (const c of track.conflicts ?? []) for (const claim of c.claims) points.push([claim.lon, claim.lat]);
+    }
     if (this.data.line) points.push(...this.data.line);
     if (points.length === 0) return null;
     const lons = points.map((p) => p[0]);
@@ -196,13 +199,32 @@ export class Globe {
       ctx.lineWidth = 3;
       this.path(ctx, this.data.line, radius);
     }
+    let routePoints = 0;
+    let claimMarkers = 0;
     for (const track of this.data.tracks) {
       ctx.strokeStyle = colour(track.kind === "flight" ? "--globe-flight" : "--globe-vessel", "#0b5cad");
       ctx.lineWidth = 2;
+      // The route joins resolved positions only.
       const pts = track.points
         .filter((_, i, all) => i % settings.pointStride === 0 || i === all.length - 1)
         .map((p) => [p.lon, p.lat] as const);
+      routePoints += track.points.length;
       this.path(ctx, pts, radius);
+      // Contested claims are separate hollow markers, never joined to each
+      // other or to the route.
+      ctx.strokeStyle = colour("--globe-conflict", "#b00020");
+      for (const conflict of track.conflicts ?? []) {
+        for (const claim of conflict.claims) {
+          const p = this.project(claim.lon, claim.lat, radius);
+          claimMarkers += 1;
+          if (!p) continue;
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], 5, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
     }
+    this.canvas.dataset.routePoints = String(routePoints);
+    this.canvas.dataset.claimMarkers = String(claimMarkers);
   }
 }

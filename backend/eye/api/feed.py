@@ -183,10 +183,10 @@ def head(conn: Connection) -> tuple[str, int]:
 
 
 TRACK_POINTS = """
-SELECT o.source_id, o.source_record_id, o.layer, o.display_type::text,
+SELECT o.observation_id::text, o.source_id, o.source_record_id, o.layer, o.display_type::text,
        eye.iso_utc(o.observed_time), eye.iso_utc(v.first_received_time),
        ST_X(o.position), ST_Y(o.position), o.altitude_m, o.quality_flags::text[],
-       v.publication_conflict
+       v.is_current
 FROM eye.observation o
 JOIN eye.observation_version v USING (observation_id)
 WHERE v.is_current IS NOT FALSE
@@ -194,8 +194,27 @@ WHERE v.is_current IS NOT FALSE
   AND o.observed_time >= :start AND o.observed_time < :end
   AND o.position && ST_MakeEnvelope(:w, :s, :e, :n, 4326)
   AND (CAST(:records AS text[]) IS NULL
-       OR o.source_id || ' ' || o.source_record_id = ANY(CAST(:records AS text[])))
-ORDER BY o.source_id, o.source_record_id, o.observed_time, o.source_published_time
+       OR o.source_id || ' ' || o.layer || ' ' || o.source_record_id
+          = ANY(CAST(:records AS text[])))
+ORDER BY o.source_id, o.layer, o.source_record_id, o.observed_time, o.source_published_time,
+         o.observation_id
+LIMIT :cap
+"""
+
+# Every claim of a contested observed time, wherever it lies: a conflict is
+# shown whole if any of its claims is in view.
+CONFLICT_CLAIMS = """
+SELECT o.observation_id::text, o.source_id, o.layer, o.source_record_id,
+       eye.iso_utc(o.observed_time), eye.iso_utc(o.source_published_time),
+       eye.iso_utc(v.first_received_time), ST_X(o.position), ST_Y(o.position), o.altitude_m,
+       (SELECT array_agg(r.batch_id::text ORDER BY r.batch_id) FROM eye.observation_receipt r
+        WHERE r.observation_id = o.observation_id)
+FROM eye.observation o
+JOIN eye.observation_version v USING (observation_id)
+WHERE v.is_current IS NULL
+  AND o.source_id || ' ' || o.layer || ' ' || o.source_record_id || ' '
+      || eye.iso_utc(o.observed_time) = ANY(CAST(:keys AS text[]))
+ORDER BY o.source_id, o.layer, o.source_record_id, o.observed_time, o.observation_id
 LIMIT :cap
 """
 
@@ -226,31 +245,59 @@ def _params(query: Query) -> dict:
     }
 
 
-def track_id(source: str, record: str) -> str:
-    """A stable track id: the same (source, record) always gives the same id.
+def track_id(source: str, layer: str, record: str) -> str:
+    """A stable track id: the same (source, layer, record) always gives the same id.
 
-    SHA-256 over an unambiguous encoding of both parts, kept to 128 bits:
-    never a truncation of the readable name, so two records cannot share an id
-    by sharing a prefix.
+    A source record is identified by source, layer and record id together, so
+    one record id reused in two layers is two tracks. SHA-256 over an
+    unambiguous encoding of the three parts, kept to 128 bits: never a
+    truncation of the readable name, so two records cannot share an id by
+    sharing a prefix.
     """
-    digest = hashlib.sha256(json.dumps([source, record]).encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(json.dumps([source, layer, record]).encode("utf-8")).hexdigest()
     return f"trk-{digest[:32]}"
 
 
+def _t(text: str) -> str:
+    return text.replace(".000000Z", "Z")
+
+
 def _tracks(conn, query: Query, limits: Limits, records: list[str] | None) -> list[dict]:
+    """Tracks keyed by (source, layer, record).
+
+    Resolved (current) positions form the route. An observed time whose latest
+    publication is contested contributes no point: all of its claims are kept
+    under ``conflicts`` with their evidence, none joined to the route or taken
+    as the track's position.
+    """
     rows = conn.run(TRACK_POINTS, **_params(query), records=records, cap=limits.max_points + 1)
     if len(rows) > limits.max_points:
         raise QueryRefused(413, f"more than {limits.max_points} positions; narrow the request")
-    tracks: dict[tuple[str, str], dict] = {}
-    for source, record, layer, display, observed, received, lon, lat, alt, flags, conflict in rows:
+    tracks: dict[tuple[str, str, str], dict] = {}
+    contested: list[str] = []
+    for (
+        _oid,
+        source,
+        record,
+        layer,
+        display,
+        observed,
+        received,
+        lon,
+        lat,
+        alt,
+        flags,
+        current,
+    ) in rows:
         if layer not in ("flight", "vessel"):
             continue  # road observations are not tracks; the event ledger is Package 4c
-        track = tracks.get((source, record))
+        key = (source, layer, record)
+        track = tracks.get(key)
         if track is None:
             if len(tracks) >= limits.max_tracks:
                 raise QueryRefused(413, f"more than {limits.max_tracks} tracks; narrow the request")
-            track = tracks[(source, record)] = {
-                "id": track_id(source, record),
+            track = tracks[key] = {
+                "id": track_id(source, layer, record),
                 "kind": layer,
                 "source": source,
                 "source_record_id": record,
@@ -258,22 +305,52 @@ def _tracks(conn, query: Query, limits: Limits, records: list[str] | None) -> li
                 "points": [],
                 "quality_flags": [],
             }
-        if len(track["points"]) >= MAX_TRACK_POINTS:
-            raise QueryRefused(413, "a track has more positions than one message allows")
-        track["points"].append(
-            {
-                "observed_time": observed.replace(".000000Z", "Z"),
-                "received_time": received.replace(".000000Z", "Z"),
-                "lon": float(lon),
-                "lat": float(lat),
-                "alt_m": None if alt is None else float(alt),
-            }
-        )
-        wanted = list(flags or []) + (["publication_conflict"] if conflict else [])
+        wanted = list(flags or [])
+        if current is None:
+            contested.append(f"{source} {layer} {record} {observed}")
+            wanted.append("publication_conflict")
+        else:
+            if len(track["points"]) >= MAX_TRACK_POINTS:
+                raise QueryRefused(413, "a track has more positions than one message allows")
+            track["points"].append(
+                {
+                    "observed_time": _t(observed),
+                    "received_time": _t(received),
+                    "lon": float(lon),
+                    "lat": float(lat),
+                    "alt_m": None if alt is None else float(alt),
+                }
+            )
         for flag in wanted:
             if flag not in track["quality_flags"] and len(track["quality_flags"]) < MAX_FLAGS:
                 track["quality_flags"].append(flag)
+    if contested:
+        _add_conflicts(conn, tracks, sorted(set(contested)), limits)
     return list(tracks.values())
+
+
+def _add_conflicts(conn, tracks: dict, keys: list[str], limits: Limits) -> None:
+    claims = conn.run(CONFLICT_CLAIMS, keys=keys, cap=limits.max_points + 1)
+    if len(claims) > limits.max_points:
+        raise QueryRefused(413, f"more than {limits.max_points} positions; narrow the request")
+    for oid, source, layer, record, observed, published, received, lon, lat, alt, batches in claims:
+        track = tracks[(source, layer, record)]
+        conflicts = track.setdefault("conflicts", [])
+        if not conflicts or conflicts[-1]["observed_time"] != _t(observed):
+            if len(conflicts) >= 100:
+                raise QueryRefused(413, "a track has more conflicts than one message allows")
+            conflicts.append({"observed_time": _t(observed), "claims": []})
+        conflicts[-1]["claims"].append(
+            {
+                "observation_id": oid,
+                "published_time": _t(published),
+                "received_time": _t(received),
+                "lon": float(lon),
+                "lat": float(lat),
+                "alt_m": None if alt is None else float(alt),
+                "evidence_batch_ids": list(batches),
+            }
+        )
 
 
 def _coverage(conn, query: Query, limits: Limits, batch: str | None) -> tuple[list[dict], set]:
@@ -297,10 +374,6 @@ def _coverage(conn, query: Query, limits: Limits, batch: str | None) -> tuple[li
             item["reason"] = reason
         out.append(item)
     return out, sources
-
-
-def _t(text: str) -> str:
-    return text.replace(".000000Z", "Z")
 
 
 def _number(value) -> float | int:
@@ -374,7 +447,7 @@ def delta(
         # for one more than the limit: a batch that touches more cannot be sent
         # as one delta, and is refused rather than cut short.
         touched = conn.run(
-            "SELECT DISTINCT o.source_id, o.source_record_id, o.layer "
+            "SELECT DISTINCT o.source_id, o.layer, o.source_record_id "
             "FROM eye.observation_receipt r JOIN eye.observation o USING (observation_id) "
             "WHERE r.batch_id = CAST(:batch AS uuid) "
             "AND o.layer = ANY(CAST(:layers AS text[])) "
@@ -390,10 +463,10 @@ def delta(
         if len(touched) > limit:
             raise QueryRefused(413, f"batch changes more than {limit} tracks in view")
         if touched:
-            tracks = _tracks(conn, query, limits, [f"{s} {r}" for s, r, _ in touched])
-        remaining = {(t["source"], t["source_record_id"]) for t in tracks}
+            tracks = _tracks(conn, query, limits, [f"{s} {lay} {r}" for s, lay, r in touched])
+        remaining = {(t["source"], t["kind"], t["source_record_id"]) for t in tracks}
         # Road records are not tracks (the event ledger is Package 4c).
-        if any((s, r) not in remaining for s, r, layer in touched if layer != "road"):
+        if any((s, lay, r) not in remaining for s, lay, r in touched if lay != "road"):
             # A track left the view. Deltas only upsert, so the client cannot
             # be told to drop it: it needs a fresh snapshot instead.
             raise QueryRefused(409, "a change removed a track from the view")

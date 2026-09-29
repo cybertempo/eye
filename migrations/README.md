@@ -27,6 +27,7 @@ Forward-only SQL files named `NNNN_lower_snake_name.sql`, applied in order by
 | 0001 | capture batches, raw evidence, observations, receipts, coverage, version view |
 | 0002 | count lines, derivation-run log with input batches, current vessel tracks, track gaps, line crossings and transit counts, immutable per-run crossings, gaps and counts |
 | 0003 | feed epoch and append-only feed change log (one row per settled capture batch and per derivation run), written by triggers in commit order, for API cursors and deltas |
+| 0004 | record identity includes the layer: version history ranks within (source, layer, record, observed time); refuses a database that already holds observations, whose ids came from the earlier rule (rebuild it from raw evidence) |
 
 Merged migrations are never edited; a change is a new file.
 

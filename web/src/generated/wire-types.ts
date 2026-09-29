@@ -46,7 +46,25 @@ export type TrackPoint = {
   readonly alt_m: number | null;
 };
 
-export type Track = {
+/** One claim in a publication conflict: an observation the source published at the same time as another for the same record and observed time. */
+export type ConflictClaim = {
+  readonly observation_id: Identifier;
+  readonly published_time: Timestamp;
+  readonly received_time: Timestamp;
+  readonly lon: Longitude;
+  readonly lat: Latitude;
+  readonly alt_m: number | null;
+  readonly evidence_batch_ids: Identifier[];
+};
+
+/** An observed time whose latest publication is contested. Unresolved until a later, unique publication supersedes every claim. */
+export type PositionConflict = {
+  readonly observed_time: Timestamp;
+  readonly claims: ConflictClaim[];
+};
+
+/** A track with a route: at least one resolved point, and any unresolved conflicts. */
+export type TrackRouted = {
   readonly id: Identifier;
   readonly kind: "flight" | "vessel";
   readonly source: Identifier;
@@ -54,7 +72,23 @@ export type Track = {
   readonly display_type: DisplayType;
   readonly points: TrackPoint[];
   readonly quality_flags: Identifier[];
+  readonly conflicts?: PositionConflict[];
 };
+
+/** A track whose every observed time in view is contested: no route, only conflicts. */
+export type TrackUnresolved = {
+  readonly id: Identifier;
+  readonly kind: "flight" | "vessel";
+  readonly source: Identifier;
+  readonly source_record_id: Identifier;
+  readonly display_type: DisplayType;
+  readonly points: TrackPoint[];
+  readonly quality_flags: Identifier[];
+  readonly conflicts: PositionConflict[];
+};
+
+/** One (source, layer, record). points holds resolved positions only and forms the route. conflicts holds observed times whose latest publication is contested: every claim is kept with its evidence, none is joined to the route or chosen as the position. A track has at least one point or conflict. */
+export type Track = TrackRouted | TrackUnresolved;
 
 export type PointLocation = {
   readonly type: "point";

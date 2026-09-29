@@ -113,11 +113,24 @@ export interface TrackFacts {
   lastObserved: string;
   lastReceived: string;
   lastPosition: string;
+  claims: string[];
   flags: string;
 }
 
 export function trackFacts(track: Track): TrackFacts {
+  // The last position is the latest resolved point, unless a later observed
+  // time is contested: then the track has no known last position, and no
+  // claim is picked over another.
   const last = track.points.at(-1);
+  const conflicts = track.conflicts ?? [];
+  const latestConflict = conflicts.at(-1);
+  const contestedLast = latestConflict !== undefined && (!last || latestConflict.observed_time > last.observed_time);
+  const claims = conflicts.flatMap((conflict) =>
+    conflict.claims.map((c) =>
+      `${conflict.observed_time}: ${formatPosition(c.lon, c.lat)} (observation ${c.observation_id}, ` +
+        `published ${c.published_time}, received ${c.received_time}, batches ${c.evidence_batch_ids.join(", ")})`,
+    ),
+  );
   return {
     id: track.id,
     record: track.source_record_id,
@@ -125,9 +138,12 @@ export function trackFacts(track: Track): TrackFacts {
     source: sourceLabel(track.source),
     displayType: track.display_type,
     points: String(track.points.length),
-    lastObserved: last?.observed_time ?? UNKNOWN,
-    lastReceived: last?.received_time ?? UNKNOWN,
-    lastPosition: last ? formatPosition(last.lon, last.lat) : UNKNOWN,
+    lastObserved: contestedLast ? latestConflict.observed_time : last?.observed_time ?? UNKNOWN,
+    lastReceived: contestedLast ? "Contested: see claims" : last?.received_time ?? UNKNOWN,
+    lastPosition: contestedLast
+      ? `Unresolved: ${latestConflict.claims.length} conflicting claims at ${latestConflict.observed_time}`
+      : last ? formatPosition(last.lon, last.lat) : UNKNOWN,
+    claims,
     flags: track.quality_flags.length > 0 ? track.quality_flags.join(", ") : "none",
   };
 }

@@ -24,6 +24,12 @@ function element<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+function list(values: readonly string[]): Node {
+  const out = element("ul", undefined, "claims");
+  for (const value of values) out.append(element("li", value));
+  return out;
+}
+
 function ids(values: readonly string[]): Node {
   if (values.length === 0) return document.createTextNode("none");
   const list = element("ul", undefined, "ids");
@@ -167,13 +173,16 @@ export function renderTracks(tracks: readonly Track[]): void {
   fillTable(
     table,
     "Tracks in view: last observed position and times, from the stored evidence.",
-    ["Source record", "Track ID", "Kind", "Source", "Display type", "Positions", "Last observed (UTC)", "Last received by EYE (UTC)", "Last position", "Quality flags"],
+    ["Source record", "Track ID", "Kind", "Source", "Display type", "Resolved positions", "Last observed (UTC)", "Last received by EYE (UTC)", "Last position", "Unresolved claims", "Quality flags"],
     [...tracks]
-      .sort((a, b) => a.source.localeCompare(b.source) || a.source_record_id.localeCompare(b.source_record_id))
+      .sort((a, b) =>
+        a.source.localeCompare(b.source) || a.source_record_id.localeCompare(b.source_record_id) || a.kind.localeCompare(b.kind))
       .map((track) => {
         const f = trackFacts(track);
+        const claims = f.claims.length === 0 ? document.createTextNode("none") : list(f.claims);
         return {
-          cells: [f.record, element("code", f.id), f.kind, f.source, f.displayType, f.points, f.lastObserved, f.lastReceived, f.lastPosition, f.flags],
+          className: f.claims.length > 0 ? "has-conflicts" : "",
+          cells: [f.record, element("code", f.id), f.kind, f.source, f.displayType, f.points, f.lastObserved, f.lastReceived, f.lastPosition, claims, f.flags],
         };
       }),
   );
