@@ -247,8 +247,9 @@ SELECT c.coverage_id::text, c.source_id, c.layer, eye.iso_utc(c.interval_start),
        ST_Covers(b.requested_area, ST_MakeEnvelope(:w, :s, :e, :n, 4326))
 FROM eye.coverage c JOIN eye.capture_batch b USING (batch_id)
 WHERE c.layer = ANY(CAST(:layers AS text[]))
-  AND c.interval_start < :end AND c.interval_end > :start
-  AND b.requested_area && ST_MakeEnvelope(:w, :s, :e, :n, 4326)
+  AND ((c.interval_start < :end AND c.interval_end > :start
+        AND b.requested_area && ST_MakeEnvelope(:w, :s, :e, :n, 4326))
+       OR c.batch_id::text = ANY(CAST(:counted AS text[])))
   AND (CAST(:batch AS uuid) IS NULL OR c.batch_id = CAST(:batch AS uuid))
 ORDER BY c.interval_start, c.layer, c.source_id, c.coverage_id
 LIMIT :cap
@@ -417,14 +418,23 @@ def _coverage(
     reason, so a small healthy source is never read as a measured zero for a
     larger view.
 
-    Event-report rows are served in the view's own scope: the interval is
-    clipped to the view, and the count is the number of cases in ``events``
-    (the event list for this view) whose current or conflicting latest report
-    came from that batch, under the metric ``event_cases_in_view``. The stored
-    per-batch metric, which counts the whole capture, is never shown as a
-    count for the view.
+    Event-report rows are served in the view's own area but keep their
+    batch's own time: the interval is the capture's reporting window (when
+    the reports it holds were published, marked ``interval_kind:
+    reporting_window``), never clipped to the view and never an occurrence
+    interval. The count is the number of cases in ``events`` (the event list
+    for this view) whose current or conflicting latest report came from that
+    batch, under the metric ``event_cases_in_view``. A batch whose window lies
+    outside the view's interval is still listed when it holds such a report (a
+    later report about an earlier event), so every counted case has its row.
+    One case can be counted by more than one row (the same claim delivered
+    twice), so the rows are never a total. The stored per-batch metric, which
+    counts the whole capture, is never shown as a count for the view.
     """
-    rows = conn.run(COVERAGE, **_params(query), batch=batch, cap=limits.max_coverage + 1)
+    counted = sorted(event_ledger.reporting_batches(events or []))
+    rows = conn.run(
+        COVERAGE, **_params(query), batch=batch, counted=counted, cap=limits.max_coverage + 1
+    )
     if len(rows) > limits.max_coverage:
         raise QueryRefused(
             413, f"more than {limits.max_coverage} coverage rows; narrow the request"
@@ -436,13 +446,16 @@ def _coverage(
             continue
         sources.add(source)
         start, end = _t(start), _t(end)
+        interval_kind = None
         if metric == event_ledger.EVENT_METRIC:
-            start, end = event_ledger.clip(start, end, view_start, view_end)
+            interval_kind = event_ledger.REPORTING_WINDOW
             metric = event_ledger.EVENT_VIEW_METRIC
             if value is not None:
                 value = event_ledger.cases_in_view_from(events or [], bid)
+            span = event_ledger.clip(start, end, view_start, view_end)
             if covers:
-                full.append((layer, start, end))
+                if event_ledger.before(span[0], span[1]):
+                    full.append((layer, *span))
             elif state in ("qualified", "partial"):
                 state = "partial"
                 reason = PART_OF_VIEW if reason is None else f"{reason}; {PART_OF_VIEW}"[:500]
@@ -452,6 +465,9 @@ def _coverage(
             "state": state,
             "metric": {"name": metric, "value": None if value is None else _number(value)},
         }
+        if interval_kind is not None:
+            item["interval_kind"] = interval_kind
+            item["batch_id"] = bid
         if reason is not None:
             item["reason"] = reason
         out.append(item)
@@ -543,7 +559,7 @@ def delta(
         coverage, _, added = _coverage(conn, query, limits, batch_id, events)
         if added:
             _check_gaps_unchanged(conn, query, limits, added)
-        _check_counts_unchanged(conn, query, limits, batch_id, events)
+        _check_counts_unchanged(batch_id, events)
         if len(events) > DELTA_MAX_ITEMS or len(coverage) > DELTA_MAX_ITEMS:
             raise QueryRefused(413, "batch is larger than one delta allows")
     elif kind == "capture_batch" and layer in query.layers:
@@ -597,34 +613,21 @@ def delta(
     }
 
 
-def _check_counts_unchanged(
-    conn, query: Query, limits: Limits, batch_id: str, events: list[dict]
-) -> None:
-    """A batch that touches a case another in-view batch's count includes needs a snapshot.
+def _check_counts_unchanged(batch_id: str, events: list[dict]) -> None:
+    """A batch that touches a case another batch already reported needs a snapshot.
 
     A served event-coverage count covers the cases in view whose current
-    reports came from that batch. A new version of such a case can change an
-    earlier batch's count, and a delta cannot replace a coverage row the
-    client already holds, so the server resnapshots before the cursor
-    advances.
+    reports came from that batch, and a batch's row is listed when it holds
+    one. A new version or a repeated delivery of such a case can change an
+    earlier batch's count or whether its row is listed, and a delta can
+    neither replace nor remove a coverage row the client already holds, so
+    the server resnapshots before the cursor advances. A batch that only adds
+    new cases is an ordinary delta.
     """
-    others = {b for e in events for c in e["claims"] for b in c["evidence_batch_ids"]}
+    others = event_ledger.reporting_batches(events, every_version=True)
     others.discard(batch_id)
-    if not others:
-        return
-    in_view = conn.run(
-        "SELECT DISTINCT c.batch_id::text FROM eye.coverage c "
-        "JOIN eye.capture_batch b USING (batch_id) "
-        "WHERE c.metric_name = :metric AND c.layer = ANY(CAST(:layers AS text[])) "
-        "AND c.interval_start < :end AND c.interval_end > :start "
-        "AND b.requested_area && ST_MakeEnvelope(:w, :s, :e, :n, 4326) "
-        "AND c.batch_id::text = ANY(CAST(:ids AS text[]))",
-        metric=event_ledger.EVENT_METRIC,
-        ids=sorted(others),
-        **_params(query),
-    )
-    if in_view:
-        raise QueryRefused(409, "a new version changed which report an in-view count cites")
+    if others:
+        raise QueryRefused(409, "a batch touched a case another batch reported; counts may change")
 
 
 def _check_gaps_unchanged(conn, query: Query, limits: Limits, added: list[tuple]) -> None:

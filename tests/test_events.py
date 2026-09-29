@@ -1003,13 +1003,14 @@ def test_counts_follow_a_shorter_window(api_server, tmp_path):
         api, "/api/v0/snapshot?start=2026-02-01T12:00:00Z&end=2026-02-01T12:30:00Z&layers=road"
     )
     assert {e["case_id"] for e in early["events"]} == {"NEAR-EARLY", "FAR-EARLY"}
-    # The row is clipped to the window it speaks for, and counts only its cases.
-    assert view_count(early) == [(DAY + "12:00:00Z", DAY + "12:30:00Z", "qualified", 2)]
+    # The row keeps its capture's reporting window (O60) and counts only the
+    # cases in this view.
+    assert view_count(early) == [(DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 2)]
     late = snapshot(
         api, "/api/v0/snapshot?start=2026-02-01T12:30:00Z&end=2026-02-01T13:00:00Z&layers=road"
     )
     assert [e["case_id"] for e in late["events"]] == ["NEAR-LATE"]
-    assert view_count(late) == [(DAY + "12:30:00Z", DAY + "13:00:00Z", "qualified", 1)]
+    assert view_count(late) == [(DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 1)]
 
 
 def test_live_counts_are_view_scoped_and_match_rest(api_server, tmp_path):
@@ -1033,4 +1034,237 @@ def test_live_counts_are_view_scoped_and_match_rest(api_server, tmp_path):
         json.dumps(c, sort_keys=True) for c in base["coverage"] + delta["coverage_upserted"]
     )
     assert live_rows == coverage_rows(rest)
+    client.close()
+
+
+# --- O60: every event-coverage row is a reporting window ------------------------------------
+
+LATE = DAY + "14:00:10Z"
+
+
+def early_reports(tmp_path, name: str = "early", received: str | None = None):
+    """Road reports published 12:00-13:00: an ordinary case and one that is
+    corrected later."""
+    return capture(
+        tmp_path,
+        name,
+        "road",
+        [
+            claim(
+                "EARLY-ONLY",
+                "road_closure",
+                DAY + "12:16:00Z",
+                point(0.1, 0.1),
+                event_time=DAY + "12:15:00Z",
+            ),
+            claim(
+                "CORRECTED",
+                "road_closure",
+                DAY + "12:21:00Z",
+                point(0.1, 0.1),
+                event_time=DAY + "12:20:00Z",
+            ),
+        ],
+        received=received,
+    )
+
+
+def later_reports(tmp_path, name: str = "later"):
+    """Road reports published 13:00-14:00: a correction and a first report
+    about events at 12:20 and 12:40, and an ordinary case at 13:40."""
+    return capture(
+        tmp_path,
+        name,
+        "road",
+        [
+            claim(
+                "CORRECTED",
+                "road_closure",
+                DAY + "13:20:00Z",
+                point(0.12, 0.1),
+                event_time=DAY + "12:20:00Z",
+            ),
+            claim(
+                "LATE-REPORT",
+                "road_closure",
+                DAY + "13:10:00Z",
+                point(-0.1, 0.1),
+                event_time=DAY + "12:40:00Z",
+            ),
+            claim(
+                "LATE-ONLY",
+                "road_closure",
+                DAY + "13:40:00Z",
+                point(-0.1, -0.1),
+                event_time=DAY + "13:40:00Z",
+            ),
+        ],
+        start=DAY + "13:00:00Z",
+        end=DAY + "14:00:00Z",
+        received=LATE,
+    )
+
+
+TWICE = claim(
+    "TWICE", "road_closure", DAY + "12:40:00Z", point(0.1, 0.1), event_time=DAY + "12:39:00Z"
+)
+ONCE = claim(
+    "ONCE", "road_closure", DAY + "12:20:00Z", point(0.1, 0.1), event_time=DAY + "12:19:00Z"
+)
+
+
+def two_deliveries(tmp_path) -> tuple:
+    """The same claim delivered by two overlapping captures, beside a claim
+    delivered once."""
+    first = capture(tmp_path, "first", "road", [TWICE, ONCE])
+    again = capture(
+        tmp_path,
+        "again",
+        "road",
+        [TWICE],
+        start=DAY + "12:30:00Z",
+        end=DAY + "13:30:00Z",
+        received=DAY + "13:30:10Z",
+    )
+    return first, again
+
+
+def windows(message: dict) -> list:
+    """Event rows: (reporting window start, end, state, cases in view)."""
+    rows = [c for c in message["coverage"] if c["metric"]["name"] == "event_cases_in_view"]
+    assert all(c["interval_kind"] == "reporting_window" for c in rows)
+    # Every row from a capture names it; only a generated gap has none.
+    assert all(("batch_id" in c) == (c["state"] != "unknown") for c in rows)
+    return sorted(event_coverage(message, "road"))
+
+
+def test_a_later_report_about_an_earlier_event_is_counted_in_its_own_window(api_server, tmp_path):
+    api = api_server()
+    api.ingest(early_reports(tmp_path))
+    api.ingest(later_reports(tmp_path))
+    stored = api.conn.run(
+        "SELECT metric_value FROM eye.coverage WHERE metric_name = 'event_reports' "
+        "ORDER BY interval_start"
+    )
+    assert stored == [[2], [3]]  # the stored batch metrics are unchanged: whole captures
+    hour12 = snapshot(api, HOUR12)
+    assert {e["case_id"] for e in hour12["events"]} == {"EARLY-ONLY", "CORRECTED", "LATE-REPORT"}
+    # The 13:00-14:00 capture reported (and corrected) events of 12:20 and
+    # 12:40: its row is listed with its own reporting window, not clipped to
+    # the view and not read as an occurrence interval.
+    assert windows(hour12) == [
+        (DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 1),
+        (DAY + "13:00:00Z", DAY + "14:00:00Z", "qualified", 2),
+    ]
+    corrected = case_of(hour12, "CORRECTED")
+    assert [c["is_current"] for c in corrected["claims"]] == [False, True]
+    # Control: the later hour holds only the ordinary 13:40 case; the early
+    # capture counts nothing there and is not listed.
+    hour13 = snapshot(
+        api, "/api/v0/snapshot?start=2026-02-01T13:00:00Z&end=2026-02-01T14:00:00Z&layers=road"
+    )
+    assert [e["case_id"] for e in hour13["events"]] == ["LATE-ONLY"]
+    assert windows(hour13) == [(DAY + "13:00:00Z", DAY + "14:00:00Z", "qualified", 1)]
+    # Track coverage rows carry no reporting-window label.
+    whole = snapshot(api, VIEW)
+    assert all(
+        ("interval_kind" in c) == (c["metric"]["name"] == "event_cases_in_view")
+        for c in whole["coverage"]
+    )
+    assert any(c["metric"]["name"] != "event_cases_in_view" for c in whole["coverage"])
+
+
+def test_the_same_claim_in_two_batches_is_counted_by_both_rows(api_server, tmp_path):
+    api = api_server()
+    first, again = two_deliveries(tmp_path)
+    api.ingest(first)
+    api.ingest(again)
+    view = snapshot(api, HOUR12)
+    assert sorted(e["case_id"] for e in view["events"]) == ["ONCE", "TWICE"]
+    (claim_twice,) = case_of(view, "TWICE")["claims"]
+    assert len(claim_twice["evidence_batch_ids"]) == 2  # one claim, two receipts
+    rows = windows(view)
+    assert rows == [
+        (DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 2),
+        (DAY + "12:30:00Z", DAY + "13:30:00Z", "qualified", 1),
+    ]
+    # Two rows, one per capture: each names its batch, and the one claim
+    # cites both.
+    ids = {c["batch_id"] for c in view["coverage"] if "batch_id" in c and c["layer"] == "road"}
+    assert ids == set(claim_twice["evidence_batch_ids"])
+    # The rows are not a total: TWICE is in both, so they add up to more
+    # than the cases in view.
+    assert sum(r[3] for r in rows) == 3 and len(view["events"]) == 2
+    # Control: one delivery of each claim gives one row that equals the list.
+    api2 = api_server()
+    api2.ingest(first)
+    single = snapshot(api2, HOUR12)
+    assert windows(single) == [(DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 2)]
+    assert len(single["events"]) == 2
+
+
+def test_live_later_reports_and_repeats_match_rest(api_server, tmp_path):
+    api = api_server()
+    api.ingest(early_reports(tmp_path))
+    road12 = {"start": DAY + "12:00:00Z", "end": DAY + "13:00:00Z"}
+    client = WsClient(api.host, api.port)
+    client.send(subscribe(AREA, road12, layers=("road",)))
+    base = client.recv()
+    assert base["kind"] == "snapshot"
+    assert windows(base) == [(DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 2)]
+    # Control: a later capture with only a new report about a 12:50 event is
+    # an ordinary delta, carrying its own reporting-window row.
+    api.ingest(
+        capture(
+            tmp_path,
+            "new-late",
+            "road",
+            [
+                claim(
+                    "LATE-NEW",
+                    "road_closure",
+                    DAY + "13:05:00Z",
+                    point(0.2, 0.2),
+                    event_time=DAY + "12:50:00Z",
+                )
+            ],
+            start=DAY + "13:00:00Z",
+            end=DAY + "14:00:00Z",
+            received=DAY + "14:00:05Z",
+        )
+    )
+    api.server.hub.tick()
+    delta = client.recv()
+    assert delta["kind"] == "delta" and reference_valid(delta)
+    assert [e["case_id"] for e in delta["events_upserted"]] == ["LATE-NEW"]
+    (row,) = delta["coverage_upserted"]
+    assert row["interval_kind"] == "reporting_window"
+    assert (row["interval"]["start"], row["metric"]["value"]) == (DAY + "13:00:00Z", 1)
+    live = sorted(
+        json.dumps(c, sort_keys=True) for c in base["coverage"] + delta["coverage_upserted"]
+    )
+    assert live == coverage_rows(snapshot(api, HOUR12))
+    # A later correction of an earlier case changes the early row's count: a
+    # fresh snapshot, and it matches REST.
+    api.ingest(later_reports(tmp_path))
+    api.server.hub.tick()
+    resync = client.recv()
+    assert resync["kind"] == "resync_required" and resync["reason"] == "overflow"
+    corrected = client.recv()
+    assert corrected["kind"] == "snapshot"
+    assert windows(corrected) == [
+        (DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 1),
+        (DAY + "13:00:00Z", DAY + "14:00:00Z", "qualified", 1),
+        (DAY + "13:00:00Z", DAY + "14:00:00Z", "qualified", 2),
+    ]
+    assert coverage_rows(corrected) == coverage_rows(snapshot(api, HOUR12))
+    # The same claim delivered again adds a second row that counts it: a
+    # fresh snapshot too, and it matches REST.
+    api.ingest(early_reports(tmp_path, "early-again", received=DAY + "13:00:40Z"))
+    api.server.hub.tick()
+    resync = client.recv()
+    assert resync["kind"] == "resync_required" and resync["reason"] == "overflow"
+    repeated = client.recv()
+    assert sorted(r[3] for r in windows(repeated) if r[1] == DAY + "13:00:00Z") == [1, 1]
+    assert coverage_rows(repeated) == coverage_rows(snapshot(api, HOUR12))
     client.close()

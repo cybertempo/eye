@@ -10,6 +10,7 @@ inconsistent case next to a valid one.
 from __future__ import annotations
 
 import json
+import re
 
 from playwright.sync_api import Page, expect
 from synthetic_events import DAY, capture, claim, point
@@ -215,8 +216,11 @@ def test_event_tables_are_accessible_and_reachable_by_keyboard(api_server, page)
 SMALL = (0.0, 0.0, 0.2, 0.2)
 
 
-def event_coverage_text(page: Page) -> str:
-    return page.locator("#event-coverage").inner_text()
+def event_coverage_text(page: Page, captures: bool = False) -> str:
+    """DESK's event-coverage text; without ``captures``, the batch ids naming
+    each row's capture are left out so rows can be compared across databases."""
+    text = page.locator("#event-coverage").inner_text()
+    return text if captures else re.sub(r" by capture [0-9a-f-]{36}", "", text)
 
 
 def small_sources(api, tmp_path) -> None:
@@ -259,7 +263,7 @@ def test_live_gap_fill_matches_a_fresh_rest_view(api_server, page, tmp_path):
     open_events(page, api)
     status = page.locator("#live-status")
     before = event_coverage_text(page)
-    assert f"road: {DAY}12:00:00Z to {DAY}16:00:00Z Unknown" in before
+    assert f"road: reports published {DAY}12:00:00Z to {DAY}16:00:00Z Unknown" in before
     # Control: a capture outside the view arrives as a delta and changes nothing.
     deltas = int(status.get_attribute("data-deltas"))
     api.ingest(capture(tmp_path, "elsewhere", "road", [], bbox=(0.6, 0.6, 0.9, 0.9)))
@@ -275,12 +279,15 @@ def test_live_gap_fill_matches_a_fresh_rest_view(api_server, page, tmp_path):
     api.server.hub.tick()
     expect(status).to_have_attribute("data-snapshots", str(snapshots + 1), timeout=WAIT)
     expect(page.locator("#event-coverage")).to_contain_text(
-        f"road: {DAY}12:00:00Z to {DAY}13:00:00Z covered (0 cases in this view); "
-        f"{DAY}13:00:00Z to {DAY}16:00:00Z Unknown",
-        timeout=WAIT,
+        f"reports published {DAY}13:00:00Z to {DAY}16:00:00Z Unknown", timeout=WAIT
     )
     live = event_coverage_text(page)
-    assert f"road: {DAY}12:00:00Z to {DAY}16:00:00Z Unknown" not in live  # the old gap is gone
+    assert (
+        f"road: reports published {DAY}12:00:00Z to {DAY}13:00:00Z covered (0 cases in this view); "
+        f"reports published {DAY}13:00:00Z to {DAY}16:00:00Z Unknown"
+    ) in live, live
+    # The old gap is gone.
+    assert f"road: reports published {DAY}12:00:00Z to {DAY}16:00:00Z Unknown" not in live
     page.reload()
     open_events(page, api)
     assert event_coverage_text(page) == live  # a fresh REST view shows the same
@@ -318,7 +325,7 @@ def test_desk_count_follows_a_smaller_area(api_server, page, tmp_path, example_r
     open_events(page, api)
     set_window(page, DAY + "12:00:00Z", 1)
     text = event_coverage_text(page)
-    assert f"road: {DAY}12:00:00Z to {DAY}13:00:00Z covered (2 cases in this view)" in text
+    assert f"road: {reports_in('12:00', '13:00')} covered (2 cases in this view)" in text
     assert "3 cases" not in text  # the whole capture's count is never shown for this view
     for case in ("NEAR-EARLY", "NEAR-LATE"):
         expect(event_row(page, case)).to_have_count(1)
@@ -337,7 +344,7 @@ def test_desk_area_without_cases_reads_zero_and_an_empty_table(
     open_events(page, api)
     set_window(page, DAY + "12:00:00Z", 1)
     text = event_coverage_text(page)
-    assert f"road: {DAY}12:00:00Z to {DAY}13:00:00Z covered (0 cases in this view)" in text
+    assert f"road: {reports_in('12:00', '13:00')} covered (0 cases in this view)" in text
     assert "Unknown" not in text
     empty = page.locator("#event-facts tbody").inner_text()
     assert "No event cases reported where event-report sources covered this view." in empty
@@ -377,8 +384,9 @@ def test_desk_count_follows_a_shorter_window(api_server, page, tmp_path):
     for start, inside, outside in (("12", "HOUR-12", "HOUR-13"), ("13", "HOUR-13", "HOUR-12")):
         set_window(page, f"{DAY}{start}:00:00Z", 1)
         text = event_coverage_text(page)
-        span = f"{DAY}{start}:00:00Z to {DAY}{int(start) + 1}:00:00Z"
-        assert f"road: {span} covered (1 case in this view)" in text, text
+        # The row is the capture's whole reporting window (O60); only the
+        # count follows the shorter view.
+        assert f"road: {reports_in('12:00', '14:00')} covered (1 case in this view)" in text, text
         assert "2 cases" not in text
         expect(event_row(page, inside)).to_have_count(1)
         expect(event_row(page, outside)).to_have_count(0)
@@ -405,3 +413,165 @@ def test_live_desk_count_matches_a_fresh_rest_view(api_server, page, tmp_path, e
     open_events(page, api)
     set_window(page, DAY + "12:00:00Z", 1)
     assert event_coverage_text(page) == live  # a fresh REST view shows the same counts
+
+
+# --- O60: DESK labels every count with its reporting window -----------------------------------
+
+
+EVENT_COUNT_NOTE = (
+    "Each event-report row is one capture's reporting window (when its reports were published), "
+    "not when events happened. A case is counted in the row of every capture that delivered its "
+    "latest report: a repeated delivery counts it in more than one row, and a later report or "
+    "correction about an earlier event is counted in the later window. Do not add the rows "
+    "together; the event table lists each case once."
+)
+
+
+def reports_in(start: str, end: str) -> str:
+    return f"reports published {DAY}{start}:00Z to {DAY}{end}:00Z"
+
+
+def test_desk_later_report_reads_as_its_own_reporting_window(api_server, page, tmp_path):
+    from test_events import early_reports, later_reports
+
+    api = api_server()
+    api.ingest(early_reports(tmp_path))
+    api.ingest(later_reports(tmp_path))
+    cover_other_layers(api, tmp_path, end=DAY + "14:00:00Z")
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    text = event_coverage_text(page)
+    assert (
+        f"road: {reports_in('12:00', '13:00')} covered (1 case in this view); "
+        f"{reports_in('13:00', '14:00')} covered (2 cases in this view)"
+    ) in text, text
+    assert EVENT_COUNT_NOTE in text
+    for case in ("EARLY-ONLY", "CORRECTED", "LATE-REPORT"):
+        expect(event_row(page, case)).to_have_count(1)
+    expect(event_row(page, "LATE-ONLY")).to_have_count(0)
+    # The correction is shown with its full history in the table.
+    history = cells(event_row(page, "CORRECTED"))[HISTORY]
+    assert history.count("published") == 2, history
+    # Control: the later hour shows only its ordinary case and one row.
+    set_window(page, DAY + "13:00:00Z", 1)
+    later = event_coverage_text(page)
+    assert f"road: {reports_in('13:00', '14:00')} covered (1 case in this view)" in later, later
+    assert reports_in("12:00", "13:00") not in later
+    expect(event_row(page, "LATE-ONLY")).to_have_count(1)
+    expect(event_row(page, "CORRECTED")).to_have_count(0)
+
+
+def test_desk_repeated_delivery_is_counted_twice_and_the_table_once(api_server, page, tmp_path):
+    from test_events import two_deliveries
+
+    api = api_server()
+    first, again = two_deliveries(tmp_path)
+    api.ingest(first)
+    api.ingest(again)
+    cover_other_layers(api, tmp_path)
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    text = event_coverage_text(page)
+    assert (
+        f"road: {reports_in('12:00', '13:00')} covered (2 cases in this view); "
+        f"{reports_in('12:30', '13:30')} covered (1 case in this view)"
+    ) in text, text
+    assert EVENT_COUNT_NOTE in text
+    # Each row names its capture; the table cites the same two for TWICE.
+    named = event_coverage_text(page, captures=True)
+    batches = api.conn.run(
+        "SELECT batch_id::text FROM eye.capture_batch "
+        "WHERE layer = 'road' AND source_id = 'synthetic-events'"
+    )
+    assert len(batches) == 2
+    for (batch,) in batches:
+        assert f"by capture {batch}" in named
+        assert batch in cells(event_row(page, "TWICE"))[EVIDENCE]
+    assert page.locator("#event-facts tbody th[scope=row]").count() == 2  # each case once
+    expect(event_row(page, "TWICE")).to_have_count(1)
+    # Control: a single delivery gives one row equal to the table.
+    single = api_server()
+    single.ingest(first)
+    cover_other_layers(single, tmp_path)
+    open_events(page, single)
+    set_window(page, DAY + "12:00:00Z", 1)
+    alone = event_coverage_text(page)
+    assert f"road: {reports_in('12:00', '13:00')} covered (2 cases in this view)" in alone
+    assert "12:30:00Z to" not in alone
+
+
+def test_desk_refuses_an_event_count_without_its_reporting_window(api_server, page, tmp_path):
+    from test_events import early_reports
+
+    api = api_server()
+    api.ingest(early_reports(tmp_path))
+    cover_other_layers(api, tmp_path)
+
+    def relay(client):
+        server = client.connect_to_server()
+
+        def from_server(message):
+            if isinstance(message, str) and '"kind":"snapshot"' in message:
+                data = json.loads(message)
+                for row in data["coverage"]:
+                    if row["layer"] == "road":
+                        row.pop("interval_kind", None)  # read as an occurrence interval
+                message = json.dumps(data)
+            client.send(message)
+
+        server.on_message(from_server)
+        client.on_message(lambda message: server.send(message))
+
+    page.route_web_socket("**/api/v0/stream", relay)
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    text = event_coverage_text(page)
+    assert "refused: an event count without its reporting window" in text, text
+    assert "road: reports published" not in text
+    # Control: the other layers' rows on the same page keep their label.
+    assert f"flight: {reports_in('12:00', '13:00')} covered (0 cases in this view)" in text
+
+
+def test_live_desk_later_report_and_repeat_match_a_fresh_rest_view(api_server, page, tmp_path):
+    from test_events import early_reports, later_reports
+
+    api = api_server()
+    api.ingest(early_reports(tmp_path))
+    cover_other_layers(api, tmp_path, end=DAY + "14:00:00Z")
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    status = page.locator("#live-status")
+    assert f"road: {reports_in('12:00', '13:00')} covered (2 cases in this view)" in (
+        event_coverage_text(page)
+    )
+    # A later correction and a later first report about earlier events.
+    snapshots = int(status.get_attribute("data-snapshots"))
+    api.ingest(later_reports(tmp_path))
+    api.server.hub.tick()
+    expect(status).to_have_attribute("data-snapshots", str(snapshots + 1), timeout=WAIT)
+    expect(page.locator("#event-coverage")).to_contain_text(
+        f"{reports_in('13:00', '14:00')} covered (2 cases in this view)", timeout=WAIT
+    )
+    live = event_coverage_text(page)
+    assert f"{reports_in('12:00', '13:00')} covered (1 case in this view)" in live
+    page.reload()
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    assert event_coverage_text(page) == live  # a fresh REST view reads the same
+    # The same early claims delivered again: a second 12:00-13:00 row.
+    snapshots = int(status.get_attribute("data-snapshots"))
+    api.ingest(early_reports(tmp_path, "early-again", received=DAY + "13:00:40Z"))
+    api.server.hub.tick()
+    expect(status).to_have_attribute("data-snapshots", str(snapshots + 1), timeout=WAIT)
+    one = f"{reports_in('12:00', '13:00')} covered (1 case in this view)"
+    page.wait_for_function(
+        "(one) => document.getElementById('event-coverage').innerText.split(one).length === 3",
+        arg=one,
+        timeout=WAIT,
+    )
+    repeated = event_coverage_text(page)
+    assert f"{one}; {one}; " in repeated, repeated
+    page.reload()
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    assert event_coverage_text(page) == repeated

@@ -60,6 +60,10 @@ export type Coverage = CoverageMeasured | CoverageMissing;
 export type CoverageMeasured = {
   readonly layer: "flight" | "vessel" | "road";
   readonly interval: Interval;
+  /** Present on every event-report coverage row (metric event_cases_in_view) and only there: the interval is the capture's reporting window, when the reports it asked for were published, not when events happened. Its count is of cases in this view whose latest report came from that capture; one case can be counted by more than one row, so rows are never added together. */
+  readonly interval_kind?: "reporting_window";
+  /** On an event-report coverage row from a capture: that capture's batch id, as claims cite it in evidence_batch_ids. Two captures with the same reporting window are two rows. */
+  readonly batch_id?: Identifier;
   readonly state: "qualified" | "partial";
   readonly reason?: ShortText;
   readonly metric: {
@@ -72,6 +76,10 @@ export type CoverageMeasured = {
 export type CoverageMissing = {
   readonly layer: "flight" | "vessel" | "road";
   readonly interval: Interval;
+  /** Present on every event-report coverage row (metric event_cases_in_view) and only there: the interval is the capture's reporting window, when the reports it asked for were published, not when events happened. Its count is of cases in this view whose latest report came from that capture; one case can be counted by more than one row, so rows are never added together. */
+  readonly interval_kind?: "reporting_window";
+  /** On an event-report coverage row from a capture: that capture's batch id, as claims cite it in evidence_batch_ids. Two captures with the same reporting window are two rows. */
+  readonly batch_id?: Identifier;
   readonly state: "unknown" | "failed";
   readonly reason: ShortText;
   readonly metric: {

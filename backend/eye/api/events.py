@@ -32,6 +32,9 @@ EVENT_METRIC = "event_reports"  # stored per batch: distinct cases in the whole 
 # area, occurrence-interval and version rules) whose current or conflicting
 # latest report came from that batch. The stored batch metric is unchanged.
 EVENT_VIEW_METRIC = "event_cases_in_view"
+# Every event-coverage row's interval is its capture's reporting window: when
+# the reports it asked for were published, not when events happened.
+REPORTING_WINDOW = "reporting_window"
 NO_SOURCE = "no event-report source covers this area and time; events unknown, not absent"
 
 
@@ -372,6 +375,22 @@ def cases_in_view_from(events: list[dict], batch_id: str) -> int:
     return count
 
 
+def reporting_batches(events: list[dict], every_version: bool = False) -> set[str]:
+    """Batches that delivered a current or conflicting latest claim of a case
+    in ``events`` (with ``every_version``, any claim of it)."""
+    return {
+        batch
+        for event in events
+        for c in event["claims"]
+        if every_version or c["is_current"] is not False
+        for batch in c["evidence_batch_ids"]
+    }
+
+
+def before(left: str, right: str) -> bool:
+    return _key(left) < _key(right)
+
+
 def clip(interval_start: str, interval_end: str, start: str, end: str) -> tuple[str, str]:
     """The part of [interval_start, interval_end) inside the view's [start, end)."""
     return max(interval_start, start, key=_key), min(interval_end, end, key=_key)
@@ -390,4 +409,5 @@ def _gap(layer: str, start: str, end: str) -> dict:
         "state": "unknown",
         "reason": NO_SOURCE,
         "metric": {"name": EVENT_VIEW_METRIC, "value": None},
+        "interval_kind": REPORTING_WINDOW,
     }

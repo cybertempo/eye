@@ -341,9 +341,21 @@ export function eventErrors(event: EventCase): string[] {
   return errors;
 }
 
-/** Event-report coverage for the view, per layer, in words; unknown is never "none". */
+/** Why per-batch event counts are never a total; shown with the coverage rows. */
+export const EVENT_COUNT_NOTE =
+  "Each event-report row is one capture's reporting window (when its reports were published), " +
+  "not when events happened. A case is counted in the row of every capture that delivered its " +
+  "latest report: a repeated delivery counts it in more than one row, and a later report or " +
+  "correction about an earlier event is counted in the later window. Do not add the rows together; " +
+  "the event table lists each case once.";
+
+/**
+ * Event-report coverage for the view, per layer, in words; unknown is never
+ * "none". Every row is labelled as a reporting window; a row without that
+ * label is refused rather than read as an occurrence interval.
+ */
 export function eventCoverageText(coverage: readonly Coverage[], layers: readonly string[]): string[] {
-  return layers.map((layer) => {
+  const lines = layers.map((layer) => {
     const rows = coverage
       .filter((c) => c.layer === layer && c.metric.name === "event_cases_in_view")
       // A total order, so a live page and a fresh REST view list rows alike.
@@ -353,16 +365,22 @@ export function eventCoverageText(coverage: readonly Coverage[], layers: readonl
         JSON.stringify(a).localeCompare(JSON.stringify(b)));
     if (rows.length === 0) return `${layer}: ${UNKNOWN}: no event-report coverage`;
     const parts = rows.map((c) => {
-      const span = intervalText(c.interval);
-      // The count is scoped to this view (its area, interval and current
-      // versions), never the whole capture's count.
-      const cases = c.metric.value === 1 ? "1 case" : `${c.metric.value} cases`;
-      if (c.state === "qualified") return `${span} covered (${cases} in this view)`;
-      if (c.state === "partial") {
-        return `${span} partly covered (at least ${cases} in this view; ${c.reason ?? ""})`;
+      if (c.interval_kind !== "reporting_window") {
+        return `${intervalText(c.interval)} refused: an event count without its reporting window`;
       }
-      return `${span} ${UNKNOWN}: ${c.reason ?? "no data"}`;
+      const span = `reports published ${intervalText(c.interval)}`;
+      // Which capture the row describes; the event table cites the same ids.
+      const by = c.batch_id === undefined ? "" : ` by capture ${c.batch_id}`;
+      // The count is scoped to this view (its area and current versions),
+      // never the whole capture's count; its time is the reporting window.
+      const cases = c.metric.value === 1 ? "1 case" : `${c.metric.value} cases`;
+      if (c.state === "qualified") return `${span} covered (${cases} in this view)${by}`;
+      if (c.state === "partial") {
+        return `${span} partly covered (at least ${cases} in this view; ${c.reason ?? ""})${by}`;
+      }
+      return `${span} ${UNKNOWN}: ${c.reason ?? "no data"}${by}`;
     });
     return `${layer}: ${parts.join("; ")}`;
   });
+  return [...lines, EVENT_COUNT_NOTE];
 }

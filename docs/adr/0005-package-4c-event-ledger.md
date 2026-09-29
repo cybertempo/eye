@@ -126,7 +126,39 @@ enabled; each waits for its own source-policy row (brief §6).
     batch's row counts it, an event batch touching a case that another
     in-view batch's row counts resnapshots rather than sending a delta; a
     batch adding only new cases is still a delta. Rows are listed in a total
-    order so a live page and a fresh REST view read alike.
+    order so a live page and a fresh REST view read alike. (Decision 14
+    replaces the clipping.)
+
+14. **Review repair before merge (O60): each row is a reporting window.** An
+    event capture asks a source what it published during the request, so a
+    row's interval is its capture's *reporting window*, not an occurrence
+    interval. Every `event_cases_in_view` row says so on the wire with
+    `interval_kind: "reporting_window"`. A row from a capture also carries
+    that capture's `batch_id`, which is the id claims cite in
+    `evidence_batch_ids`. Two captures with the same window are two rows.
+    - **No clipping:** the interval is served unclipped, because its count
+      can include a report published anywhere in that window.
+    - **Later reports:** a capture whose window lies outside the view's
+      interval is still listed when it holds the current report of a case in
+      view. A later report or correction about an earlier event is counted
+      in the later window, beside the earlier capture's row.
+    - **Not a total:** the same claim delivered by two captures is counted
+      by both rows, so the rows are not added together.
+    - **Gaps:** unknown gaps are still computed from the parts of those
+      windows inside the view.
+    - **DESK wording:** each row reads "reports published *start* to *end*
+      covered (n cases in this view) by capture *id*". A note under the rows
+      says the rows are reporting windows. It also says a case can be
+      counted in more than one row, that the rows must not be added
+      together, and that the event table lists each case once.
+    - **Refusal:** DESK refuses an event count that arrives without the
+      reporting-window label rather than read it as an occurrence interval.
+    - **Live updates:** an event batch touching a case that any other batch
+      delivered resnapshots. This covers a repeat, a correction or a later
+      report. A batch adding only new cases, even a later report about an
+      earlier event, is a delta that carries its own row.
+    - **History unchanged:** the stored `event_reports` metric, migrations
+      and replay history are unchanged.
 
 ## Consequences
 
