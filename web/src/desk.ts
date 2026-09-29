@@ -199,19 +199,32 @@ export function renderTracks(tracks: readonly Track[]): void {
   );
 }
 
+/** Where event-report coverage is shown instead of the general coverage table. */
+export const EVENT_COVERAGE_POINTER =
+  "Event-report coverage is not listed here: its intervals are reporting windows and its per-capture " +
+  "counts must not be added together, so it is shown with those labels under DESK, world events, " +
+  "Event-report coverage.";
+
+/** An event-report row: shown only in the labelled event panel, never here. */
+function isEventCoverage(c: Coverage): boolean {
+  return c.metric.name === "event_cases_in_view" || c.interval_kind !== undefined || c.batch_id !== undefined;
+}
+
 export function renderCoverage(coverage: readonly Coverage[]): void {
   const table = document.getElementById("coverage-facts");
   if (!(table instanceof HTMLTableElement)) return;
   fillTable(
     table,
-    "Coverage in view. A missing or failed capture is unknown, never zero.",
+    `Coverage in view. A missing or failed capture is unknown, never zero. ${EVENT_COVERAGE_POINTER}`,
     ["Interval (UTC)", "Layer", "State", "Metric", "Reason"],
-    [...coverage]
+    coverage
+      .filter((c) => !isEventCoverage(c))
       .sort((a, b) => compareTime(a.interval.start, b.interval.start) || a.layer.localeCompare(b.layer))
       .map((c) => ({
         className: `state-${c.state}`,
         cells: [intervalText(c.interval), c.layer, c.state, coverageMetric(c), c.reason ?? "none"],
       })),
+    `No track coverage in view. ${EVENT_COVERAGE_POINTER}`,
   );
 }
 

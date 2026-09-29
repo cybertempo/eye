@@ -575,3 +575,148 @@ def test_live_desk_later_report_and_repeat_match_a_fresh_rest_view(api_server, p
     open_events(page, api)
     set_window(page, DAY + "12:00:00Z", 1)
     assert event_coverage_text(page) == repeated
+
+
+# --- O61: the general coverage table leaves event rows to the labelled panel ------------------
+
+POINTER = (
+    "Event-report coverage is not listed here: its intervals are reporting windows and its "
+    "per-capture counts must not be added together, so it is shown with those labels under "
+    "DESK, world events, Event-report coverage."
+)
+
+
+def general_coverage(page: Page) -> list:
+    """The general coverage table (#coverage-facts): caption and body rows."""
+    return page.locator("#coverage-facts").evaluate(
+        """(t) => [t.caption ? t.caption.textContent : "",
+                   [...t.tBodies[0].rows].map((r) => [...r.cells].map((c) => c.textContent))]"""
+    )
+
+
+def track_rows(message: dict) -> list[list[str]]:
+    """The non-event rows REST serves, as the general table should show them."""
+    rows = [c for c in message["coverage"] if c["metric"]["name"] != "event_cases_in_view"]
+    rows.sort(key=lambda c: (c["interval"]["start"], c["layer"]))
+    return [
+        [
+            f"{c['interval']['start']} to {c['interval']['end']}",
+            c["layer"],
+            c["state"],
+            f"{c['metric']['name']}: "
+            + ("Unknown (no data)" if c["metric"]["value"] is None else f"{c['metric']['value']}"),
+            c.get("reason", "none"),
+        ]
+        for c in rows
+    ]
+
+
+def mixed_sources(api, tmp_path) -> None:
+    """A later report about an earlier event, one claim delivered twice, and
+    ordinary track coverage (the synthetic AIS demo) in the same view."""
+    from test_events import early_reports, later_reports, two_deliveries
+
+    api.ingest(early_reports(tmp_path))
+    api.ingest(later_reports(tmp_path))
+    first, again = two_deliveries(tmp_path)
+    api.ingest(first)
+    api.ingest(again)
+
+
+def rest_view(api, start: str = "12", end: str = "13") -> dict:
+    west, south, east, north = json.loads(api.get("/api/v0/snapshot")[1])["area"]["bbox"]
+    response, body = api.get(
+        f"/api/v0/snapshot?bbox={west},{south},{east},{north}"
+        f"&start={DAY}{start}:00:00Z&end={DAY}{end}:00:00Z"
+    )
+    assert response.status == 200, body
+    return json.loads(body)
+
+
+def test_general_coverage_table_leaves_event_rows_to_the_event_panel(api_server, page, tmp_path):
+    api = api_server()
+    mixed_sources(api, tmp_path)
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    rest = rest_view(api)
+    events = [c for c in rest["coverage"] if c["metric"]["name"] == "event_cases_in_view"]
+    batches = {c["batch_id"] for c in events if "batch_id" in c}
+    assert len(batches) == 4  # early, later, first and again: all serve event rows here
+    caption, rows = general_coverage(page)
+    assert POINTER in caption
+    # Control: ordinary track coverage stays, exactly as REST serves it.
+    expected = track_rows(rest)
+    assert expected and rows == expected
+    table = page.locator("#coverage-facts").text_content()
+    assert "event_cases_in_view" not in table and "reports published" not in table
+    assert not any(batch in table for batch in batches)
+    # The event panel still lists every event row, labelled: the later report's
+    # 13:00-14:00 window and both deliveries of one claim.
+    text = event_coverage_text(page)
+    assert f"{reports_in('13:00', '14:00')} covered (2 cases in this view)" in text, text
+    assert f"{reports_in('12:30', '13:30')} covered (1 case in this view)" in text, text
+    assert EVENT_COUNT_NOTE in text
+    named = event_coverage_text(page, captures=True)
+    assert all(f"by capture {batch}" in named for batch in batches)
+
+
+def test_general_table_without_track_coverage_points_to_the_event_panel(api_server, page, tmp_path):
+    """Paired: only event sources in view, so the general table has no row at all."""
+    from test_events import early_reports
+
+    api = api_server(ais_files=[])
+    api.ingest(early_reports(tmp_path))
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    assert [c for c in rest_view(api)["coverage"] if "interval_kind" not in c] == []
+    caption, rows = general_coverage(page)
+    assert rows == [[f"No track coverage in view. {POINTER}"]]
+    assert "reports published" in event_coverage_text(page)
+
+
+def test_live_general_coverage_matches_a_reload(api_server, page, tmp_path):
+    from synthetic_captures import capture as positions
+    from synthetic_captures import record
+    from test_events import early_reports, later_reports
+
+    api = api_server()
+    api.ingest(early_reports(tmp_path))
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    status = page.locator("#live-status")
+    # A later report and correction about earlier events: a fresh snapshot.
+    snapshots = int(status.get_attribute("data-snapshots"))
+    api.ingest(later_reports(tmp_path))
+    api.server.hub.tick()
+    expect(status).to_have_attribute("data-snapshots", str(snapshots + 1), timeout=WAIT)
+    # The same early claims delivered again: another fresh snapshot.
+    snapshots = int(status.get_attribute("data-snapshots"))
+    api.ingest(early_reports(tmp_path, "early-again", received=DAY + "13:00:40Z"))
+    api.server.hub.tick()
+    expect(status).to_have_attribute("data-snapshots", str(snapshots + 1), timeout=WAIT)
+    # An ordinary track capture: a delta adding a non-event row.
+    deltas = int(status.get_attribute("data-deltas"))
+    api.ingest(
+        positions(
+            tmp_path,
+            "flight",
+            "flight",
+            [record("SYN-FLT-900", DAY + "12:20:00Z", DAY + "12:20:05Z", 0.1, 0.1)],
+            start=DAY + "12:00:00Z",
+            end=DAY + "13:00:00Z",
+            received=DAY + "13:00:50Z",
+        )
+    )
+    api.server.hub.tick()
+    expect(status).to_have_attribute("data-deltas", str(deltas + 1), timeout=WAIT)
+    live_caption, live_rows = general_coverage(page)
+    assert POINTER in live_caption
+    assert any(row[1] == "flight" for row in live_rows)  # the new track row is shown
+    assert live_rows == track_rows(rest_view(api))
+    live_events = event_coverage_text(page, captures=True)
+    assert live_events.count(f"{reports_in('12:00', '13:00')} covered (1 case in this view)") == 2
+    page.reload()
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    assert general_coverage(page) == [live_caption, live_rows]  # a reload reads the same
+    assert event_coverage_text(page, captures=True) == live_events

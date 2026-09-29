@@ -159,6 +159,18 @@ enabled; each waits for its own source-policy row (brief §6).
       earlier event, is a delta that carries its own row.
     - **History unchanged:** the stored `event_reports` metric, migrations
       and replay history are unchanged.
+15. **Review repair before merge (O61): one labelled display for event
+    coverage.** The general coverage table (`#coverage-facts`, under
+    "Measured facts") has an unqualified "Interval (UTC)" column and no room
+    for the reporting-window label, capture id or non-additive note. So it
+    no longer lists event-report rows: a row is an event row when its metric
+    is `event_cases_in_view` or it carries `interval_kind` or `batch_id`.
+    - **Pointer:** the table's caption points readers to DESK, world events,
+      Event-report coverage, where those rows keep their labels.
+    - **Empty table:** a view with no track coverage says so and gives the
+      same pointer.
+    - **Unchanged:** track coverage rows, their order and their wording; the
+      wire and the API.
 
 ## Consequences
 
