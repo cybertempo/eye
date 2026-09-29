@@ -520,3 +520,198 @@ def test_track_ids_are_distinct_for_long_similar_records(api_server, page, tmp_p
     # Control: the ids are the same ones the API gives, so reloads and deltas agree.
     _, raw = api.get("/api/v0/snapshot?start=2026-01-01T02:00:00Z&end=2026-01-01T03:00:00Z")
     assert sorted(ids) == sorted(t["id"] for t in json.loads(raw)["tracks"])
+
+
+# --- O48: a correction that moves a track out of view -----------------------------------------
+
+
+def _flight_page(api_server, page, tmp_path):
+    from test_api import flight_capture
+
+    api = api_server(ais_files=[])
+    api.ingest(
+        flight_capture(tmp_path, "original", 0.1, "2026-01-01T03:00:03Z", "2026-01-01T03:05:02Z")
+    )
+    open_app_loose(page, api)
+    expect(page.locator("#track-facts")).to_contain_text("SYN-FLT-900")
+    expect(page.locator("#track-facts")).to_contain_text("0.10000°E")
+    return api
+
+
+def test_correction_out_of_view_removes_the_track_from_the_page(api_server, page, tmp_path):
+    from test_api import flight_capture
+
+    api = _flight_page(api_server, page, tmp_path)
+    api.ingest(
+        flight_capture(tmp_path, "moved-out", 0.8, "2026-01-01T03:20:00Z", "2026-01-01T03:20:05Z")
+    )
+    api.server.hub.tick()
+    status = page.locator("#live-status")
+    expect(status).to_have_attribute("data-snapshots", "2", timeout=WAIT)
+    expect(status).to_have_attribute("data-state", "live")
+    expect(page.locator("#track-facts")).not_to_contain_text("SYN-FLT-900")
+    assert status.get_attribute("data-deltas") == "0"
+
+
+def test_correction_inside_the_view_updates_the_track(api_server, page, tmp_path):
+    from test_api import flight_capture
+
+    api = _flight_page(api_server, page, tmp_path)
+    api.ingest(
+        flight_capture(tmp_path, "moved-in", 0.2, "2026-01-01T03:20:00Z", "2026-01-01T03:20:05Z")
+    )
+    api.server.hub.tick()
+    status = page.locator("#live-status")
+    expect(status).to_have_attribute("data-deltas", "1", timeout=WAIT)
+    expect(page.locator("#track-facts")).to_contain_text("0.20000°E")
+    expect(page.locator("#track-facts")).not_to_contain_text("0.10000°E")
+    assert status.get_attribute("data-snapshots") == "1"
+
+
+# --- O49: the stale banner covers connecting and resynchronising --------------------------------
+
+
+class Relay:
+    """A controllable relay between the page and the live server."""
+
+    def __init__(self, *, connect: bool = True) -> None:
+        self.connect_now = connect
+        self.client = self.server = None
+        self.pending: list = []
+        self.held: list = []
+        self.drop_deltas = 0
+        self.hold_resync_snapshots = False
+        self.corrupt_resync_snapshots = 0
+        self.snapshots = 0
+        self.corrupted = 0
+
+    def __call__(self, client) -> None:
+        self.client = client
+        client.on_message(self._to_server)
+        if self.connect_now:
+            self.connect()
+
+    def connect(self) -> None:
+        self.server = self.client.connect_to_server()
+        self.server.on_message(self._from_server)
+        for message in self.pending:
+            self.server.send(message)
+        self.pending.clear()
+
+    def _to_server(self, message) -> None:
+        if self.server is None:
+            self.pending.append(message)
+        else:
+            self.server.send(message)
+
+    def _from_server(self, message) -> None:
+        kind = json.loads(message).get("kind") if isinstance(message, str) else None
+        if kind == "delta" and self.drop_deltas:
+            self.drop_deltas -= 1
+            return
+        if kind == "snapshot":
+            self.snapshots += 1
+            if self.snapshots > 1 and self.corrupt_resync_snapshots:
+                self.corrupt_resync_snapshots -= 1
+                self.corrupted += 1
+                bad = json.loads(message)
+                bad["cursor"] = "not a valid cursor!"
+                self.client.send(json.dumps(bad))
+                return
+            if self.snapshots > 1 and self.hold_resync_snapshots:
+                self.held.append(message)
+                return
+        self.client.send(message)
+
+    def release(self) -> None:
+        self.hold_resync_snapshots = False
+        for message in self.held:
+            self.client.send(message)
+        self.held.clear()
+
+
+def _banner_shown(page, state: str) -> None:
+    expect(page.locator("#live-status")).to_have_attribute("data-state", state, timeout=WAIT)
+    expect(page.locator("#stale-banner")).to_be_visible()
+    assert page.locator("body.stale").count() == 1
+
+
+def _banner_cleared(page) -> None:
+    expect(page.locator("#live-status")).to_have_attribute("data-state", "live", timeout=WAIT)
+    expect(page.locator("#stale-banner")).to_be_hidden()
+    assert page.locator("body.stale").count() == 0
+
+
+def test_delayed_connection_shows_the_banner_until_the_snapshot(api_server, page):
+    api = api_server()
+    relay = Relay(connect=False)
+    page.route_web_socket("**/api/v0/stream", relay)
+    page.goto(f"{api.origin}/")
+    expect(page.locator("#track-facts")).to_contain_text("SYNV-0020", timeout=WAIT)  # rendered
+    _banner_shown(page, "connecting")
+    page.wait_for_timeout(1000)
+    _banner_shown(page, "connecting")  # still waiting: still not current
+    relay.connect()  # control: once the live snapshot arrives the banner clears
+    _banner_cleared(page)
+
+
+def test_blocked_connection_keeps_the_banner_until_it_is_unblocked(api_server, page):
+    from ws_client import WsClient
+
+    api = api_server(api={"max_websockets": 1})
+    occupier = WsClient(api.host, api.port)  # holds the only live-socket slot
+    assert occupier.status == 101
+    page.goto(f"{api.origin}/")
+    expect(page.locator("#track-facts")).to_contain_text("SYNV-0020", timeout=WAIT)  # rendered
+    _banner_shown(page, "reconnecting")  # the server refused the handshake (503)
+    page.wait_for_timeout(2500)  # through a retry or two
+    _banner_shown(page, "reconnecting")
+    assert page.locator("#live-status").get_attribute("data-snapshots") == "0"
+    occupier.close()  # control: once a slot is free the retry connects and clears it
+    _banner_cleared(page)
+
+
+def _gap(api, relay) -> None:
+    relay.drop_deltas = 1
+    api.ingest(DEMO_FILES[0])
+    api.derive()
+    api.server.hub.tick()
+
+
+def test_delayed_resync_shows_the_banner_until_the_new_snapshot(api_server, page):
+    api = api_server(ais_files=DEMO_FILES[1:])
+    relay = Relay()
+    page.route_web_socket("**/api/v0/stream", relay)
+    page.goto(f"{api.origin}/")
+    _banner_cleared(page)  # control: live before the gap
+    relay.hold_resync_snapshots = True
+    _gap(api, relay)
+    _banner_shown(page, "resyncing")
+    page.wait_for_timeout(1000)
+    _banner_shown(page, "resyncing")
+    assert relay.held  # the fresh snapshot is waiting in the relay
+    relay.release()
+    _banner_cleared(page)
+    expect(page.locator("#track-facts")).to_contain_text("SYNV-0020")
+
+
+def test_invalid_resync_snapshot_does_not_clear_the_banner(api_server, page):
+    api = api_server(ais_files=DEMO_FILES[1:])
+    relay = Relay()
+    page.route_web_socket("**/api/v0/stream", relay)
+    page.goto(f"{api.origin}/")
+    _banner_cleared(page)
+    relay.corrupt_resync_snapshots = 1
+    relay.hold_resync_snapshots = True  # hold the retry's snapshot after the corrupt one
+    _gap(api, relay)
+    expect(page.locator("#live-status")).to_have_attribute("data-snapshots", "1")
+    for _ in range(50):
+        if relay.corrupted and relay.held:
+            break
+        page.wait_for_timeout(100)
+    assert relay.corrupted == 1 and relay.held
+    _banner_shown(page, "resyncing")  # a refused snapshot is not a baseline
+    assert page.locator("#live-status").get_attribute("data-snapshots") == "1"
+    relay.release()  # control: the valid snapshot clears it
+    _banner_cleared(page)
+    expect(page.locator("#live-status")).to_have_attribute("data-snapshots", "2")

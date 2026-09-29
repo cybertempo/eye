@@ -128,6 +128,20 @@ Date: 2026-09-28. Status: proposed (awaiting owner review).
       two long, similar record ids cannot share an id. The fact table shows
       the source record beside the id.
 
+14. **Review repairs before merge (O48, O49).**
+    - *O48, corrections that leave the view:* a delta considers every record
+      its batch touched that has, or had, any version inside the
+      subscription. If such a track no longer has a current point in view,
+      the delta cannot say so (deltas only upsert), so the server sends
+      `resync_required` (`overflow`) with the **unchanged** cursor and a fresh
+      snapshot without the track. A correction that stays in view is an
+      ordinary upsert of the whole track.
+    - *O49, not current until a snapshot:* once a view is on the page, every
+      state but live (connecting, resynchronising, reconnecting, stale,
+      failed) shows the stale banner. The page becomes live only on a snapshot
+      that passed validation, or a delta that follows one in sequence; a
+      refused snapshot leaves the banner up.
+
 ## Consequences
 
 - Snapshots carry no events yet; the event-claim ledger is Package 4c.

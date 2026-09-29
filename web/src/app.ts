@@ -52,8 +52,10 @@ function setStatus(stateName: LiveState | "error" | "loading", text: string): vo
   const status = byId("live-status", HTMLElement);
   status.textContent = text;
   status.dataset.state = stateName;
-  // Anything but a live feed means the page may be out of date: say so on the page.
-  const stale = stateName === "stale" || stateName === "reconnecting" || stateName === "error";
+  // Once a view is on the page, anything but a live feed (connecting,
+  // resynchronising, reconnecting, stale, failed) means it may be out of date.
+  // "live" is set only after a valid snapshot, or a delta that follows one.
+  const stale = stateName !== "live" && (rendered || stateName === "error");
   const banner = byId("stale-banner", HTMLElement);
   banner.hidden = !stale;
   document.body.classList.toggle("stale", stale);
@@ -64,6 +66,7 @@ function coverageKey(c: Coverage): string {
 }
 
 let globe: Globe;
+let rendered = false; // a view (REST or live snapshot) is on the page
 let live: LiveFeed;
 let transitsTimer: number | undefined;
 
@@ -79,6 +82,7 @@ function renderView(fit: boolean): void {
 }
 
 function applySnapshot(message: SnapshotMessage, fit: boolean): void {
+  rendered = true;
   state.area = message.area.bbox;
   state.interval = message.interval;
   state.tracks = new Map(message.tracks.map((t) => [t.id, t]));

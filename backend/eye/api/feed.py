@@ -368,28 +368,35 @@ def delta(
     coverage: list[dict] = []
     if kind == "capture_batch" and layer in query.layers:
         limit = min(limits.max_tracks, DELTA_MAX_ITEMS)
-        # Only the records this batch changed inside the subscription. The
-        # query asks for one more than the limit: a batch that touches more
-        # cannot be sent as one delta, and is refused rather than cut short.
-        records = [
-            f"{s} {r}"
-            for s, r in conn.run(
-                "SELECT DISTINCT o.source_id, o.source_record_id FROM eye.observation_receipt r "
-                "JOIN eye.observation o USING (observation_id) "
-                "WHERE r.batch_id = CAST(:batch AS uuid) "
-                "AND o.layer = ANY(CAST(:layers AS text[])) "
-                "AND o.observed_time >= :start AND o.observed_time < :end "
-                "AND o.position && ST_MakeEnvelope(:w, :s, :e, :n, 4326) "
-                "LIMIT :cap",
-                batch=batch_id,
-                cap=limit + 1,
-                **_params(query),
-            )
-        ]
-        if len(records) > limit:
+        # The records this batch changed that have, or had, any version inside
+        # the subscription: a correction can move a record's current point out
+        # of view, and the client may still hold the old one. The query asks
+        # for one more than the limit: a batch that touches more cannot be sent
+        # as one delta, and is refused rather than cut short.
+        touched = conn.run(
+            "SELECT DISTINCT o.source_id, o.source_record_id, o.layer "
+            "FROM eye.observation_receipt r JOIN eye.observation o USING (observation_id) "
+            "WHERE r.batch_id = CAST(:batch AS uuid) "
+            "AND o.layer = ANY(CAST(:layers AS text[])) "
+            "AND EXISTS (SELECT 1 FROM eye.observation v "
+            "WHERE v.source_id = o.source_id AND v.source_record_id = o.source_record_id "
+            "AND v.layer = o.layer AND v.observed_time >= :start AND v.observed_time < :end "
+            "AND v.position && ST_MakeEnvelope(:w, :s, :e, :n, 4326)) "
+            "LIMIT :cap",
+            batch=batch_id,
+            cap=limit + 1,
+            **_params(query),
+        )
+        if len(touched) > limit:
             raise QueryRefused(413, f"batch changes more than {limit} tracks in view")
-        if records:
-            tracks = _tracks(conn, query, limits, records)
+        if touched:
+            tracks = _tracks(conn, query, limits, [f"{s} {r}" for s, r, _ in touched])
+        remaining = {(t["source"], t["source_record_id"]) for t in tracks}
+        # Road records are not tracks (the event ledger is Package 4c).
+        if any((s, r) not in remaining for s, r, layer in touched if layer != "road"):
+            # A track left the view. Deltas only upsert, so the client cannot
+            # be told to drop it: it needs a fresh snapshot instead.
+            raise QueryRefused(409, "a change removed a track from the view")
         coverage, _ = _coverage(conn, query, limits, batch_id)
         if len(tracks) > limit or len(coverage) > DELTA_MAX_ITEMS:
             raise QueryRefused(413, "batch is larger than one delta allows")

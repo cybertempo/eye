@@ -858,3 +858,99 @@ def test_failure_during_recovery_keeps_the_subscription_and_retries(
     assert fresh["kind"] == "snapshot" and fresh["cursor"] == snapshot["cursor"]
     assert not sub.stale
     client.close()
+
+
+# --- O48: a correction that moves a track out of view -----------------------------------------
+
+HOUR3 = {"start": "2026-01-01T03:00:00Z", "end": "2026-01-01T04:00:00Z"}
+
+
+def flight_capture(tmp_path, name: str, lon: float, published: str, received: str):
+    """One invented flight position at 03:00; a later publication is a correction."""
+    doc = {
+        "capture_format": "eye.synthetic-capture/2",
+        "synthetic": True,
+        "source_id": "synthetic-fixture",
+        "adapter_version": "synthetic-adapter/2",
+        "note": f"Test capture {name}: SYN-FLT-900 at 03:00, published {published}.",
+        "layer": "flight",
+        "request": {
+            "bbox": [-1.0, -1.0, 1.0, 1.0],
+            "start": "2026-01-01T02:55:00Z",
+            "end": "2026-01-01T03:05:00Z",
+            "expected_interval_s": 600,
+        },
+        "attempt": {
+            "written_by": "EYE capture adapter; finished_at is the EYE receipt time",
+            "started_at": received,
+            "finished_at": received,
+            "provider_status": "ok",
+            "quota_cost": 0,
+            "observed_start": "2026-01-01T02:55:00Z",
+            "observed_end": "2026-01-01T03:05:00Z",
+        },
+        "provider_response": {
+            "records": [
+                {
+                    "record_id": "SYN-FLT-900",
+                    "observed_time": "2026-01-01T03:00:00Z",
+                    "source_published_time": published,
+                    "lon": lon,
+                    "lat": 0.0,
+                    "alt_m": 9000,
+                    "confidence": 0.9,
+                    "quality_flags": [],
+                }
+            ]
+        },
+    }
+    return _capture(tmp_path, name, doc)
+
+
+def _flight_in_view(api_server, tmp_path):
+    api = api_server(ais_files=[])
+    api.ingest(
+        flight_capture(tmp_path, "original", 0.1, "2026-01-01T03:00:03Z", "2026-01-01T03:05:02Z")
+    )
+    client = ws(api)
+    client.send(subscribe(AREA, HOUR3, layers=("flight",)))
+    snapshot = client.recv()
+    (track,) = snapshot["tracks"]
+    assert (track["source_record_id"], track["points"][0]["lon"]) == ("SYN-FLT-900", 0.1)
+    return api, client, snapshot
+
+
+def test_correction_moving_the_only_point_out_of_view_forces_a_snapshot(api_server, tmp_path):
+    api, client, snapshot = _flight_in_view(api_server, tmp_path)
+    api.ingest(
+        flight_capture(tmp_path, "moved-out", 0.8, "2026-01-01T03:20:00Z", "2026-01-01T03:20:05Z")
+    )
+    api.server.hub.tick()
+    notice = client.recv()
+    assert (notice["kind"], notice["reason"]) == ("resync_required", "overflow")
+    assert notice["last_cursor"] == snapshot["cursor"]  # not advanced past the correction
+    fresh = client.recv()
+    assert fresh["kind"] == "snapshot" and fresh["tracks"] == []  # the track left the view
+    assert feed.parse_cursor(fresh["cursor"])[1] == feed.parse_cursor(snapshot["cursor"])[1] + 1
+    # REST agrees independently: the current position is outside the area.
+    rest = body(
+        api.get(
+            "/api/v0/snapshot?start=2026-01-01T03:00:00Z&end=2026-01-01T04:00:00Z&layers=flight"
+        )
+    )
+    assert rest["tracks"] == []
+    client.close()
+
+
+def test_correction_that_stays_in_view_updates_normally(api_server, tmp_path):
+    api, client, snapshot = _flight_in_view(api_server, tmp_path)
+    api.ingest(
+        flight_capture(tmp_path, "moved-in", 0.2, "2026-01-01T03:20:00Z", "2026-01-01T03:20:05Z")
+    )
+    api.server.hub.tick()
+    delta = client.recv()
+    assert delta["kind"] == "delta" and delta["previous_cursor"] == snapshot["cursor"]
+    (track,) = delta["tracks_upserted"]
+    assert track["id"] == snapshot["tracks"][0]["id"]
+    assert [p["lon"] for p in track["points"]] == [0.2]  # the correction replaced the point
+    client.close()
