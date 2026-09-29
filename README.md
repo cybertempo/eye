@@ -131,7 +131,11 @@ last observed position; THEATRE draws the two as separate marks.
   its window near the reported location; otherwise it stays unlinked, with the
   reason.
 - Where no event-report source covered part of the view, event coverage is
-  *unknown*, never "no events".
+  *unknown*, never "no events"; a source covering only part of the view's
+  area is *partial*, not a measured zero, and live coverage that narrows a
+  gap brings a fresh snapshot.
+- A case is shown when its event time, widened by its stated uncertainty,
+  overlaps the view's interval.
 
 The only event source is `synthetic-events`, invented fixtures in
 `tests/fixtures/synthetic/events/`. See

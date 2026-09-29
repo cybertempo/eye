@@ -626,12 +626,22 @@ def test_event_batches_arrive_as_deltas_and_a_moved_case_resnapshots(api_server,
         )
     )
     api.server.hub.tick()
-    delta = client.recv()
-    assert delta["kind"] == "delta" and reference_valid(delta)
-    (event,) = delta["events_upserted"]
+    # The first road event batch fills part of the road layer's unknown gap,
+    # which a delta cannot narrow: a fresh snapshot replaces it (O58).
+    resync = client.recv()
+    assert resync["kind"] == "resync_required" and resync["reason"] == "overflow"
+    first = client.recv()
+    assert first["kind"] == "snapshot" and reference_valid(first)
+    (event,) = first["events"]
     assert event["case_id"] == "LIVE-1" and event["standing"] == "report"
-    assert any(c["metric"]["name"] == "event_reports" for c in delta["coverage_upserted"])
-    # Control: a correction inside the view is an ordinary upsert.
+    assert event_coverage(first, "road")[0] == (
+        DAY + "12:00:00Z",
+        DAY + "13:00:00Z",
+        "qualified",
+        1,
+    )
+    # Control: a correction inside the view, in an hour already covered, is an
+    # ordinary upsert.
     api.ingest(
         capture(
             tmp_path,
@@ -753,3 +763,163 @@ def test_one_hundred_versions_are_served_and_a_hundred_and_first_is_refused(api_
     assert response.status == 413
     error = validate_message(body, "ServerMessage")
     assert "road case V-101 from synthetic-events has more than 100 versions" in error["error"]
+
+
+# --- O56: a source area smaller than the view does not certify the view ---------------------
+
+SMALL = (0.0, 0.0, 0.2, 0.2)  # a healthy event source's whole requested area
+INSIDE = "&bbox=0.05,0.05,0.15,0.15"  # a view wholly inside it
+
+
+def test_small_source_area_is_partial_for_a_larger_view(api_server, tmp_path):
+    api = api_server()
+    api.ingest(capture(tmp_path, "small", "road", [], bbox=SMALL))  # healthy, nothing reported
+    wide = snapshot(api, VIEW + "&layers=road")
+    rows = [c for c in wide["coverage"] if c["metric"]["name"] == "event_reports"]
+    (partial,) = [c for c in rows if c["state"] == "partial"]
+    assert partial["interval"] == {"start": DAY + "12:00:00Z", "end": DAY + "13:00:00Z"}
+    assert partial["metric"]["value"] == 0  # a lower bound, not a measured zero
+    assert "covers only part of this view" in partial["reason"]
+    # The rest of the view, for the whole interval, is unknown.
+    assert [
+        (c["interval"]["start"], c["interval"]["end"]) for c in rows if c["state"] == "unknown"
+    ] == [(DAY + "12:00:00Z", DAY + "16:00:00Z")]
+    assert not [c for c in rows if c["state"] == "qualified"]
+    # Control: a view wholly inside the source area is a measured zero there.
+    inside = snapshot(api, VIEW + INSIDE + "&layers=road")
+    assert event_coverage(inside, "road") == [
+        (DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 0),
+        (DAY + "13:00:00Z", DAY + "16:00:00Z", "unknown", None),
+    ]
+
+
+# --- O57: select by the possible occurrence interval ----------------------------------------
+
+
+def edge_cases(tmp_path) -> list:
+    """Two captures: cases near the view's start (published 12:10) and near its
+    end (published after they may have happened, 16:06)."""
+    here = point(0.1, 0.1)
+    early = capture(
+        tmp_path,
+        "edges-early",
+        "road",
+        [
+            # Nominal time before the view, but it may have happened inside it.
+            claim(
+                "EDGE-IN-EARLY",
+                "road_closure",
+                DAY + "12:10:00Z",
+                here,
+                event_time=DAY + "11:59:30Z",
+                uncertainty=60,
+            ),
+            # Wholly before the view, even with its uncertainty.
+            claim(
+                "EDGE-OUT-EARLY",
+                "road_closure",
+                DAY + "12:10:00Z",
+                here,
+                event_time=DAY + "11:50:00Z",
+                uncertainty=60,
+            ),
+        ],
+    )
+    late = capture(
+        tmp_path,
+        "edges-late",
+        "road",
+        [
+            # Nominal time just past the view's end, possibly inside it.
+            claim(
+                "EDGE-IN-LATE",
+                "road_closure",
+                DAY + "16:06:00Z",
+                here,
+                event_time=DAY + "16:00:30Z",
+                uncertainty=60,
+            ),
+            # Wholly after the view.
+            claim(
+                "EDGE-OUT-LATE",
+                "road_closure",
+                DAY + "16:06:00Z",
+                here,
+                event_time=DAY + "16:05:00Z",
+                uncertainty=60,
+            ),
+        ],
+        start=DAY + "16:00:00Z",
+        end=DAY + "17:00:00Z",
+    )
+    return [early, late]
+
+
+def test_cases_are_selected_by_their_possible_occurrence_interval(api_server, tmp_path):
+    api = api_server()
+    for path in edge_cases(tmp_path):
+        api.ingest(path)
+    assert api.conn.run("SELECT count(*) FROM eye.event_claim") == [[4]]  # all four stored
+    message = snapshot(api)
+    assert {e["case_id"] for e in message["events"]} == {"EDGE-IN-EARLY", "EDGE-IN-LATE"}
+    (early,) = case_of(message, "EDGE-IN-EARLY")["claims"]
+    # Served as stated: the nominal time and its uncertainty are unchanged.
+    assert (early["event_time"], early["event_time_uncertainty_s"]) == (DAY + "11:59:30Z", 60)
+    (late,) = case_of(message, "EDGE-IN-LATE")["claims"]
+    assert (late["event_time"], late["event_time_uncertainty_s"]) == (DAY + "16:00:30Z", 60)
+
+
+def test_live_updates_select_by_the_possible_occurrence_interval(api_server, tmp_path):
+    api = api_server()
+    # Road event coverage for the whole view first, so the next batch is a delta.
+    api.ingest(
+        capture(tmp_path, "cover", "road", [], end=DAY + "16:00:00Z", received=DAY + "16:00:05Z")
+    )
+    client = WsClient(api.host, api.port)
+    client.send(subscribe(AREA, HOURS, layers=("road",)))
+    assert client.recv()["kind"] == "snapshot"
+    selected = set()
+    for path in edge_cases(tmp_path):
+        api.ingest(path)
+        api.server.hub.tick()
+        delta = client.recv()
+        assert delta["kind"] == "delta" and reference_valid(delta)
+        selected |= {e["case_id"] for e in delta["events_upserted"]}
+    assert selected == {"EDGE-IN-EARLY", "EDGE-IN-LATE"}
+    client.close()
+
+
+# --- O58: live coverage narrows the unknown gaps ---------------------------------------------
+
+
+def coverage_rows(message: dict) -> list:
+    return sorted(json.dumps(c, sort_keys=True) for c in message["coverage"])
+
+
+def test_a_capture_filling_part_of_a_gap_resnapshots_and_matches_rest(api_server, tmp_path):
+    api = api_server()
+    client = WsClient(api.host, api.port)
+    client.send(subscribe(AREA, HOURS))
+    base = client.recv()
+    assert event_coverage(base, "road") == [(DAY + "12:00:00Z", DAY + "16:00:00Z", "unknown", None)]
+    # Control first: a capture whose source area lies outside the view changes
+    # nothing in view; an ordinary (empty) delta advances the cursor.
+    api.ingest(capture(tmp_path, "elsewhere", "road", [], bbox=(0.6, 0.6, 0.9, 0.9)))
+    api.server.hub.tick()
+    delta = client.recv()
+    assert delta["kind"] == "delta" and delta["coverage_upserted"] == []
+    rest = snapshot(api, VIEW)
+    assert coverage_rows(rest) == coverage_rows(base)  # live state still matches REST
+    # A capture filling 12:00-13:00 for the whole view narrows the road gap.
+    api.ingest(capture(tmp_path, "fills", "road", [], received=DAY + "13:00:20Z"))
+    api.server.hub.tick()
+    resync = client.recv()
+    assert resync["kind"] == "resync_required" and resync["reason"] == "overflow"
+    live = client.recv()
+    assert live["kind"] == "snapshot"
+    assert event_coverage(live, "road") == [
+        (DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 0),
+        (DAY + "13:00:00Z", DAY + "16:00:00Z", "unknown", None),
+    ]
+    assert coverage_rows(live) == coverage_rows(snapshot(api, VIEW))
+    client.close()

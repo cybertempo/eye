@@ -57,8 +57,8 @@ enabled; each waits for its own source-policy row (brief §6).
    `event_reports` (the number of distinct cases; failed or unknown with a
    null value on a provider failure). A snapshot adds an `unknown` coverage
    row, with its reason, for every part of the view's interval that no event
-   source covered in each requested layer, so the absence of a source is
-   never shown as "no events". DESK words it that way and distinguishes a
+   source covered over the whole view area in each requested layer (see
+   decision 12), so the absence of a source is never shown as "no events". DESK words it that way and distinguishes a
    measured zero ("No event cases reported where event-report sources covered
    this view").
 7. **Wire version `eye.wire/3`.** Serving event cases changes a shape that
@@ -90,6 +90,29 @@ enabled; each waits for its own source-policy row (brief §6).
     final report, a signal-loss candidate, road congestion, a slowdown
     candidate, and a collision on a directional segment that is then cleared.
     14:00 to 16:00 has no event source and shows as unknown.
+
+12. **Review repairs before merge (O56 to O58).**
+    - *O56, a source area smaller than the view certifies nothing beyond
+      it:* an event-report coverage row closes an unknown gap only when its
+      source's requested area covers the whole view. A row whose area only
+      overlaps the view is sent as `partial` (its count a lower bound) with
+      the reason "the source's area covers only part of this view; outside it
+      events are unknown", and the view stays `unknown` for that time. A view
+      wholly inside a healthy source's area with nothing reported is a
+      measured zero (`qualified`, 0). This rule applies to event-report
+      coverage; track coverage rows are listed per batch as before.
+    - *O57, cases are selected by when they may have happened:* a case is in
+      the requested interval when its possible occurrence interval (nominal
+      event time ± stated uncertainty) overlaps it, in snapshots and in live
+      deltas alike; a claim with no event time falls back to its publication
+      time. The nominal time and uncertainty are served unchanged.
+    - *O58, live coverage narrows the unknown gaps:* a client holds the gap
+      rows it was sent, and a delta can only add rows. When an event batch's
+      coverage changes the gaps in a subscription's view, the server sends
+      `resync_required` (`overflow`) with the unchanged cursor and a fresh
+      snapshot, so the old gap is narrowed or removed; a batch that changes
+      no gap (for example one whose area lies outside the view) is an
+      ordinary delta. The live DESK then matches a fresh REST view.
 
 ## Consequences
 

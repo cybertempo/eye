@@ -208,3 +208,79 @@ def test_event_tables_are_accessible_and_reachable_by_keyboard(api_server, page)
     assert table.locator("th[scope=col]").count() == 8
     assert table.locator("tbody th[scope=row]").count() == 7
     assert accessibility_problems(page) == []
+
+
+# --- O56 and O58: event coverage in DESK -------------------------------------------------------
+
+SMALL = (0.0, 0.0, 0.2, 0.2)
+
+
+def event_coverage_text(page: Page) -> str:
+    return page.locator("#event-coverage").inner_text()
+
+
+def small_sources(api, tmp_path) -> None:
+    """Healthy event sources for every layer, 12:00-16:00, over a small area only."""
+    for layer in ("flight", "vessel", "road"):
+        api.ingest(
+            capture(tmp_path, f"small-{layer}", layer, [], end=DAY + "16:00:00Z", bbox=SMALL)
+        )
+
+
+def test_small_source_area_reads_partial_and_unknown_not_zero(api_server, page, tmp_path):
+    api = api_server()
+    small_sources(api, tmp_path)
+    open_events(page, api)  # the configured view is four times wider than the source area
+    text = event_coverage_text(page)
+    assert text.count("partly covered (at least 0 cases") == 3
+    assert text.count(f"{DAY}12:00:00Z to {DAY}16:00:00Z Unknown: no event-report source") == 3
+    assert " covered (0 cases)" not in text
+    empty = page.locator("#event-facts tbody").inner_text()
+    assert "Events are unknown for part of this view" in empty
+    assert "No event cases reported" not in empty
+
+
+def test_view_inside_the_source_area_reads_measured_zero(api_server, page, tmp_path, example_raw):
+    """Control: the same sources, with the view wholly inside their area."""
+    raw = json.loads(json.dumps(example_raw))
+    raw["view"]["bbox"] = [0.05, 0.05, 0.15, 0.15]
+    api = api_server(mode_raw=raw)
+    small_sources(api, tmp_path)
+    open_events(page, api)
+    text = event_coverage_text(page)
+    assert text.count(f"{DAY}12:00:00Z to {DAY}16:00:00Z covered (0 cases)") == 3
+    assert "Unknown" not in text and "partly" not in text
+    empty = page.locator("#event-facts tbody").inner_text()
+    assert "No event cases reported where event-report sources covered this view." in empty
+
+
+def test_live_gap_fill_matches_a_fresh_rest_view(api_server, page, tmp_path):
+    api = api_server()
+    open_events(page, api)
+    status = page.locator("#live-status")
+    before = event_coverage_text(page)
+    assert f"road: {DAY}12:00:00Z to {DAY}16:00:00Z Unknown" in before
+    # Control: a capture outside the view arrives as a delta and changes nothing.
+    deltas = int(status.get_attribute("data-deltas"))
+    api.ingest(capture(tmp_path, "elsewhere", "road", [], bbox=(0.6, 0.6, 0.9, 0.9)))
+    api.server.hub.tick()
+    expect(status).to_have_attribute("data-deltas", str(deltas + 1), timeout=WAIT)
+    assert event_coverage_text(page) == before
+    page.reload()
+    open_events(page, api)
+    assert event_coverage_text(page) == before  # REST agrees
+    # A capture filling 12:00-13:00 for the whole view: the gap narrows live.
+    snapshots = int(status.get_attribute("data-snapshots"))
+    api.ingest(capture(tmp_path, "fills", "road", [], received=DAY + "13:00:20Z"))
+    api.server.hub.tick()
+    expect(status).to_have_attribute("data-snapshots", str(snapshots + 1), timeout=WAIT)
+    expect(page.locator("#event-coverage")).to_contain_text(
+        f"road: {DAY}12:00:00Z to {DAY}13:00:00Z covered (0 cases); "
+        f"{DAY}13:00:00Z to {DAY}16:00:00Z Unknown",
+        timeout=WAIT,
+    )
+    live = event_coverage_text(page)
+    assert f"road: {DAY}12:00:00Z to {DAY}16:00:00Z Unknown" not in live  # the old gap is gone
+    page.reload()
+    open_events(page, api)
+    assert event_coverage_text(page) == live  # a fresh REST view shows the same

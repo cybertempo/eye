@@ -44,19 +44,49 @@ def case_id(source: str, layer: str, case: str) -> str:
     return f"evt-{digest[:32]}"
 
 
+# When a case may have happened: its possible occurrence interval is the
+# nominal event time plus or minus its stated uncertainty, and a case is
+# selected when that interval overlaps the requested [start, end), so a case
+# whose nominal time lies just outside the view but may have happened inside
+# it is included. A claim with no event time falls back to its publication
+# time. The nominal time and uncertainty are served unchanged. The same
+# condition is written out in CASES_IN_VIEW and TOUCHED_CASES.
+
+
 # A case is in view when a version that is current, or part of a conflicting
-# latest tier, lies in the area and its event time (or, if the source gave
-# none, its publication time) lies in the interval.
+# latest tier, lies in the area and may have happened in the interval.
 CASES_IN_VIEW = """
 SELECT DISTINCT c.source_id, c.layer, c.case_id
 FROM eye.event_claim c JOIN eye.event_claim_version v USING (claim_id)
 WHERE v.is_current IS NOT FALSE
   AND c.layer = ANY(CAST(:layers AS text[]))
-  AND coalesce(c.event_time, c.source_published_time) >= :start
-  AND coalesce(c.event_time, c.source_published_time) < :end
+  AND (CASE WHEN c.event_time IS NULL
+            THEN c.source_published_time >= :start AND c.source_published_time < :end
+            ELSE c.event_time - make_interval(secs => c.event_time_uncertainty_s) < :end
+             AND c.event_time + make_interval(secs => c.event_time_uncertainty_s) >= :start
+       END)
   AND ST_Intersects(c.location, ST_MakeEnvelope(:w, :s, :e, :n, 4326))
   AND (CAST(:cases AS text[]) IS NULL
        OR c.source_id || ' ' || c.layer || ' ' || c.case_id = ANY(CAST(:cases AS text[])))
+ORDER BY 1, 2, 3
+LIMIT :cap
+"""
+
+# Cases an event batch touched that have, or had, any version in view.
+TOUCHED_CASES = """
+SELECT DISTINCT c.source_id, c.layer, c.case_id
+FROM eye.event_claim_receipt r JOIN eye.event_claim c USING (claim_id)
+WHERE r.batch_id = CAST(:batch AS uuid)
+  AND c.layer = ANY(CAST(:layers AS text[]))
+  AND EXISTS (
+    SELECT 1 FROM eye.event_claim v
+    WHERE v.source_id = c.source_id AND v.layer = c.layer AND v.case_id = c.case_id
+      AND (CASE WHEN v.event_time IS NULL
+            THEN v.source_published_time >= :start AND v.source_published_time < :end
+            ELSE v.event_time - make_interval(secs => v.event_time_uncertainty_s) < :end
+             AND v.event_time + make_interval(secs => v.event_time_uncertainty_s) >= :start
+           END)
+      AND ST_Intersects(v.location, ST_MakeEnvelope(:w, :s, :e, :n, 4326)))
 ORDER BY 1, 2, 3
 LIMIT :cap
 """
@@ -302,15 +332,18 @@ def cases(conn, params: dict, limits, keys: list[str] | None, labels: dict) -> l
     return out
 
 
-def coverage_gaps(coverage: list[dict], layers, start: str, end: str) -> list[dict]:
-    """Unknown event coverage for every part of the view no event source covered."""
+def coverage_gaps(full_spans: list[tuple], layers, start: str, end: str) -> list[dict]:
+    """Unknown event coverage for every part of the view's interval that no
+    event source covered over the whole view area.
+
+    ``full_spans`` holds (layer, start, end) of event coverage rows whose
+    source area covers the entire view. A source covering only part of the
+    view closes no gap: its row is shown as partial, and the view stays
+    unknown for that time.
+    """
     gaps = []
     for layer in layers:
-        spans = sorted(
-            (c["interval"]["start"], c["interval"]["end"])
-            for c in coverage
-            if c["layer"] == layer and c["metric"]["name"] == EVENT_METRIC
-        )
+        spans = sorted((a, b) for lay, a, b in full_spans if lay == layer)
         cursor = start
         for a, b in spans:
             if _key(a) > _key(cursor):

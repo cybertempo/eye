@@ -71,8 +71,14 @@ Every other earlier message is still a current message once relabelled.
   `is_current: null` and the case is `unresolved`. The browser refuses a case
   whose standing, current claim or link disagree.
 - Event-report coverage uses coverage rows with metric `event_reports`. A part
-  of the view no event source covered is sent as `unknown` with a reason,
-  never omitted, so absent reports are never read as "no events".
+  of the view's interval that no event source covered over the whole view
+  area is sent as `unknown` with a reason, never omitted, so absent reports
+  are never read as "no events". A source whose area covers only part of the
+  view is sent as `partial` (a lower bound), never as a measured zero. When
+  new coverage changes these gaps, the server resnapshots.
+- A case is in a requested interval when its nominal event time ± stated
+  uncertainty overlaps it; the nominal time and uncertainty are served as
+  stated.
 - Transit counts (`transits`) have three forms:
   `qualified` (exact numbers, every uncertainty count 0, no reason), `partial`
   (numbers are lower bounds, reason required) and `unknown`/`failed` (null
