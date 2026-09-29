@@ -58,7 +58,8 @@ here, so it covers that one occurrence only:
 
 | Fingerprint | Reason |
 |---|---|
-| `1de7d61…:backend/eye/api/feed.py:generic-api-key:333` | The Python call `conn.run(CONFLICT_CLAIMS, keys=keys, cap=limits.max_points + 1)`: a SQL parameter named `keys` and a row limit, not a credential. The argument was renamed in the next commit. |
+| `1de7d61…:backend/eye/api/feed.py:generic-api-key:333` | A database call passing a SQL parameter named after the word "key" and a row limit; not a credential. The argument was renamed in `b0fd0e3`. |
+| `b0fd0e3…:docs/dependencies.md:generic-api-key:61` | This table's first version quoted that call verbatim. Reworded in the following commit. |
 
 Reproduce on the developer laptop with the pinned release (v8.30.1):
 `gitleaks git . --redact --no-banner --exit-code 1`.
