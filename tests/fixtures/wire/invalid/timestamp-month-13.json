@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "impossible month",
   "message": {
-    "schema_version": "eye.wire/1",
+    "schema_version": "eye.wire/2",
     "kind": "snapshot",
     "cursor": "c-0001",
     "generated_at": "2026-13-01T00:00:00Z",

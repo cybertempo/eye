@@ -36,9 +36,12 @@ from pathlib import Path
 
 from eye.ingest import synthetic_ais
 from eye.storage.db import Connection, transaction
-from eye.wire import SCHEMA_VERSION
 
 CAPTURE_FORMAT = "eye.synthetic-capture/2"
+# The wire version whose observation fields each receipt was recorded under.
+# eye.wire/2 changed only how tracks and counts are served, not an
+# observation's fields, so receipts keep this label and replay stays exact.
+RECEIPT_SCHEMA_VERSION = "eye.wire/1"
 APPROVED_SOURCES = frozenset({"synthetic-fixture", "synthetic-ais"})
 # Record parser per approved source; the AIS adapter maps its own message shape.
 SOURCE_LAYERS = {
@@ -334,10 +337,13 @@ def derive_coverage(parsed: ParsedCapture) -> dict:
     return {"state": "qualified", "value": distinct, "reason": None}
 
 
-def observation_id(source_id: str, record: Record) -> str:
+def observation_id(source_id: str, layer: str, record: Record) -> str:
+    """Content-derived id. A source record is identified by (source, layer,
+    record id): the same record id in two layers is two different records."""
     return stable_id(
         "observation",
         source_id,
+        layer,
         record.source_record_id,
         iso(record.observed_time),
         record.content_sha256,
@@ -358,7 +364,7 @@ def derive(parsed: ParsedCapture) -> Derived:
     observations: dict[str, tuple] = {}
     receipts: dict[tuple[str, str], tuple] = {}
     for record in parsed.records:
-        oid = observation_id(parsed.source_id, record)
+        oid = observation_id(parsed.source_id, parsed.layer, record)
         observations[oid] = (
             parsed.source_id,
             record.source_record_id,
@@ -376,7 +382,7 @@ def derive(parsed: ParsedCapture) -> Derived:
         receipts[(oid, parsed.batch_id)] = (
             parsed.evidence_id,
             iso(parsed.received_time),
-            SCHEMA_VERSION,
+            RECEIPT_SCHEMA_VERSION,
             parsed.adapter_version,
         )
     coverage = derive_coverage(parsed)
@@ -650,14 +656,18 @@ def _rows(conn: Connection, sql: str) -> list[tuple]:
 def expected_versions(observations: dict[str, tuple]) -> dict[str, tuple]:
     """Version facts per source record and observed time (mirrors eye.observation_version).
 
+    A source record is (source, layer, record id); versions are compared only
+    within one record, never across layers.
+
     Versions are ranked by source publication time. Versions sharing a
     publication time are a conflict: same version number, no supersedes link
     in either direction, and when they are the latest, current is unknown (None).
     """
     groups: dict[tuple, dict[str, list[str]]] = {}
     for oid, row in observations.items():
-        source, record, observed, published = row[0], row[1], row[4], row[5]
-        groups.setdefault((source, record, observed), {}).setdefault(published, []).append(oid)
+        source, record, layer, observed, published = row[0], row[1], row[2], row[4], row[5]
+        tiers = groups.setdefault((source, layer, record, observed), {})
+        tiers.setdefault(published, []).append(oid)
     result: dict[str, tuple] = {}
     for tiers in groups.values():
         ordered = sorted(tiers)

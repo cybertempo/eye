@@ -1,15 +1,43 @@
-# Synthetic demo container. Runs on: developer laptop (Docker), CI.
-# The port is published on host loopback only; keep the default equal to
-# server.port in deploy/dev/eye.container.toml (a test enforces this).
+# Synthetic demo: API and browser client plus a disposable PostGIS database.
+# Runs on: developer laptop (Docker), CI. Start it with scripts/demo.sh, which
+# generates the one-run database password; nothing is stored on disk.
+# The demo shares the database's network namespace, so the database is reached
+# on 127.0.0.1 and has no published port. Only the web port is published, on
+# host loopback; keep its default equal to server.port in
+# deploy/dev/eye.container.toml (a test enforces this).
 name: eye-dev
 services:
+  db:
+    image: postgis/postgis:17-3.5@sha256:01a6a70e41e6c4467c8f55f6063555ed72db2d6662cd0d571040d42eadaeb6f6
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1"]
+    environment:
+      POSTGRES_USER: eye
+      POSTGRES_DB: eye
+      POSTGRES_PASSWORD: ${EYE_DEMO_DB_PASSWORD:?set by scripts/demo.sh or scripts/container-smoke.sh}
+    ports:
+      - "127.0.0.1:${EYE_DEMO_PORT:-8765}:8765"
+    tmpfs:
+      - /var/lib/postgresql/data
+      - /var/run/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "eye", "-d", "eye"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 128
   eye-demo:
     build:
       context: ../..
       dockerfile: deploy/dev/Dockerfile
     image: eye-demo:dev
-    ports:
-      - "127.0.0.1:${EYE_DEMO_PORT:-8765}:8765"
+    network_mode: "service:db"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      EYE_DATABASE_URL: postgresql://eye:${EYE_DEMO_DB_PASSWORD:?}@127.0.0.1:5432/eye
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]

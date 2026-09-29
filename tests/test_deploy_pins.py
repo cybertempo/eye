@@ -52,7 +52,22 @@ def test_workflow_actions_pinned_by_commit():
             assert re.search(r"@sha256:[0-9a-f]{64}$", image), image
 
 
+def test_compose_images_pinned_and_database_unpublished():
+    text = COMPOSE.read_text()
+    images = re.findall(r"^\s*image:\s*(\S+)", text, re.MULTILINE)
+    pulled = [i for i in images if i != "eye-demo:dev"]  # eye-demo:dev is built locally
+    assert pulled and all(re.search(r"@sha256:[0-9a-f]{64}$", i) for i in pulled), pulled
+    assert "5432" not in "".join(re.findall(r'^\s*-\s*"([^"]+)"', text, re.MULTILINE))
+    assert "listen_addresses=127.0.0.1" in text
+
+
 def test_test_database_image_pinned_by_digest():
     text = (REPO_ROOT / "scripts" / "test-db.sh").read_text()
     images = re.findall(r'IMAGE="([^"]+)"', text)
     assert images and all(re.search(r"@sha256:[0-9a-f]{64}$", i) for i in images), images
+
+
+def test_demo_and_test_databases_use_the_same_pinned_image():
+    compose = re.findall(r"^\s*image:\s*(postgis/\S+)", COMPOSE.read_text(), re.MULTILINE)
+    tests = re.findall(r'IMAGE="([^"]+)"', (REPO_ROOT / "scripts" / "test-db.sh").read_text())
+    assert compose and compose == tests

@@ -6,3 +6,6 @@ ruff==0.16.9
 # Reference JSON Schema implementation, used only by tests to cross-check
 # EYE's own wire validators. Never imported by runtime code.
 jsonschema==4.26.0
+# Headless browser tests (tests/test_browser.py). Apache-2.0. The browser build
+# it drives is fetched once by scripts/setup.sh; tests never open a window.
+playwright==1.56.0

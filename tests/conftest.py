@@ -38,13 +38,13 @@ def dump_toml(raw: dict) -> str:
 
 @pytest.fixture
 def write_config(tmp_path: Path):
-    """Write a config dict to a temp file with the fixture path made absolute."""
+    """Write a config dict to a temp file with the data paths made absolute."""
 
     def _write(raw: dict) -> Path:
         raw = {k: (dict(v) if isinstance(v, dict) else v) for k, v in raw.items()}
-        fixture = raw.get("data", {}).get("fixture")
-        if fixture and not Path(fixture).is_absolute():
-            raw["data"]["fixture"] = str((EXAMPLE_CONFIG.parent / fixture).resolve())
+        for key, value in raw.get("data", {}).items():
+            if isinstance(value, str) and not Path(value).is_absolute():
+                raw["data"][key] = str((EXAMPLE_CONFIG.parent / value).resolve())
         path = tmp_path / "eye.toml"
         path.write_text(dump_toml(raw), encoding="utf-8")
         return path
@@ -107,3 +107,95 @@ def db(make_db):
     migrate(conn)
     yield conn
     conn.close()
+
+
+AIS_DEMO = REPO_ROOT / "tests" / "fixtures" / "synthetic" / "ais" / "demo"
+
+
+class ApiHandle:
+    """A running in-process API server over a prepared database."""
+
+    def __init__(self, server, url: str, conn) -> None:
+        self.server = server
+        self.database_url = url
+        self.conn = conn  # a writable connection for tests that add evidence
+        self.host, self.port = server.server_address[:2]
+
+    @property
+    def origin(self) -> str:
+        return f"http://{self.host}:{self.port}"
+
+    def get(self, path: str, headers: dict | None = None):
+        import http.client
+
+        client = http.client.HTTPConnection(self.host, self.port, timeout=10)
+        client.request("GET", path, headers=headers or {})
+        response = client.getresponse()
+        body = response.read()
+        client.close()
+        return response, body
+
+    def ingest(self, path: Path) -> None:
+        from eye.ingest.capture import ingest
+
+        ingest(self.conn, path.read_bytes())
+
+    def derive(self) -> str:
+        from eye.worker import transits
+
+        line = transits.load_line(transits.LINES_DIR / "synthetic-golden-gate.v1.json")
+        inputs = transits.read_inputs(self.conn, transits.SOURCE_ID, line)
+        run_id, _ = transits.store(
+            self.conn, transits.SOURCE_ID, line, transits.hourly_intervals(inputs)
+        )
+        return run_id
+
+
+@pytest.fixture
+def api_server(make_db, example_raw, write_config):
+    """Start API servers on fresh databases holding the synthetic demo data.
+
+    The feed hub's own polling is effectively off (60 s); tests call
+    ``server.hub.tick()`` to deliver changes at a known moment.
+    """
+    import copy
+    import threading
+
+    from eye.api.auth import DemoAuth
+    from eye.api.server import build_server
+    from eye.config import load_config
+    from eye.ingest.capture import load_fixtures
+    from eye.storage.db import connect
+    from eye.storage.migrate import migrate
+
+    started = []
+
+    def _start(*, api=None, server=None, ais_files=None, auth=None, mode_raw=None) -> ApiHandle:
+        url = make_db()
+        conn = connect(url)
+        migrate(conn)
+        load_fixtures(conn, CAPTURES)
+        raw = copy.deepcopy(mode_raw or example_raw)
+        raw["server"]["port"] = 0
+        raw["api"].update({"poll_interval_ms": 60_000, **(api or {})})
+        raw["server"].update(server or {})
+        config = load_config(write_config(raw))
+        handle_files = sorted(AIS_DEMO.glob("*.json")) if ais_files is None else ais_files
+        srv = build_server(config, auth or DemoAuth("demo"), url)
+        handle = ApiHandle(srv, url, conn)
+        for path in handle_files:
+            handle.ingest(path)
+        handle.derive()
+        thread = threading.Thread(target=srv.serve_forever, daemon=True)
+        thread.start()
+        started.append((srv, conn))
+        return handle
+
+    yield _start
+    import contextlib
+
+    for srv, conn in started:
+        srv.shutdown()
+        srv.server_close()
+        with contextlib.suppress(Exception):
+            conn.close()  # a test may have dropped its database

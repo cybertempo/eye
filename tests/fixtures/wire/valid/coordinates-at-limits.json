@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "positive control: latitudes of exactly -90 and 90 and longitudes of exactly -180 and 180",
   "message": {
-    "schema_version": "eye.wire/1",
+    "schema_version": "eye.wire/2",
     "kind": "snapshot",
     "cursor": "c-0001",
     "generated_at": "2026-01-01T01:00:00Z",

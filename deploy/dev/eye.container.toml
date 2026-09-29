@@ -1,6 +1,7 @@
 # Dev-container configuration: identical to config/eye.example.toml except that
 # the server binds every interface inside the container's own network namespace.
-# deploy/dev/compose.yaml publishes the port on host loopback only.
+# deploy/dev/compose.yaml shares that namespace with the demo database (so the
+# database is on loopback) and publishes only the web port, on host loopback.
 schema_version = 1
 
 [runtime]
@@ -19,7 +20,12 @@ adapter = "demo"
 private_adapter_module = ""
 
 [data]
-fixture = "../../tests/fixtures/synthetic/demo_snapshot.json"
+capture_fixtures = "../../tests/fixtures/synthetic/captures"
+ais_capture_fixtures = "../../tests/fixtures/synthetic/ais/demo"
+count_lines = "../../reference/lines"
+
+[database]
+url_env = "EYE_DATABASE_URL"
 
 [providers]
 enabled = []

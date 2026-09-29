@@ -3,7 +3,7 @@
   "note": "year 0000 is outside the supported calendar (0001-9999) on both sides",
   "reference_divergence": "The reference library treats format as an annotation only; EYE's Python and browser validators both assert it.",
   "message": {
-    "schema_version": "eye.wire/1",
+    "schema_version": "eye.wire/2",
     "kind": "snapshot",
     "cursor": "c-0001",
     "generated_at": "0000-01-01T00:00:00Z",

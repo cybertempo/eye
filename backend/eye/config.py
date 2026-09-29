@@ -22,7 +22,17 @@ AUTH_ADAPTERS = ("demo", "private")
 CONTAINER_ENV_VAR = "EYE_CONTAINER"
 
 _ALLOWED_KEYS: dict[str, set[str]] = {
-    "": {"schema_version", "runtime", "server", "auth", "data", "database", "providers"},
+    "": {
+        "schema_version",
+        "runtime",
+        "server",
+        "api",
+        "view",
+        "auth",
+        "data",
+        "database",
+        "providers",
+    },
     "runtime": {"mode"},
     "server": {
         "bind_host",
@@ -32,8 +42,29 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "request_timeout_seconds",
         "max_connections",
     },
+    "api": {
+        "allowed_origin",
+        "max_websockets",
+        "ws_max_buffer_bytes",
+        "ws_max_inbound_bytes",
+        "ws_send_timeout_seconds",
+        "ws_idle_timeout_seconds",
+        "ws_ping_seconds",
+        "poll_interval_ms",
+        "db_pool_size",
+        "query_timeout_ms",
+        "max_interval_hours",
+        "max_tracks",
+        "max_points",
+        "max_coverage",
+        "max_counts",
+        "max_crossings",
+        "max_pending_changes",
+        "default_view_hours",
+    },
+    "view": {"area_name", "bbox", "layers"},
     "auth": {"adapter", "private_adapter_module"},
-    "data": {"fixture", "capture_fixtures", "ais_capture_fixtures", "count_lines"},
+    "data": {"capture_fixtures", "ais_capture_fixtures", "count_lines"},
     "database": {"url_env"},
     "providers": {"enabled"},
 }
@@ -54,6 +85,37 @@ class ServerConfig:
 
 
 @dataclass(frozen=True)
+class ApiConfig:
+    """Bounds for the browser API. Every queue, query and buffer has a limit."""
+
+    allowed_origin: str
+    max_websockets: int
+    ws_max_buffer_bytes: int
+    ws_max_inbound_bytes: int
+    ws_send_timeout_seconds: int
+    ws_idle_timeout_seconds: int
+    ws_ping_seconds: int
+    poll_interval_ms: int
+    db_pool_size: int
+    query_timeout_ms: int
+    max_interval_hours: int
+    max_tracks: int
+    max_points: int
+    max_coverage: int
+    max_counts: int
+    max_crossings: int
+    max_pending_changes: int
+    default_view_hours: int
+
+
+@dataclass(frozen=True)
+class ViewConfig:
+    area_name: str
+    bbox: tuple[float, float, float, float]
+    layers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class AuthConfig:
     adapter: str
     private_adapter_module: str
@@ -64,8 +126,9 @@ class EyeConfig:
     source: Path
     mode: str
     server: ServerConfig
+    api: ApiConfig
+    view: ViewConfig
     auth: AuthConfig
-    fixture: Path
     capture_fixtures: Path | None
     ais_capture_fixtures: Path | None
     count_lines: Path | None
@@ -102,6 +165,57 @@ def _int(table: dict, key: str, default: int, low: int, high: int) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
         raise ConfigError(f"{key} must be an integer from {low} to {high}")
     return value
+
+
+def _api(table: dict) -> ApiConfig:
+    origin = table.get("allowed_origin", "")
+    if not isinstance(origin, str) or (
+        origin and not re.fullmatch(r"https?://[A-Za-z0-9.\-\[\]:]{1,253}", origin)
+    ):
+        raise ConfigError("api.allowed_origin must be empty or scheme://host[:port]")
+    return ApiConfig(
+        allowed_origin=origin,
+        max_websockets=_int(table, "max_websockets", 8, 1, 64),
+        ws_max_buffer_bytes=_int(table, "ws_max_buffer_bytes", 2_097_152, 16_384, 33_554_432),
+        ws_max_inbound_bytes=_int(table, "ws_max_inbound_bytes", 16_384, 1024, 65_536),
+        ws_send_timeout_seconds=_int(table, "ws_send_timeout_seconds", 5, 1, 60),
+        ws_idle_timeout_seconds=_int(table, "ws_idle_timeout_seconds", 120, 10, 3600),
+        ws_ping_seconds=_int(table, "ws_ping_seconds", 30, 5, 600),
+        poll_interval_ms=_int(table, "poll_interval_ms", 1000, 50, 60_000),
+        db_pool_size=_int(table, "db_pool_size", 4, 1, 32),
+        query_timeout_ms=_int(table, "query_timeout_ms", 5000, 100, 60_000),
+        max_interval_hours=_int(table, "max_interval_hours", 168, 1, 744),
+        max_tracks=_int(table, "max_tracks", 1000, 1, 1000),
+        max_points=_int(table, "max_points", 20_000, 1, 100_000),
+        max_coverage=_int(table, "max_coverage", 1000, 1, 1000),
+        max_counts=_int(table, "max_counts", 168, 1, 168),
+        max_crossings=_int(table, "max_crossings", 1000, 1, 1000),
+        max_pending_changes=_int(table, "max_pending_changes", 50, 1, 1000),
+        default_view_hours=_int(table, "default_view_hours", 4, 1, 168),
+    )
+
+
+def _view(table: dict) -> ViewConfig:
+    name = table.get("area_name", "Synthetic test area near 0N 0E")
+    if not isinstance(name, str) or not 1 <= len(name) <= 200:
+        raise ConfigError("view.area_name must be 1 to 200 characters")
+    bbox = table.get("bbox", [-0.5, -0.5, 0.5, 0.5])
+    if (
+        not isinstance(bbox, list)
+        or len(bbox) != 4
+        or not all(isinstance(v, int | float) and not isinstance(v, bool) for v in bbox)
+        or not (-180 <= bbox[0] < bbox[2] <= 180 and -90 <= bbox[1] < bbox[3] <= 90)
+    ):
+        raise ConfigError("view.bbox must be [west, south, east, north] in degrees")
+    layers = table.get("layers", ["flight", "vessel", "road"])
+    if (
+        not isinstance(layers, list)
+        or not layers
+        or len(set(layers)) != len(layers)
+        or not all(layer in ("flight", "vessel", "road") for layer in layers)
+    ):
+        raise ConfigError("view.layers must be a non-empty list of flight, vessel, road")
+    return ViewConfig(name, tuple(float(v) for v in bbox), tuple(layers))  # type: ignore[arg-type]
 
 
 def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None) -> EyeConfig:
@@ -141,13 +255,15 @@ def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None)
     if not isinstance(auth.private_adapter_module, str):
         raise ConfigError("auth.private_adapter_module must be a string")
 
+    api = _api(_table(raw, "api"))
+    if api.ws_max_buffer_bytes < server.max_response_bytes:
+        raise ConfigError(
+            "api.ws_max_buffer_bytes must be at least server.max_response_bytes, "
+            "so one full message fits in a client's buffer"
+        )
+    view = _view(_table(raw, "view"))
+
     data = _table(raw, "data")
-    fixture_value = data.get("fixture", "")
-    if not isinstance(fixture_value, str) or not fixture_value:
-        raise ConfigError("data.fixture must name a synthetic fixture file")
-    fixture = Path(fixture_value)
-    if not fixture.is_absolute():
-        fixture = (source.parent / fixture).resolve()
 
     def directory(key: str) -> Path | None:
         value = data.get(key)
@@ -216,8 +332,9 @@ def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None)
         source=source,
         mode=mode,
         server=server,
+        api=api,
+        view=view,
         auth=auth,
-        fixture=fixture,
         capture_fixtures=capture_fixtures,
         ais_capture_fixtures=ais_capture_fixtures,
         count_lines=count_lines,

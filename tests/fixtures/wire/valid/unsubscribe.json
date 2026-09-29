@@ -2,7 +2,7 @@
   "entry": "ClientMessage",
   "note": "client unsubscribe",
   "message": {
-    "schema_version": "eye.wire/1",
+    "schema_version": "eye.wire/2",
     "kind": "unsubscribe"
   }
 }

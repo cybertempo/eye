@@ -1,0 +1,8 @@
+{
+  "entry": "ClientMessage",
+  "note": "client unsubscribe",
+  "message": {
+    "schema_version": "eye.wire/1",
+    "kind": "unsubscribe"
+  }
+}

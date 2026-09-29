@@ -10,8 +10,11 @@ import sys
 from conftest import EXAMPLE_CONFIG, REPO_ROOT
 
 
-def run_eye(*args: str) -> subprocess.CompletedProcess[str]:
+def run_eye(*args: str, database_url: str | None = None) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
+    env.pop("EYE_DATABASE_URL", None)
+    if database_url is not None:
+        env["EYE_DATABASE_URL"] = database_url
     env["PYTHONPATH"] = os.pathsep.join(
         [str(REPO_ROOT / "backend"), str(REPO_ROOT / "tests" / "support")]
     )
@@ -57,7 +60,9 @@ def test_production_with_uninstalled_adapter_refused(example_raw, write_config):
     assert "REFUSED (authentication)" in result.stderr
 
 
-def test_production_with_adapter_passes_auth_gate_then_stops(example_raw, write_config):
+def test_production_with_adapter_passes_auth_gate_then_needs_its_database(
+    example_raw, write_config
+):
     raw = copy.deepcopy(example_raw)
     raw["runtime"]["mode"] = "production"
     raw["auth"] = {"adapter": "private", "private_adapter_module": "eye_test_private_auth"}
@@ -65,6 +70,12 @@ def test_production_with_adapter_passes_auth_gate_then_stops(example_raw, write_
     checked = run_eye("check-config", "--config", path)
     assert checked.returncode == 0, checked.stderr
     assert "auth=test-private" in checked.stdout
-    served = run_eye("serve", "--config", path)
-    assert served.returncode == 4
-    assert "not implemented" in served.stderr
+    # Past the authentication gate, production serves database-backed data only.
+    no_database = run_eye("serve", "--config", path)
+    assert no_database.returncode == 2
+    assert "EYE_DATABASE_URL is not set" in no_database.stderr
+    unreachable = run_eye(
+        "serve", "--config", path, database_url="postgresql://eye:x@127.0.0.1:1/eye"
+    )
+    assert unreachable.returncode == 4
+    assert "database unreachable" in unreachable.stderr

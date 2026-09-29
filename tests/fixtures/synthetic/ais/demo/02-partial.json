@@ -1,0 +1,785 @@
+{
+ "capture_format": "eye.synthetic-capture/2",
+ "synthetic": true,
+ "source_id": "synthetic-ais",
+ "adapter_version": "synthetic-ais-adapter/1",
+ "layer": "vessel",
+ "note": "13:00-14:00: SYNV-0022 crosses 111 m from the north end (ambiguous); SYNV-0023 crosses outbound mid-line.",
+ "request": {
+  "bbox": [
+   0.1,
+   -0.1,
+   0.5,
+   0.1
+  ],
+  "start": "2026-02-01T13:00:00Z",
+  "end": "2026-02-01T14:00:00Z",
+  "expected_interval_s": 60
+ },
+ "attempt": {
+  "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every record",
+  "started_at": "2026-02-01T14:00:00Z",
+  "finished_at": "2026-02-01T14:00:05Z",
+  "provider_status": "ok",
+  "quota_cost": 0,
+  "observed_start": "2026-02-01T13:00:00Z",
+  "observed_end": "2026-02-01T14:00:00Z"
+ },
+ "provider_response": {
+  "format": "synthetic-ais/1",
+  "messages": [
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:05:00Z",
+    "sent_time": "2026-02-01T13:05:03Z",
+    "lon": 0.2,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:06:00Z",
+    "sent_time": "2026-02-01T13:06:03Z",
+    "lon": 0.2043167,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:07:00Z",
+    "sent_time": "2026-02-01T13:07:03Z",
+    "lon": 0.2086335,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:08:00Z",
+    "sent_time": "2026-02-01T13:08:03Z",
+    "lon": 0.2129502,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:09:00Z",
+    "sent_time": "2026-02-01T13:09:03Z",
+    "lon": 0.217267,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:10:00Z",
+    "sent_time": "2026-02-01T13:10:03Z",
+    "lon": 0.2215837,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:11:00Z",
+    "sent_time": "2026-02-01T13:11:03Z",
+    "lon": 0.2259004,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:12:00Z",
+    "sent_time": "2026-02-01T13:12:03Z",
+    "lon": 0.2302172,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:13:00Z",
+    "sent_time": "2026-02-01T13:13:03Z",
+    "lon": 0.2345339,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:14:00Z",
+    "sent_time": "2026-02-01T13:14:03Z",
+    "lon": 0.2388507,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:15:00Z",
+    "sent_time": "2026-02-01T13:15:03Z",
+    "lon": 0.2431674,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:16:00Z",
+    "sent_time": "2026-02-01T13:16:03Z",
+    "lon": 0.2474841,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:17:00Z",
+    "sent_time": "2026-02-01T13:17:03Z",
+    "lon": 0.2518009,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:18:00Z",
+    "sent_time": "2026-02-01T13:18:03Z",
+    "lon": 0.2561176,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:19:00Z",
+    "sent_time": "2026-02-01T13:19:03Z",
+    "lon": 0.2604344,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:20:00Z",
+    "sent_time": "2026-02-01T13:20:03Z",
+    "lon": 0.2647511,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:21:00Z",
+    "sent_time": "2026-02-01T13:21:03Z",
+    "lon": 0.2690678,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:22:00Z",
+    "sent_time": "2026-02-01T13:22:03Z",
+    "lon": 0.2733846,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:23:00Z",
+    "sent_time": "2026-02-01T13:23:03Z",
+    "lon": 0.2777013,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:24:00Z",
+    "sent_time": "2026-02-01T13:24:03Z",
+    "lon": 0.282018,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:25:00Z",
+    "sent_time": "2026-02-01T13:25:03Z",
+    "lon": 0.2863348,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:26:00Z",
+    "sent_time": "2026-02-01T13:26:03Z",
+    "lon": 0.2906515,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:27:00Z",
+    "sent_time": "2026-02-01T13:27:03Z",
+    "lon": 0.2949683,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:28:00Z",
+    "sent_time": "2026-02-01T13:28:03Z",
+    "lon": 0.299285,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:29:00Z",
+    "sent_time": "2026-02-01T13:29:03Z",
+    "lon": 0.3036017,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:30:00Z",
+    "sent_time": "2026-02-01T13:30:03Z",
+    "lon": 0.3079185,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:31:00Z",
+    "sent_time": "2026-02-01T13:31:03Z",
+    "lon": 0.3122352,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:32:00Z",
+    "sent_time": "2026-02-01T13:32:03Z",
+    "lon": 0.316552,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:33:00Z",
+    "sent_time": "2026-02-01T13:33:03Z",
+    "lon": 0.3208687,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:34:00Z",
+    "sent_time": "2026-02-01T13:34:03Z",
+    "lon": 0.3251854,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:35:00Z",
+    "sent_time": "2026-02-01T13:35:03Z",
+    "lon": 0.3295022,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:36:00Z",
+    "sent_time": "2026-02-01T13:36:03Z",
+    "lon": 0.3338189,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:37:00Z",
+    "sent_time": "2026-02-01T13:37:03Z",
+    "lon": 0.3381357,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:38:00Z",
+    "sent_time": "2026-02-01T13:38:03Z",
+    "lon": 0.3424524,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:39:00Z",
+    "sent_time": "2026-02-01T13:39:03Z",
+    "lon": 0.3467691,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:40:00Z",
+    "sent_time": "2026-02-01T13:40:03Z",
+    "lon": 0.3510859,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:41:00Z",
+    "sent_time": "2026-02-01T13:41:03Z",
+    "lon": 0.3554026,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:42:00Z",
+    "sent_time": "2026-02-01T13:42:03Z",
+    "lon": 0.3597194,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:43:00Z",
+    "sent_time": "2026-02-01T13:43:03Z",
+    "lon": 0.3640361,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:44:00Z",
+    "sent_time": "2026-02-01T13:44:03Z",
+    "lon": 0.3683528,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:45:00Z",
+    "sent_time": "2026-02-01T13:45:03Z",
+    "lon": 0.3726696,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:46:00Z",
+    "sent_time": "2026-02-01T13:46:03Z",
+    "lon": 0.3769863,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:47:00Z",
+    "sent_time": "2026-02-01T13:47:03Z",
+    "lon": 0.3813031,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:48:00Z",
+    "sent_time": "2026-02-01T13:48:03Z",
+    "lon": 0.3856198,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:49:00Z",
+    "sent_time": "2026-02-01T13:49:03Z",
+    "lon": 0.3899365,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:50:00Z",
+    "sent_time": "2026-02-01T13:50:03Z",
+    "lon": 0.3942533,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0022",
+    "position_time": "2026-02-01T13:51:00Z",
+    "sent_time": "2026-02-01T13:51:03Z",
+    "lon": 0.39857,
+    "lat": 0.049,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:06:00Z",
+    "sent_time": "2026-02-01T13:06:03Z",
+    "lon": 0.4,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:07:00Z",
+    "sent_time": "2026-02-01T13:07:03Z",
+    "lon": 0.3956833,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:08:00Z",
+    "sent_time": "2026-02-01T13:08:03Z",
+    "lon": 0.3913665,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:09:00Z",
+    "sent_time": "2026-02-01T13:09:03Z",
+    "lon": 0.3870498,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:10:00Z",
+    "sent_time": "2026-02-01T13:10:03Z",
+    "lon": 0.382733,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:11:00Z",
+    "sent_time": "2026-02-01T13:11:03Z",
+    "lon": 0.3784163,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:12:00Z",
+    "sent_time": "2026-02-01T13:12:03Z",
+    "lon": 0.3740996,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:13:00Z",
+    "sent_time": "2026-02-01T13:13:03Z",
+    "lon": 0.3697828,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:14:00Z",
+    "sent_time": "2026-02-01T13:14:03Z",
+    "lon": 0.3654661,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:15:00Z",
+    "sent_time": "2026-02-01T13:15:03Z",
+    "lon": 0.3611494,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:16:00Z",
+    "sent_time": "2026-02-01T13:16:03Z",
+    "lon": 0.3568326,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:17:00Z",
+    "sent_time": "2026-02-01T13:17:03Z",
+    "lon": 0.3525159,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:18:00Z",
+    "sent_time": "2026-02-01T13:18:03Z",
+    "lon": 0.3481991,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:19:00Z",
+    "sent_time": "2026-02-01T13:19:03Z",
+    "lon": 0.3438824,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:20:00Z",
+    "sent_time": "2026-02-01T13:20:03Z",
+    "lon": 0.3395657,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:21:00Z",
+    "sent_time": "2026-02-01T13:21:03Z",
+    "lon": 0.3352489,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:22:00Z",
+    "sent_time": "2026-02-01T13:22:03Z",
+    "lon": 0.3309322,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:23:00Z",
+    "sent_time": "2026-02-01T13:23:03Z",
+    "lon": 0.3266155,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:24:00Z",
+    "sent_time": "2026-02-01T13:24:03Z",
+    "lon": 0.3222987,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:25:00Z",
+    "sent_time": "2026-02-01T13:25:03Z",
+    "lon": 0.317982,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:26:00Z",
+    "sent_time": "2026-02-01T13:26:03Z",
+    "lon": 0.3136652,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:27:00Z",
+    "sent_time": "2026-02-01T13:27:03Z",
+    "lon": 0.3093485,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:28:00Z",
+    "sent_time": "2026-02-01T13:28:03Z",
+    "lon": 0.3050318,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:29:00Z",
+    "sent_time": "2026-02-01T13:29:03Z",
+    "lon": 0.300715,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:30:00Z",
+    "sent_time": "2026-02-01T13:30:03Z",
+    "lon": 0.2963983,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:31:00Z",
+    "sent_time": "2026-02-01T13:31:03Z",
+    "lon": 0.2920816,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:32:00Z",
+    "sent_time": "2026-02-01T13:32:03Z",
+    "lon": 0.2877648,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:33:00Z",
+    "sent_time": "2026-02-01T13:33:03Z",
+    "lon": 0.2834481,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:34:00Z",
+    "sent_time": "2026-02-01T13:34:03Z",
+    "lon": 0.2791313,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:35:00Z",
+    "sent_time": "2026-02-01T13:35:03Z",
+    "lon": 0.2748146,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:36:00Z",
+    "sent_time": "2026-02-01T13:36:03Z",
+    "lon": 0.2704979,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:37:00Z",
+    "sent_time": "2026-02-01T13:37:03Z",
+    "lon": 0.2661811,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:38:00Z",
+    "sent_time": "2026-02-01T13:38:03Z",
+    "lon": 0.2618644,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:39:00Z",
+    "sent_time": "2026-02-01T13:39:03Z",
+    "lon": 0.2575477,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:40:00Z",
+    "sent_time": "2026-02-01T13:40:03Z",
+    "lon": 0.2532309,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:41:00Z",
+    "sent_time": "2026-02-01T13:41:03Z",
+    "lon": 0.2489142,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:42:00Z",
+    "sent_time": "2026-02-01T13:42:03Z",
+    "lon": 0.2445974,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:43:00Z",
+    "sent_time": "2026-02-01T13:43:03Z",
+    "lon": 0.2402807,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:44:00Z",
+    "sent_time": "2026-02-01T13:44:03Z",
+    "lon": 0.235964,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:45:00Z",
+    "sent_time": "2026-02-01T13:45:03Z",
+    "lon": 0.2316472,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:46:00Z",
+    "sent_time": "2026-02-01T13:46:03Z",
+    "lon": 0.2273305,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:47:00Z",
+    "sent_time": "2026-02-01T13:47:03Z",
+    "lon": 0.2230137,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:48:00Z",
+    "sent_time": "2026-02-01T13:48:03Z",
+    "lon": 0.218697,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:49:00Z",
+    "sent_time": "2026-02-01T13:49:03Z",
+    "lon": 0.2143803,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:50:00Z",
+    "sent_time": "2026-02-01T13:50:03Z",
+    "lon": 0.2100635,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:51:00Z",
+    "sent_time": "2026-02-01T13:51:03Z",
+    "lon": 0.2057468,
+    "lat": -0.01,
+    "accuracy": "high"
+   },
+   {
+    "mmsi": "SYNV-0023",
+    "position_time": "2026-02-01T13:52:00Z",
+    "sent_time": "2026-02-01T13:52:03Z",
+    "lon": 0.2014301,
+    "lat": -0.01,
+    "accuracy": "high"
+   }
+  ]
+ }
+}

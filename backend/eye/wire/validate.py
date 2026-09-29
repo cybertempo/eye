@@ -17,8 +17,12 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "schemas" / "eye-wire.v1.schema.json"
-SCHEMA_VERSION = "eye.wire/1"
+SCHEMAS_DIR = Path(__file__).resolve().parents[3] / "schemas"
+SCHEMA_PATH = SCHEMAS_DIR / "eye-wire.v2.schema.json"
+SCHEMA_VERSION = "eye.wire/2"
+# Frozen: the version-1 schema exactly as merged. Nothing serves it; tests use
+# it to show that version-2 messages are not mistaken for version 1.
+V1_SCHEMA_PATH = SCHEMAS_DIR / "eye-wire.v1.schema.json"
 MAX_MESSAGE_BYTES = 1_048_576
 ENTRY_POINTS = ("ServerMessage", "ClientMessage")
 MAX_ERRORS = 20
@@ -279,6 +283,12 @@ def load_schema(path: Path = SCHEMA_PATH) -> WireSchema:
     return WireSchema(json.loads(path.read_text(encoding="utf-8")))
 
 
+@cache
+def default_schema() -> WireSchema:
+    """The repository schema, loaded and checked once per process."""
+    return load_schema()
+
+
 def validate_message(
     payload: bytes | str | dict,
     entry: str,
@@ -295,4 +305,24 @@ def validate_message(
             payload = json.loads(payload, parse_constant=_reject_constant)
         except (ValueError, RecursionError) as exc:
             raise WireValidationError([f"$: not valid JSON ({exc})"]) from exc
-    return (schema or load_schema()).validate(payload, entry)
+    return (schema or default_schema()).validate(payload, entry)
+
+
+WIRE_VERSION = re.compile(r"eye\.wire/[1-9][0-9]{0,5}")
+
+
+def wire_version_of(payload: bytes | str, *, max_bytes: int = MAX_MESSAGE_BYTES) -> str | None:
+    """The wire version a message claims, if it is a bounded JSON object with a
+    well-formed ``schema_version``; otherwise None. Tells "another protocol
+    version" apart from "an invalid message"; it validates nothing else."""
+    raw = payload.encode("utf-8") if isinstance(payload, str) else payload
+    if len(raw) > max_bytes:
+        return None
+    try:
+        value = json.loads(raw, parse_constant=_reject_constant)
+    except ValueError:
+        return None
+    version = value.get("schema_version") if isinstance(value, dict) else None
+    if isinstance(version, str) and WIRE_VERSION.fullmatch(version):
+        return version
+    return None

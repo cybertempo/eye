@@ -1,6 +1,6 @@
 # EYE public repository build brief
 
-*28 September 2026. Source code will be public on GitHub. The owner's running instance stays private behind the Home Lab tunnel. This is the self-contained implementation brief to copy into a new public repository; `eye-rev1.md` remains the private design history. No EYE application has been built yet.*
+*28 September 2026. Source code will be public on GitHub. The owner's running instance stays private behind the Home Lab tunnel. This is the self-contained implementation brief to copy into a new public repository; `eye-rev1.md` remains the private design history. A public synthetic build of EYE now exists: the packages merged so far are listed in the repository README. It runs on invented data only; no real feed, private installation or production deployment exists yet.*
 
 ## 1. What success means
 

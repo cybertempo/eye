@@ -36,13 +36,13 @@ def test_db_commands_end_to_end(make_db):
     loaded = run_eye("db-load-fixtures", url=url)
     assert loaded.returncode == 0, loaded.stderr
     first = json.loads(loaded.stdout)
-    assert first["created"] == first["batches"] == 9  # 8 Package 1 + 1 synthetic AIS
+    assert first["created"] == first["batches"] == 12  # 8 Package 1 + 4 synthetic AIS demo
     again = json.loads(run_eye("db-load-fixtures", url=url).stdout)
     assert again["created"] == 0
     derived = run_eye("db-derive-transits", url=url)
     assert derived.returncode == 0, derived.stderr
     (line,) = json.loads(derived.stdout)["lines"]
-    assert line["line"] == "synthetic-golden-gate/v1" and line["crossings"] == 1
+    assert line["line"] == "synthetic-golden-gate/v1" and line["crossings"] == 3
     assert {
         "start": "2026-02-01T12:00:00.000000Z",
         "end": "2026-02-01T13:00:00.000000Z",
@@ -57,6 +57,19 @@ def test_db_commands_end_to_end(make_db):
         "audited_runs": 1,
     }
     assert json.loads(run_eye("db-status", url=url).stdout) == {"applied": EXISTING, "pending": []}
+
+
+def test_prepare_demo_is_one_repeatable_step(make_db):
+    url = make_db()
+    first = run_eye("db-prepare-demo", url=url)
+    assert first.returncode == 0, first.stderr
+    report = json.loads(first.stdout)
+    assert report["applied_now"] == EXISTING and report["batches"] == 12
+    assert len(report["runs"]) == 1
+    again = json.loads(run_eye("db-prepare-demo", url=url).stdout)
+    assert again["applied_now"] == [] and again["runs"] == report["runs"]  # no new run
+    replay = run_eye("db-replay", url=url)
+    assert replay.returncode == 0, replay.stdout + replay.stderr
 
 
 def test_db_commands_refuse_missing_url_or_non_loopback_host(make_db):

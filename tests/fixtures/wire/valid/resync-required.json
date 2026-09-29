@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "gap forces a fresh snapshot",
   "message": {
-    "schema_version": "eye.wire/1",
+    "schema_version": "eye.wire/2",
     "kind": "resync_required",
     "reason": "gap",
     "last_cursor": "c-0001"
