@@ -2,7 +2,7 @@
   "entry": "ClientMessage",
   "note": "bounded client subscription",
   "message": {
-    "schema_version": "eye.wire/1",
+    "schema_version": "eye.wire/2",
     "kind": "subscribe",
     "bbox": [
       -0.5,

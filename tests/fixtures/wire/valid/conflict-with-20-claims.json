@@ -1,0 +1,337 @@
+{
+  "entry": "ServerMessage",
+  "note": "the largest conflict one message carries: 20 claims, each with its evidence",
+  "message": {
+    "schema_version": "eye.wire/2",
+    "kind": "snapshot",
+    "cursor": "c-0001",
+    "generated_at": "2026-01-01T01:00:00Z",
+    "synthetic": true,
+    "area": {
+      "name": "Synthetic test area",
+      "bbox": [
+        -0.5,
+        -0.5,
+        0.5,
+        0.5
+      ]
+    },
+    "interval": {
+      "start": "2026-01-01T00:00:00Z",
+      "end": "2026-01-01T01:00:00Z"
+    },
+    "tracks": [
+      {
+        "id": "syn-track-flt-001",
+        "kind": "flight",
+        "source": "synthetic-fixture",
+        "source_record_id": "SYN-FLT-001",
+        "display_type": "observed",
+        "points": [
+          {
+            "observed_time": "2026-01-01T00:00:00Z",
+            "received_time": "2026-01-01T00:00:04Z",
+            "lon": -0.4,
+            "lat": -0.2,
+            "alt_m": 9100
+          }
+        ],
+        "quality_flags": [],
+        "conflicts": [
+          {
+            "observed_time": "2026-01-01T00:12:00Z",
+            "claims": [
+              {
+                "observation_id": "syn-obs-claim-01",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.3,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-02",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.29,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-03",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.28,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-04",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.27,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-05",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.26,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-06",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.25,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-07",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.24,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-08",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.23,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-09",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.22,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-10",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.21,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-11",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.2,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-12",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.19,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-13",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.18,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-14",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.17,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-15",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.16,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-16",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.15,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-17",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.14,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-18",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.13,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-19",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.12,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              },
+              {
+                "observation_id": "syn-obs-claim-20",
+                "published_time": "2026-01-01T00:12:00Z",
+                "received_time": "2026-01-01T00:12:05Z",
+                "lon": -0.11,
+                "lat": 0.0,
+                "alt_m": null,
+                "evidence_batch_ids": [
+                  "batch-a"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "events": [
+      {
+        "id": "syn-event-road-001",
+        "kind": "road_closure",
+        "source": "synthetic-fixture",
+        "status": "reported",
+        "reported_event_location": {
+          "type": "segment",
+          "coords": [
+            [
+              0.02,
+              -0.3
+            ],
+            [
+              0.05,
+              -0.28
+            ]
+          ],
+          "precision_m": 250
+        },
+        "event_time": "2026-01-01T00:12:00Z",
+        "published_time": "2026-01-01T00:18:00Z",
+        "received_time": "2026-01-01T00:18:20Z",
+        "replayed": false,
+        "revisions": []
+      }
+    ],
+    "coverage": [
+      {
+        "layer": "flight",
+        "interval": {
+          "start": "2026-01-01T00:00:00Z",
+          "end": "2026-01-01T01:00:00Z"
+        },
+        "state": "qualified",
+        "metric": {
+          "name": "tracks_observed",
+          "value": 1
+        }
+      },
+      {
+        "layer": "road",
+        "interval": {
+          "start": "2026-01-01T00:00:00Z",
+          "end": "2026-01-01T01:00:00Z"
+        },
+        "state": "qualified",
+        "reason": "feed healthy; nothing reported",
+        "metric": {
+          "name": "events_reported",
+          "value": 0
+        }
+      },
+      {
+        "layer": "vessel",
+        "interval": {
+          "start": "2026-01-01T00:00:00Z",
+          "end": "2026-01-01T01:00:00Z"
+        },
+        "state": "failed",
+        "reason": "synthetic provider timeout",
+        "metric": {
+          "name": "tracks_observed",
+          "value": null
+        }
+      }
+    ]
+  }
+}

@@ -5,6 +5,7 @@
 import type {
   Coverage,
   Track,
+  TrackPoint,
   TransitCount,
   TransitCrossing,
   TransitsMessage,
@@ -146,4 +147,31 @@ export function trackFacts(track: Track): TrackFacts {
     claims,
     flags: track.quality_flags.length > 0 ? track.quality_flags.join(", ") : "none",
   };
+}
+
+/**
+ * The route as runs of resolved points. A contested observed time between two
+ * resolved points breaks the route there: joining the points either side would
+ * draw a path through a time whose position is unknown. Pure and independent
+ * of rendering, so every preset breaks the route at the same places.
+ */
+export function routeRuns(track: Track): TrackPoint[][] {
+  const breaks = (track.conflicts ?? []).map((c) => c.observed_time).sort();
+  const runs: TrackPoint[][] = [];
+  let run: TrackPoint[] = [];
+  let next = 0; // first break not yet passed
+  for (const point of track.points) {
+    let broken = false;
+    while (next < breaks.length && (breaks[next] ?? "") < point.observed_time) {
+      broken = true;
+      next += 1;
+    }
+    if (broken && run.length > 0) {
+      runs.push(run);
+      run = [];
+    }
+    run.push(point);
+  }
+  if (run.length > 0) runs.push(run);
+  return runs;
 }

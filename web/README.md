@@ -11,7 +11,7 @@ no bundler, framework, map library, token or external service.
 | `src/desk.ts` | DESK: observed transits, cited crossings and coverage; fact tables |
 | `src/facts.ts` | measured facts as text; pure functions, independent of rendering |
 | `src/wire-validate.ts` | runtime validation against the wire schema |
-| `src/generated/` | types and embedded schema generated from `schemas/eye-wire.v1.schema.json` |
+| `src/generated/` | types and embedded schema generated from `schemas/eye-wire.v2.schema.json` |
 
 Every server message is validated before use; values are inserted with
 `textContent` only. An unavailable or invalid response is shown as unknown,

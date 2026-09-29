@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "sequence starts at 1",
   "message": {
-    "schema_version": "eye.wire/1",
+    "schema_version": "eye.wire/2",
     "kind": "delta",
     "sequence": 0,
     "cursor": "c-0002",

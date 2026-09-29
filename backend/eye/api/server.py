@@ -1,6 +1,6 @@
 """Loopback HTTP and WebSocket server for THEATRE and DESK (standard library + pg8000).
 
-Serves bounded, database-backed ``eye.wire/1`` messages:
+Serves bounded, database-backed ``eye.wire/2`` messages:
 
 - ``GET /api/v0/health``     process health (no database access)
 - ``GET /api/v0/snapshot``   tracks and coverage for an area, interval and layer set
@@ -33,7 +33,7 @@ from eye.api import websocket as ws
 from eye.api.auth import AuthPort
 from eye.config import EyeConfig, is_loopback_host
 from eye.storage.db import DatabaseConfigError
-from eye.wire import SCHEMA_VERSION, WireValidationError, validate_message
+from eye.wire import SCHEMA_VERSION, WireValidationError, validate_message, wire_version_of
 
 API_PREFIX = "/api/v0"
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -411,6 +411,20 @@ class ApiHandler(BaseHTTPRequestHandler):
                 payload, "ClientMessage", max_bytes=self.server.config.api.ws_max_inbound_bytes
             )
         except WireValidationError as exc:
+            claimed = wire_version_of(payload)
+            if claimed is not None and claimed != SCHEMA_VERSION:
+                # Another protocol version, not a malformed message: say which
+                # one this server speaks. A reconnect would meet the same answer,
+                # so the client must reload to get a page that speaks it.
+                sub.send(
+                    stream.error_message(
+                        400,
+                        f"unsupported wire version {claimed}; this server speaks "
+                        f"{SCHEMA_VERSION} only. Reload the page",
+                    )
+                )
+                sub.close(ws.CLOSE_UNSUPPORTED, "unsupported wire version")
+                return False
             sub.send(stream.error_message(400, f"invalid message: {exc.errors[0]}"[:500]))
             sub.close(ws.CLOSE_POLICY, "invalid message")
             return False

@@ -18,7 +18,8 @@ import { renderCoverage, renderTracks, renderTransits, renderTransitsUnavailable
 import { transitsErrors } from "./facts.js";
 import { Globe, type Preset, PRESETS } from "./globe.js";
 import { LiveFeed, type LiveState } from "./live.js";
-import { parseMessage, WireValidationError } from "./wire-validate.js";
+import { WIRE_SCHEMA_VERSION } from "./generated/wire-schema.js";
+import { parseMessage, WireValidationError, wireVersionOf } from "./wire-validate.js";
 
 const MAX_TRACKS = 1000; // client-side bound, equal to the server's wire limit
 const MAX_COVERAGE = 1000;
@@ -55,7 +56,7 @@ function setStatus(stateName: LiveState | "error" | "loading", text: string): vo
   // Once a view is on the page, anything but a live feed (connecting,
   // resynchronising, reconnecting, stale, failed) means it may be out of date.
   // "live" is set only after a valid snapshot, or a delta that follows one.
-  const stale = stateName !== "live" && (rendered || stateName === "error");
+  const stale = stateName !== "live" && (rendered || stateName === "error" || stateName === "incompatible");
   const banner = byId("stale-banner", HTMLElement);
   banner.hidden = !stale;
   document.body.classList.toggle("stale", stale);
@@ -111,7 +112,12 @@ function applyDelta(message: DeltaMessage): void {
 
 async function fetchMessage(url: string): Promise<ReturnType<typeof parseMessage<"ServerMessage">>> {
   const response = await fetch(url, { credentials: "same-origin" });
-  return parseMessage(await response.text(), "ServerMessage");
+  const text = await response.text();
+  const version = wireVersionOf(text);
+  if (version !== null && version !== WIRE_SCHEMA_VERSION) {
+    throw new Error(`the server sent ${version}; this page speaks ${WIRE_SCHEMA_VERSION}. Reload the page`);
+  }
+  return parseMessage(text, "ServerMessage");
 }
 
 async function loadTransits(): Promise<void> {
@@ -278,6 +284,7 @@ async function main(): Promise<void> {
       counters.reconnects = String(live.counters.reconnects);
       counters.snapshots = String(live.counters.snapshots);
       counters.deltas = String(live.counters.deltas);
+      counters.versionMismatches = String(live.counters.versionMismatches);
     },
   });
   setupViewForm();

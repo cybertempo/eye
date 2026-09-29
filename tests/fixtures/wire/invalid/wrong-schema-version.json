@@ -1,8 +1,8 @@
 {
   "entry": "ServerMessage",
-  "note": "unknown protocol version",
+  "note": "a version-1 message: this server and browser speak eye.wire/2 only",
   "message": {
-    "schema_version": "eye.wire/2",
+    "schema_version": "eye.wire/1",
     "kind": "snapshot",
     "cursor": "c-0001",
     "generated_at": "2026-01-01T01:00:00Z",

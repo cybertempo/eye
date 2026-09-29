@@ -122,7 +122,7 @@ docs/                 brief, source-policy register, dependencies, ADRs
 migrations/           forward-only PostgreSQL/PostGIS migrations
 reference/lines/      versioned synthetic count lines
 requirements/         hash-locked Python tool manifests
-schemas/              versioned wire schema (eye.wire/1)
+schemas/              versioned wire schema (eye.wire/2; v1 kept unchanged)
 scripts/              setup, verify, demo, boundary check, fixture generators
 tests/                tests and synthetic fixtures
 web/                  browser client: THEATRE globe and DESK panel

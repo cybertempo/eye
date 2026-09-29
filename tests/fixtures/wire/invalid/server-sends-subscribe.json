@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "client message on the server channel",
   "message": {
-    "schema_version": "eye.wire/1",
+    "schema_version": "eye.wire/2",
     "kind": "subscribe",
     "bbox": [
       -0.5,

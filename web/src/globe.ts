@@ -6,7 +6,8 @@
 // they never change a stored position, a count or any text in the fact tables.
 // This is an illustrative view, not a measurement surface.
 
-import type { BBox, Position, Track } from "./generated/wire-types.js";
+import { routeRuns } from "./facts.js";
+import type { BBox, Position, Track, TrackPoint } from "./generated/wire-types.js";
 
 export type Preset = "low" | "balanced" | "high";
 
@@ -32,6 +33,15 @@ export interface GlobeData {
   tracks: readonly Track[];
   area: BBox | null;
   line: readonly [Position, Position] | null;
+}
+
+/**
+ * Thin one run of the route for drawing. Every run keeps its first and last
+ * point, and runs are thinned separately, so a lower preset draws fewer points
+ * but never joins across a break in the route.
+ */
+export function sampleRun(run: readonly TrackPoint[], stride: number): TrackPoint[] {
+  return run.filter((_, i, all) => i % stride === 0 || i === all.length - 1);
 }
 
 function clamp(value: number, low: number, high: number): number {
@@ -201,15 +211,16 @@ export class Globe {
     }
     let routePoints = 0;
     let claimMarkers = 0;
+    const drawnRuns: string[][][] = [];
     for (const track of this.data.tracks) {
       ctx.strokeStyle = colour(track.kind === "flight" ? "--globe-flight" : "--globe-vessel", "#0b5cad");
       ctx.lineWidth = 2;
-      // The route joins resolved positions only.
-      const pts = track.points
-        .filter((_, i, all) => i % settings.pointStride === 0 || i === all.length - 1)
-        .map((p) => [p.lon, p.lat] as const);
+      // The route joins resolved positions only, and breaks at every
+      // contested time between them; each run is a separate path.
+      const runs = routeRuns(track).map((run) => sampleRun(run, settings.pointStride));
       routePoints += track.points.length;
-      this.path(ctx, pts, radius);
+      for (const run of runs) this.path(ctx, run.map((p) => [p.lon, p.lat] as const), radius);
+      drawnRuns.push(runs.map((run) => run.map((p) => p.observed_time)));
       // Contested claims are separate hollow markers, never joined to each
       // other or to the route.
       ctx.strokeStyle = colour("--globe-conflict", "#b00020");
@@ -226,5 +237,7 @@ export class Globe {
     }
     this.canvas.dataset.routePoints = String(routePoints);
     this.canvas.dataset.claimMarkers = String(claimMarkers);
+    // What was stroked, per track: the observed times of each drawn run.
+    this.canvas.dataset.routeRuns = JSON.stringify(drawnRuns);
   }
 }

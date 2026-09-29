@@ -1,9 +1,18 @@
 # Wire schemas
 
-`eye-wire.v1.schema.json` is the single authoritative definition of every REST
-response and WebSocket message (protocol version `eye.wire/1`). Entry points:
+`eye-wire.v2.schema.json` is the single authoritative definition of every REST
+response and WebSocket message (protocol version `eye.wire/2`). Entry points:
 `ServerMessage` (health, error, snapshot, delta, resync_required, transits) and
 `ClientMessage` (subscribe, unsubscribe).
+
+`eye-wire.v1.schema.json` is version 1 exactly as merged before Package 3, kept
+byte for byte (its SHA-256 is pinned in `tests/test_wire.py`). Nothing serves
+or accepts it. Tests use it, with its own corpus in `tests/fixtures/wire-v1`,
+to show that version-2 messages are refused by the unchanged version-1
+validator. Version 2 adds two shapes that version 1 cannot carry: tracks with
+contested positions (`conflicts`, and tracks with no route) and transit counts.
+Every other version-1 message is also a valid version-2 message once it is
+relabelled.
 
 - **Server side:** `backend/eye/wire/validate.py` validates every outgoing body
   and any incoming client message at runtime.
@@ -36,20 +45,34 @@ response and WebSocket message (protocol version `eye.wire/1`). Entry points:
   resolved positions only. An observed time whose latest publications conflict
   appears under `conflicts` with every claim and its evidence, never in the
   route. A track has at least one point or one conflict (`TrackRouted` or
-  `TrackUnresolved`); `conflicts` is optional, so earlier messages stay valid.
-- Transit counts (`transits`, added in Package 3 as a backwards-compatible
-  addition to `eye.wire/1`: no existing message changed) have three forms:
+  `TrackUnresolved`). A conflict has 2 to 20 claims; the server refuses a
+  request (413, naming the record and time) rather than send more or fewer.
+  A client breaks the drawn route at every contested time that falls between
+  two resolved points.
+- Transit counts (`transits`) have three forms:
   `qualified` (exact numbers, every uncertainty count 0, no reason), `partial`
   (numbers are lower bounds, reason required) and `unknown`/`failed` (null
   numbers, reason required). A crossing's time is `estimated_time` with its
   method; there is no observed-time field for it. The browser also refuses a
   count whose total is not inbound + outbound, which JSON Schema cannot express.
 
+## Version mismatch
+
+A message's `schema_version` is read before it is validated, so another
+version is reported as such rather than as a malformed message. The server
+answers a client message in another version with a 400 error naming the
+version it speaks, then closes the socket with 1003. The browser, on a server
+message in another version, stops live updates without resubscribing or
+reconnecting, keeps the data shown under the stale banner, and asks for a
+reload.
+
 ## Changing the schema
 
 Run on the developer laptop, then commit all three:
 
-1. Edit the schema (a breaking change needs a new file and version, `eye.wire/2`).
+1. Edit the schema. A change that an existing validator would refuse, or that
+   gives an existing field a new meaning, needs a new file and version
+   (`eye.wire/3`); keep the old file unchanged.
 2. `.venv/bin/python scripts/gen_wire_types.py`
 3. Add valid and invalid corpus cases, then `scripts/verify.sh`.
 

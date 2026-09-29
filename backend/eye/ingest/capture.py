@@ -36,9 +36,12 @@ from pathlib import Path
 
 from eye.ingest import synthetic_ais
 from eye.storage.db import Connection, transaction
-from eye.wire import SCHEMA_VERSION
 
 CAPTURE_FORMAT = "eye.synthetic-capture/2"
+# The wire version whose observation fields each receipt was recorded under.
+# eye.wire/2 changed only how tracks and counts are served, not an
+# observation's fields, so receipts keep this label and replay stays exact.
+RECEIPT_SCHEMA_VERSION = "eye.wire/1"
 APPROVED_SOURCES = frozenset({"synthetic-fixture", "synthetic-ais"})
 # Record parser per approved source; the AIS adapter maps its own message shape.
 SOURCE_LAYERS = {
@@ -379,7 +382,7 @@ def derive(parsed: ParsedCapture) -> Derived:
         receipts[(oid, parsed.batch_id)] = (
             parsed.evidence_id,
             iso(parsed.received_time),
-            SCHEMA_VERSION,
+            RECEIPT_SCHEMA_VERSION,
             parsed.adapter_version,
         )
     coverage = derive_coverage(parsed)

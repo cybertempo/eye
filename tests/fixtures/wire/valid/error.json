@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "REST error body",
   "message": {
-    "schema_version": "eye.wire/1",
+    "schema_version": "eye.wire/2",
     "kind": "error",
     "status": 404,
     "error": "not found"

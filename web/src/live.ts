@@ -6,6 +6,11 @@
 // cursor, then rebuilds its state from the fresh snapshot. A dropped connection
 // is retried with capped backoff and the same resume cursor. Nothing is queued
 // on the client: each message is applied or refused as it arrives.
+//
+// A message in another wire version is not a gap: resubscribing or
+// reconnecting would get the same answer again. The feed halts, keeps the data
+// shown marked stale, and asks for a reload, which fetches a page that speaks
+// the server's version.
 
 import type {
   BBox,
@@ -15,9 +20,11 @@ import type {
   SnapshotMessage,
   SubscribeMessage,
 } from "./generated/wire-types.js";
-import { MAX_MESSAGE_BYTES, parseMessage, WireValidationError } from "./wire-validate.js";
+import { WIRE_SCHEMA_VERSION } from "./generated/wire-schema.js";
+import { MAX_MESSAGE_BYTES, parseMessage, WireValidationError, wireVersionOf } from "./wire-validate.js";
 
-export type LiveState = "connecting" | "live" | "resyncing" | "reconnecting" | "stale" | "stopped";
+export type LiveState =
+  | "connecting" | "live" | "resyncing" | "reconnecting" | "stale" | "incompatible" | "stopped";
 
 export interface LiveHandlers {
   snapshot(message: SnapshotMessage): void;
@@ -41,7 +48,8 @@ export class LiveFeed {
   private awaitingSnapshot = true;
   private backoff = 1000;
   private timer: number | undefined;
-  readonly counters = { snapshots: 0, deltas: 0, gaps: 0, reconnects: 0, refused: 0 };
+  private halted = false;
+  readonly counters = { snapshots: 0, deltas: 0, gaps: 0, reconnects: 0, refused: 0, versionMismatches: 0 };
 
   constructor(private readonly url: string, private readonly handlers: LiveHandlers) {}
 
@@ -51,6 +59,7 @@ export class LiveFeed {
 
   subscribe(subscription: Subscription, fresh: boolean): void {
     this.subscription = subscription;
+    if (this.halted) return; // only a reload can speak the server's version
     if (fresh) this.cursor = null;
     if (this.socket?.readyState === WebSocket.OPEN) this.sendSubscribe();
     else if (!this.socket) this.connect();
@@ -82,7 +91,7 @@ export class LiveFeed {
     socket.addEventListener("close", () => {
       if (this.socket !== socket) return;
       this.socket = null;
-      if (!this.subscription) return;
+      if (!this.subscription || this.halted) return;
       this.counters.reconnects += 1;
       this.awaitingSnapshot = true;
       const wait = this.backoff;
@@ -100,7 +109,7 @@ export class LiveFeed {
     if (!this.subscription || this.socket?.readyState !== WebSocket.OPEN) return;
     this.awaitingSnapshot = true;
     const message: SubscribeMessage = {
-      schema_version: "eye.wire/1",
+      schema_version: "eye.wire/2",
       kind: "subscribe",
       bbox: this.subscription.bbox,
       interval: this.subscription.interval,
@@ -120,7 +129,29 @@ export class LiveFeed {
     this.sendSubscribe();
   }
 
+  /** Another wire version: stop, without resubscribing or reconnecting. */
+  private halt(version: string): void {
+    this.counters.versionMismatches += 1;
+    this.halted = true;
+    this.awaitingSnapshot = true;
+    window.clearTimeout(this.timer);
+    const socket = this.socket;
+    this.socket = null;
+    socket?.close(1000, "wire version mismatch");
+    this.handlers.status(
+      "incompatible",
+      `The server sent ${version} messages; this page speaks ${WIRE_SCHEMA_VERSION}. Live updates ` +
+        `stopped and the data shown may be out of date as of cursor ${this.cursor ?? "none"}. ` +
+        "Reload the page to continue.",
+    );
+  }
+
   private receive(text: string): void {
+    const version = wireVersionOf(text);
+    if (version !== null && version !== WIRE_SCHEMA_VERSION) {
+      this.halt(version);
+      return;
+    }
     let message: ServerMessage;
     try {
       message = parseMessage(text, "ServerMessage", MAX_MESSAGE_BYTES);

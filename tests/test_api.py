@@ -327,7 +327,7 @@ def test_reconnect_with_a_valid_cursor_gets_a_fresh_snapshot(api_server):
     resumed.send(subscribe(AREA, DAY, resume=cursor))
     notice = resumed.recv()
     assert notice == {
-        "schema_version": "eye.wire/1",
+        "schema_version": "eye.wire/2",
         "kind": "resync_required",
         "reason": "reconnect",
         "last_cursor": cursor,
@@ -336,6 +336,36 @@ def test_reconnect_with_a_valid_cursor_gets_a_fresh_snapshot(api_server):
     assert snapshot["kind"] == "snapshot"
     assert feed.parse_cursor(snapshot["cursor"])[1] == feed.parse_cursor(cursor)[1] + 1
     assert "SYNV-0024" in {t["source_record_id"] for t in snapshot["tracks"]}
+    resumed.close()
+
+
+def test_reconnect_in_another_wire_version_is_refused_by_name(api_server):
+    """A page speaking eye.wire/1 that reconnects with its cursor is told which
+    version this server speaks and closed with 1003 (unsupported data); a
+    resubscribe or reconnect would meet the same answer, so no snapshot, no
+    subscription. Control: the same request in eye.wire/2 resumes normally."""
+    api = _partial_demo(api_server)
+    first = ws(api)
+    first.send(subscribe(AREA, DAY))
+    cursor = first.recv()["cursor"]
+    first.sock.close()
+    for version in ("eye.wire/1", "eye.wire/3"):
+        old = ws(api)
+        old.send({**subscribe(AREA, DAY, resume=cursor), "schema_version": version})
+        error = old.recv()
+        assert reference_valid(error) and error["kind"] == "error" and error["status"] == 400
+        assert error["schema_version"] == "eye.wire/2"
+        assert error["error"] == (
+            f"unsupported wire version {version}; this server speaks eye.wire/2 only. "
+            "Reload the page"
+        )
+        with pytest.raises(Closed) as closed:
+            old.recv()
+        assert closed.value.code == 1003 and closed.value.reason == "unsupported wire version"
+    resumed = ws(api)
+    resumed.send(subscribe(AREA, DAY, resume=cursor))
+    assert resumed.recv()["reason"] == "reconnect"
+    assert resumed.recv()["kind"] == "snapshot"
     resumed.close()
 
 
@@ -459,7 +489,7 @@ def test_revoked_access_closes_open_sockets(api_server):
     auth.allowed = False
     api.server.hub.recheck_auth()
     assert client.recv() == {
-        "schema_version": "eye.wire/1",
+        "schema_version": "eye.wire/2",
         "kind": "error",
         "status": 403,
         "error": "not authorised",

@@ -3,7 +3,7 @@
   "note": "2026-02-30 does not exist",
   "reference_divergence": "The reference library treats format as an annotation only; EYE's Python and browser validators both assert it.",
   "message": {
-    "schema_version": "eye.wire/1",
+    "schema_version": "eye.wire/2",
     "kind": "snapshot",
     "cursor": "c-0001",
     "generated_at": "2026-02-30T00:00:00Z",

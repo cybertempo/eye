@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "error status must be 4xx or 5xx",
   "message": {
-    "schema_version": "eye.wire/1",
+    "schema_version": "eye.wire/2",
     "kind": "error",
     "status": 200,
     "error": "not found"

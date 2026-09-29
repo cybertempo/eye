@@ -111,7 +111,7 @@ def test_desk_shows_evidence_ids_timestamps_and_source_labels(api_server, page):
 def test_unavailable_counts_show_unknown_not_zero(api_server, page):
     api = api_server()
     error = {
-        "schema_version": "eye.wire/1",
+        "schema_version": "eye.wire/2",
         "kind": "error",
         "status": 503,
         "error": "database unavailable; data unknown",
@@ -776,3 +776,148 @@ def test_contested_last_position_is_shown_as_unresolved_then_resolved(api_server
     assert values[5] == "2" and values[9] == "none"
     expect(canvas).to_have_attribute("data-claim-markers", "0")
     assert int(canvas.get_attribute("data-route-points")) == route + 1
+
+
+# --- O52: routes break at a contested middle time, in every preset ------------------------------
+
+MIDDLE_REC = "SYN-FLT-930"
+MIDDLE = "2026-01-01T03:04:00Z"
+
+
+def _middle_captures(tmp_path, *, resolved: bool):
+    """Nine resolved fixes a minute apart around a 03:04 that is contested
+    (two claims published together) or, for the control, resolved."""
+    from synthetic_captures import capture, record
+
+    window = {"start": "2026-01-01T02:55:00Z", "end": "2026-01-01T03:15:00Z"}
+    fixes = [
+        record(MIDDLE_REC, f"2026-01-01T03:0{m}:00Z", f"2026-01-01T03:0{m}:03Z", 0.02 * m)
+        for m in range(10)
+        if m != 4
+    ]
+    paths = [capture(tmp_path, "route", "flight", fixes, **window, received="2026-01-01T03:15:01Z")]
+    claims = [(0.3, 0.2), (-0.3, -0.2)] if not resolved else [(0.08, 0.0)]
+    for index, (lon, lat) in enumerate(claims):
+        paths.append(
+            capture(
+                tmp_path,
+                f"middle-{index}",
+                "flight",
+                [record(MIDDLE_REC, MIDDLE, "2026-01-01T03:04:03Z", lon, lat)],
+                **window,
+                received=f"2026-01-01T03:15:0{2 + index}Z",
+            )
+        )
+    return paths
+
+
+def _drawn_runs(page) -> dict[str, list[list[str]]]:
+    """Per preset, the observed times of each run the globe stroked for the track."""
+    canvas = page.locator("#globe")
+    drawn = {}
+    for preset in ("low", "balanced", "high"):
+        page.get_by_label("Rendering preset").select_option(preset)
+        expect(canvas).to_have_attribute("data-preset", preset)
+        runs = json.loads(canvas.get_attribute("data-route-runs"))
+        (track_runs,) = [r for r in runs if r and r[0] and r[0][0].startswith("2026-01-01T03:0")]
+        drawn[preset] = track_runs
+    return drawn
+
+
+def _crosses(run: list[str], moment: str) -> bool:
+    return any(a < moment < b for a, b in zip(run, run[1:], strict=False))
+
+
+def test_route_breaks_at_a_contested_middle_time_in_every_preset(api_server, page, tmp_path):
+    api = api_server(ais_files=[])
+    for path in _middle_captures(tmp_path, resolved=False):
+        api.ingest(path)
+    open_app_loose(page, api)
+    expect(page.locator("#track-facts")).to_contain_text(MIDDLE_REC, timeout=WAIT)
+    drawn = _drawn_runs(page)
+    for preset, runs in drawn.items():
+        assert len(runs) == 2, (preset, runs)
+        before, after = runs
+        # The break sits exactly at the contested time; nothing is drawn across it.
+        assert before[0] == "2026-01-01T03:00:00Z" and before[-1] == "2026-01-01T03:03:00Z"
+        assert after[0] == "2026-01-01T03:05:00Z" and after[-1] == "2026-01-01T03:09:00Z"
+        assert not any(_crosses(run, MIDDLE) for run in runs), preset
+    # Low really thins the route (stride 4), so the break is not a sampling accident.
+    assert sum(map(len, drawn["low"])) < sum(map(len, drawn["high"])) == 9
+    assert page.locator("#globe").get_attribute("data-claim-markers") == "2"
+
+
+def test_resolved_middle_point_draws_one_normal_route(api_server, page, tmp_path):
+    """Control: the same route with 03:04 resolved is one unbroken run."""
+    api = api_server(ais_files=[])
+    for path in _middle_captures(tmp_path, resolved=True):
+        api.ingest(path)
+    open_app_loose(page, api)
+    expect(page.locator("#track-facts")).to_contain_text(MIDDLE_REC, timeout=WAIT)
+    drawn = _drawn_runs(page)
+    for preset, runs in drawn.items():
+        (run,) = runs
+        assert run[0] == "2026-01-01T03:00:00Z" and run[-1] == "2026-01-01T03:09:00Z", preset
+    assert MIDDLE in drawn["high"][0] and len(drawn["high"][0]) == 10
+    assert page.locator("#globe").get_attribute("data-claim-markers") == "0"
+
+
+# --- O53: another wire version halts instead of looping -----------------------------------------
+
+
+V1, V2 = '"schema_version":"eye.wire/1"', '"schema_version":"eye.wire/2"'
+
+
+class VersionRelay:
+    """Relays each connection; from ``relabel_from`` on, the 'server' speaks eye.wire/1."""
+
+    def __init__(self, relabel_from: int) -> None:
+        self.relabel_from = relabel_from
+        self.connections = 0
+        self.subscribes: list[int] = []
+
+    def __call__(self, client) -> None:
+        self.connections += 1
+        number = self.connections
+        server = client.connect_to_server()
+
+        def to_server(message):
+            if isinstance(message, str) and json.loads(message).get("kind") == "subscribe":
+                self.subscribes.append(number)
+            server.send(message)
+
+        def from_server(message):
+            if number >= self.relabel_from and isinstance(message, str):
+                message = message.replace(
+                    '"schema_version":"eye.wire/2"', '"schema_version":"eye.wire/1"'
+                )
+            client.send(message)
+
+        client.on_message(to_server)
+        server.on_message(from_server)
+
+
+def test_reconnect_to_another_wire_version_halts_and_asks_for_a_reload(api_server, page):
+    api = api_server()
+    relay = VersionRelay(relabel_from=2)
+    page.route_web_socket("**/api/v0/stream", relay)
+    page.goto(f"{api.origin}/")
+    _banner_cleared(page)  # control: the first connection speaks eye.wire/2 and is live
+    status = page.locator("#live-status")
+    for sub in api.server.hub.subscribers():
+        sub.abort("test: connection lost")
+    _banner_shown(page, "incompatible")
+    expect(status).to_contain_text("eye.wire/1")
+    expect(status).to_contain_text("Reload the page")
+    page.wait_for_timeout(3000)  # longer than the first reconnect back-off
+    # One subscribe on the new connection, no resubscribe loop and no reconnect.
+    assert relay.subscribes == [1, 2] and relay.connections == 2
+    assert status.get_attribute("data-state") == "incompatible"
+    assert status.get_attribute("data-version-mismatches") == "1"
+    assert status.get_attribute("data-snapshots") == "1"
+    expect(page.locator("#track-facts")).to_contain_text("SYNV-0020")  # kept, marked stale
+    # Control: once page and server speak the same version again, a reload is live.
+    relay.relabel_from = 10**6
+    page.reload()
+    _banner_cleared(page)
+    assert status.get_attribute("data-version-mismatches") == "0"

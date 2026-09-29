@@ -1,6 +1,6 @@
 """Bounded, database-backed wire messages for the browser API (Package 3).
 
-Everything here reads the database and returns ``eye.wire/1`` message dicts;
+Everything here reads the database and returns ``eye.wire/2`` message dicts;
 nothing writes. Callers pass a connection opened by ``open_reader`` (read-only
 session, statement timeout). Every query is bounded by area, interval, layer
 and row limits; a request that would exceed a limit is refused with
@@ -37,6 +37,9 @@ CURSOR = re.compile(
     r"^e([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):([0-9]{1,18})$"
 )
 MAX_TRACK_POINTS = 1000  # wire schema Track.points maxItems
+MAX_TRACK_CONFLICTS = 100  # wire schema Track.conflicts maxItems
+MAX_CONFLICT_CLAIMS = 20  # wire schema PositionConflict.claims maxItems
+MAX_CLAIM_EVIDENCE = 100  # wire schema ConflictClaim.evidence_batch_ids maxItems
 DELTA_MAX_ITEMS = 500  # wire schema DeltaMessage *_upserted maxItems
 MAX_FLAGS = 16
 
@@ -202,19 +205,30 @@ LIMIT :cap
 """
 
 # Every claim of a contested observed time, wherever it lies: a conflict is
-# shown whole if any of its claims is in view.
+# shown whole if any of its claims is in view. Each conflict is read up to one
+# claim past the wire limit, and each claim up to one batch past it, so a
+# conflict too large for one message is recognised and refused by name before
+# the response is built, never cut short or left to fail validation.
 CONFLICT_CLAIMS = """
-SELECT o.observation_id::text, o.source_id, o.layer, o.source_record_id,
-       eye.iso_utc(o.observed_time), eye.iso_utc(o.source_published_time),
-       eye.iso_utc(v.first_received_time), ST_X(o.position), ST_Y(o.position), o.altitude_m,
-       (SELECT array_agg(r.batch_id::text ORDER BY r.batch_id) FROM eye.observation_receipt r
-        WHERE r.observation_id = o.observation_id)
-FROM eye.observation o
-JOIN eye.observation_version v USING (observation_id)
-WHERE v.is_current IS NULL
-  AND o.source_id || ' ' || o.layer || ' ' || o.source_record_id || ' '
-      || eye.iso_utc(o.observed_time) = ANY(CAST(:contested AS text[]))
-ORDER BY o.source_id, o.layer, o.source_record_id, o.observed_time, o.observation_id
+SELECT c.observation_id::text, c.source_id, c.layer, c.source_record_id,
+       eye.iso_utc(c.observed_time), eye.iso_utc(c.source_published_time),
+       eye.iso_utc(c.first_received_time), ST_X(c.position), ST_Y(c.position), c.altitude_m,
+       ARRAY(SELECT r.batch_id::text FROM eye.observation_receipt r
+             WHERE r.observation_id = c.observation_id
+             ORDER BY r.batch_id::text LIMIT :evidence_cap)
+FROM (
+  SELECT o.*, v.first_received_time,
+         row_number() OVER (PARTITION BY o.source_id, o.layer, o.source_record_id,
+                                         o.observed_time
+                            ORDER BY o.observation_id) AS claim_rank
+  FROM eye.observation o
+  JOIN eye.observation_version v USING (observation_id)
+  WHERE v.is_current IS NULL
+    AND o.source_id || ' ' || o.layer || ' ' || o.source_record_id || ' '
+        || eye.iso_utc(o.observed_time) = ANY(CAST(:contested AS text[]))
+) c
+WHERE c.claim_rank <= :claim_cap
+ORDER BY c.source_id, c.layer, c.source_record_id, c.observed_time, c.observation_id
 LIMIT :cap
 """
 
@@ -331,17 +345,43 @@ def _tracks(conn, query: Query, limits: Limits, records: list[str] | None) -> li
 
 def _add_conflicts(conn, tracks: dict, contested: list[str], limits: Limits) -> None:
     row_cap = limits.max_points + 1
-    claims = conn.run(CONFLICT_CLAIMS, contested=contested, cap=row_cap)
+    claims = conn.run(
+        CONFLICT_CLAIMS,
+        contested=contested,
+        claim_cap=MAX_CONFLICT_CLAIMS + 1,
+        evidence_cap=MAX_CLAIM_EVIDENCE + 1,
+        cap=row_cap,
+    )
     if len(claims) > limits.max_points:
         raise QueryRefused(413, f"more than {limits.max_points} positions; narrow the request")
     for oid, source, layer, record, observed, published, received, lon, lat, alt, batches in claims:
         track = tracks[(source, layer, record)]
         conflicts = track.setdefault("conflicts", [])
         if not conflicts or conflicts[-1]["observed_time"] != _t(observed):
-            if len(conflicts) >= 100:
-                raise QueryRefused(413, "a track has more conflicts than one message allows")
+            if len(conflicts) >= MAX_TRACK_CONFLICTS:
+                raise QueryRefused(
+                    413,
+                    f"{layer} record {record} from {source} has more than "
+                    f"{MAX_TRACK_CONFLICTS} contested times in view; one message carries at "
+                    f"most {MAX_TRACK_CONFLICTS}. Narrow the interval",
+                )
             conflicts.append({"observed_time": _t(observed), "claims": []})
-        conflicts[-1]["claims"].append(
+        conflict = conflicts[-1]
+        if len(conflict["claims"]) >= MAX_CONFLICT_CLAIMS:
+            raise QueryRefused(
+                413,
+                f"{layer} record {record} from {source} has more than {MAX_CONFLICT_CLAIMS} "
+                f"conflicting claims at {conflict['observed_time']}; one message carries at "
+                f"most {MAX_CONFLICT_CLAIMS} and none is dropped. Narrow the area or interval "
+                "to leave that time out",
+            )
+        if len(batches) > MAX_CLAIM_EVIDENCE:
+            raise QueryRefused(
+                413,
+                f"claim {oid} has more than {MAX_CLAIM_EVIDENCE} evidence batches; one message "
+                f"carries at most {MAX_CLAIM_EVIDENCE}",
+            )
+        conflict["claims"].append(
             {
                 "observation_id": oid,
                 "published_time": _t(published),

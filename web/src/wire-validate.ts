@@ -179,3 +179,23 @@ export function parseMessage<E extends Entry>(text: string, entry: E, maxBytes =
   if (errors.length > 0) throw new WireValidationError(errors);
   return value as EntryTypes[E];
 }
+
+const WIRE_VERSION = /^eye\.wire\/[1-9][0-9]{0,5}$/;
+
+/**
+ * The wire version a message claims, if it is a bounded JSON object with a
+ * well-formed ``schema_version``; otherwise null. Lets a client tell "another
+ * protocol version" apart from "an invalid message" before validating.
+ */
+export function wireVersionOf(text: string, maxBytes = MAX_MESSAGE_BYTES): string | null {
+  if (new TextEncoder().encode(text).length > maxBytes) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const version = (value as { schema_version?: unknown }).schema_version;
+  return typeof version === "string" && WIRE_VERSION.test(version) ? version : null;
+}

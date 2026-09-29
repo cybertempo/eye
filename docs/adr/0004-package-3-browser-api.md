@@ -15,17 +15,17 @@ Date: 2026-09-28. Status: proposed (awaiting owner review).
    `server.max_response_bytes`. A database that cannot be read gives a 503
    whose text says the data is unknown; the browser shows *Unknown*, never an
    empty or zero result.
-2. **One wire schema, one addition.** Snapshots, deltas, resync notices and
-   subscribe messages are the existing `eye.wire/1` messages. Transit counts
-   needed a message the schema did not have, so `TransitsMessage` (`GET
-   /api/v0/transits`) was **added to `eye.wire/1`** without changing any
-   existing message: every previously valid message is still valid. Counts have
-   three closed forms (`qualified` exact, `partial` lower bound with reason,
+2. **One wire schema, now version 2.** Snapshots, deltas, resync notices and
+   subscribe messages keep their `eye.wire/1` shapes, now labelled
+   `eye.wire/2` (`schemas/eye-wire.v2.schema.json`). Version 2 adds what
+   version 1 cannot carry: `TransitsMessage` (`GET /api/v0/transits`) and
+   tracks with contested positions (decision 15). Counts have three closed
+   forms (`qualified` exact, `partial` lower bound with reason,
    `unknown`/`failed` with null numbers and reason); crossings carry
-   `estimated_time` with its method and the observed window. Generated browser
-   types, both runtime validators and the reference library agree on new
-   corpus cases. *Owner review:* whether this addition should instead start
-   `eye.wire/2`.
+   `estimated_time` with its method and the observed window. The version-1
+   file is kept exactly as merged and serves nothing (decision 16). Generated
+   browser types, both runtime validators and the reference library agree on
+   the version-2 corpus.
 3. **Cursors from a commit-ordered change log (migration 0003).**
    `eye.feed_change` gets one row, by trigger, when a capture batch settles and
    when a derivation run is recorded. The trigger holds a `SHARE ROW EXCLUSIVE`
@@ -163,8 +163,39 @@ Date: 2026-09-28. Status: proposed (awaiting owner review).
       separate marker. A later, unique publication supersedes all claims and
       the time rejoins the route. `Track` is now either routed (at least one
       point) or unresolved (no points, at least one conflict), and an empty
-      track is still invalid. This adds an optional field to an existing
-      `eye.wire/1` message: messages valid before stay valid.
+      track is still invalid. This changes what a track can be, so it is part
+      of `eye.wire/2` (decision 16), not an addition to version 1.
+
+16. **Review repairs before merge (O52 to O54).**
+    - *O52, routes break at contested times:* the drawn route is split at
+      every contested observed time that falls between two resolved points,
+      so no line joins the positions either side of an unknown one. The
+      split is a pure function of the message (`routeRuns` in
+      `web/src/facts.ts`); each run is thinned separately and keeps its first
+      and last point, so Low, Balanced and High break at the same times. The
+      canvas records what it stroked (`data-route-runs`) for tests. A resolved
+      middle time is an ordinary point and the route is one run.
+    - *O53, a new wire version:* the conflict track shape (and transit counts,
+      which also came with Package 3) start `eye.wire/2` rather than change
+      `eye.wire/1` in place, while nothing is deployed. The version-1 schema
+      stays byte for byte as merged, with its own corpus; tests show the
+      unchanged version-1 validator refuses every version-2 message, and the
+      new shapes even when relabelled `eye.wire/1`, while every other message
+      relabelled is still valid version 1. Ingest receipts keep their
+      `eye.wire/1` label: an observation's fields did not change, so replay
+      of earlier evidence stays exact. On reconnect, a message in another
+      version is not treated as a gap: the server answers a client in another
+      version with a 400 naming its own and closes with 1003; the browser,
+      given a server message in another version, stops without resubscribing
+      or reconnecting, keeps the data under the stale banner and asks for a
+      reload, since retrying would get the same answer.
+    - *O54, the claim limit is enforced before validation:* a conflict is read
+      up to 21 claims, and a claim up to 101 evidence batches. Past 20 claims
+      (or 100 batches, or 100 contested times on one track) the request is
+      refused with a 413 that names the record and the time, before a
+      response is built: never a conflict cut short and never the generic
+      500 for an invalid outgoing message. Over WebSocket the refusal leaves
+      no active subscription, as for any refused snapshot (O46).
 
 ## Consequences
 
