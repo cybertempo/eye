@@ -3,6 +3,7 @@
   --unknown-bg: #f1f1f1; --partial-bg: #fff4d6; --failed-bg: #fbe3e3;
   --globe-sea: #dfe8f1; --globe-grid: #9aa8b6; --globe-area: #7a4b00; --globe-line: #b00020;
   --globe-flight: #0b5cad; --globe-vessel: #006b5a; --globe-conflict: #b00020;
+  --globe-event: #b35900; --globe-event-candidate: #6b6b6b; --globe-last-seen: #0b5cad;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -10,6 +11,7 @@
     --unknown-bg: #2a2a2a; --partial-bg: #3a3014; --failed-bg: #3d1f1f;
     --globe-sea: #1b2835; --globe-grid: #4b5b6b; --globe-area: #ffb74d; --globe-line: #ff6b81;
     --globe-flight: #7fb6ff; --globe-vessel: #5fd3bc; --globe-conflict: #ff6b81;
+    --globe-event: #ffa94d; --globe-event-candidate: #aaaaaa; --globe-last-seen: #7fb6ff;
   }
 }
 body { font-family: system-ui, sans-serif; margin: 1rem; max-width: 80rem; color: var(--fg); background: var(--bg); }
@@ -41,3 +43,7 @@ dd { margin: 0; }
 body.stale #main table { opacity: 0.6; }
 ul.claims { margin: 0; padding-left: 1rem; font-size: 0.8rem; }
 tr.has-conflicts { outline: 2px dashed #b00020; }
+tr.standing-review_candidate { background: var(--unknown-bg); font-style: italic; }
+tr.standing-unresolved { outline: 2px dashed #b00020; }
+tr.standing-retracted { text-decoration: line-through; }
+tr.refused { background: var(--failed-bg); }

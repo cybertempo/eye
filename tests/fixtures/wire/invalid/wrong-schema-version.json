@@ -41,29 +41,90 @@
     ],
     "events": [
       {
-        "id": "syn-event-road-001",
-        "kind": "road_closure",
-        "source": "synthetic-fixture",
-        "status": "reported",
-        "reported_event_location": {
-          "type": "segment",
-          "coords": [
-            [
-              0.02,
-              -0.3
+        "id": "evt-0123456789abcdef0123456789abcdef",
+        "layer": "road",
+        "source": "synthetic-events",
+        "source_label": "Synthetic event reports (invented cases)",
+        "case_id": "SYN-RD-2",
+        "standing": "report",
+        "current_claim_id": "clm-2",
+        "claims": [
+          {
+            "claim_id": "clm-1",
+            "version": 1,
+            "is_current": false,
+            "basis": "official_report",
+            "kind": "road_collision",
+            "status": "reported",
+            "event_time": "2026-01-01T00:12:00Z",
+            "event_time_uncertainty_s": 120,
+            "published_time": "2026-01-01T00:18:00Z",
+            "received_time": "2026-01-01T00:18:20Z",
+            "reported_event_location": {
+              "type": "segment",
+              "coords": [
+                [
+                  0.02,
+                  -0.3
+                ],
+                [
+                  0.05,
+                  -0.28
+                ]
+              ],
+              "precision_m": 250,
+              "direction": "forward"
+            },
+            "evidence_ref": "synthetic-doc:SYN-RD-2:incident-log",
+            "evidence_batch_ids": [
+              "batch-a"
             ],
-            [
-              0.05,
-              -0.28
-            ]
-          ],
-          "precision_m": 250
+            "subject_identifiers": [],
+            "subject_window": null,
+            "summary": "Invented collision report."
+          },
+          {
+            "claim_id": "clm-2",
+            "version": 2,
+            "is_current": true,
+            "basis": "official_report",
+            "kind": "road_collision",
+            "status": "cleared",
+            "event_time": "2026-01-01T00:12:00Z",
+            "event_time_uncertainty_s": 120,
+            "published_time": "2026-01-01T00:40:00Z",
+            "received_time": "2026-01-01T00:40:05Z",
+            "reported_event_location": {
+              "type": "segment",
+              "coords": [
+                [
+                  0.02,
+                  -0.3
+                ],
+                [
+                  0.05,
+                  -0.28
+                ]
+              ],
+              "precision_m": 250,
+              "direction": "forward"
+            },
+            "evidence_ref": "synthetic-doc:SYN-RD-2:clearance",
+            "evidence_batch_ids": [
+              "batch-b"
+            ],
+            "subject_identifiers": [],
+            "subject_window": null,
+            "summary": null
+          }
+        ],
+        "link": {
+          "state": "not_applicable",
+          "track_id": null,
+          "reason": "no subject named",
+          "candidate_track_ids": []
         },
-        "event_time": "2026-01-01T00:12:00Z",
-        "published_time": "2026-01-01T00:18:00Z",
-        "received_time": "2026-01-01T00:18:20Z",
-        "replayed": false,
-        "revisions": []
+        "last_observed_position": null
       }
     ],
     "coverage": [

@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 
+# Headless browser fixtures (tests/support/browser_fixtures.py).
+pytest_plugins = ["browser_fixtures"]
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_CONFIG = REPO_ROOT / "config" / "eye.example.toml"
 

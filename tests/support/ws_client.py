@@ -137,7 +137,7 @@ def _drain(sock: socket.socket) -> bytes:
 
 def subscribe(bbox, interval, layers=("flight", "vessel", "road"), resume=None) -> dict:
     return {
-        "schema_version": "eye.wire/2",
+        "schema_version": "eye.wire/3",
         "kind": "subscribe",
         "bbox": list(bbox),
         "interval": interval,

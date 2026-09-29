@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "resync before any cursor was delivered",
   "message": {
-    "schema_version": "eye.wire/2",
+    "schema_version": "eye.wire/3",
     "kind": "resync_required",
     "reason": "reconnect",
     "last_cursor": null

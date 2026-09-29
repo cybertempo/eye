@@ -59,12 +59,13 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "max_coverage",
         "max_counts",
         "max_crossings",
+        "max_events",
         "max_pending_changes",
         "default_view_hours",
     },
     "view": {"area_name", "bbox", "layers"},
     "auth": {"adapter", "private_adapter_module"},
-    "data": {"capture_fixtures", "ais_capture_fixtures", "count_lines"},
+    "data": {"capture_fixtures", "ais_capture_fixtures", "event_capture_fixtures", "count_lines"},
     "database": {"url_env"},
     "providers": {"enabled"},
 }
@@ -104,6 +105,7 @@ class ApiConfig:
     max_coverage: int
     max_counts: int
     max_crossings: int
+    max_events: int
     max_pending_changes: int
     default_view_hours: int
 
@@ -131,6 +133,7 @@ class EyeConfig:
     auth: AuthConfig
     capture_fixtures: Path | None
     ais_capture_fixtures: Path | None
+    event_capture_fixtures: Path | None
     count_lines: Path | None
     database_url_env: str
     enabled_providers: tuple[str, ...]
@@ -190,6 +193,7 @@ def _api(table: dict) -> ApiConfig:
         max_coverage=_int(table, "max_coverage", 1000, 1, 1000),
         max_counts=_int(table, "max_counts", 168, 1, 168),
         max_crossings=_int(table, "max_crossings", 1000, 1, 1000),
+        max_events=_int(table, "max_events", 500, 1, 1000),
         max_pending_changes=_int(table, "max_pending_changes", 50, 1, 1000),
         default_view_hours=_int(table, "default_view_hours", 4, 1, 168),
     )
@@ -276,6 +280,7 @@ def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None)
 
     capture_fixtures = directory("capture_fixtures")
     ais_capture_fixtures = directory("ais_capture_fixtures")
+    event_capture_fixtures = directory("event_capture_fixtures")
     count_lines = directory("count_lines")
 
     # The URL itself (with any password) lives only in the environment or a
@@ -337,6 +342,7 @@ def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None)
         auth=auth,
         capture_fixtures=capture_fixtures,
         ais_capture_fixtures=ais_capture_fixtures,
+        event_capture_fixtures=event_capture_fixtures,
         count_lines=count_lines,
         database_url_env=url_env,
         enabled_providers=tuple(enabled),

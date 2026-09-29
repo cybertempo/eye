@@ -1,0 +1,110 @@
+{
+  "entry": "ServerMessage",
+  "note": "positive control: year 0001 is the earliest supported year",
+  "message": {
+    "schema_version": "eye.wire/2",
+    "kind": "snapshot",
+    "cursor": "c-0001",
+    "generated_at": "2026-01-01T01:00:00Z",
+    "synthetic": true,
+    "area": {
+      "name": "Synthetic test area",
+      "bbox": [
+        -0.5,
+        -0.5,
+        0.5,
+        0.5
+      ]
+    },
+    "interval": {
+      "start": "0001-01-01T00:00:00Z",
+      "end": "2026-01-01T01:00:00Z"
+    },
+    "tracks": [
+      {
+        "id": "syn-track-flt-001",
+        "kind": "flight",
+        "source": "synthetic-fixture",
+        "source_record_id": "SYN-FLT-001",
+        "display_type": "observed",
+        "points": [
+          {
+            "observed_time": "2026-01-01T00:00:00Z",
+            "received_time": "2026-01-01T00:00:04Z",
+            "lon": -0.4,
+            "lat": -0.2,
+            "alt_m": 9100
+          }
+        ],
+        "quality_flags": []
+      }
+    ],
+    "events": [
+      {
+        "id": "syn-event-road-001",
+        "kind": "road_closure",
+        "source": "synthetic-fixture",
+        "status": "reported",
+        "reported_event_location": {
+          "type": "segment",
+          "coords": [
+            [
+              0.02,
+              -0.3
+            ],
+            [
+              0.05,
+              -0.28
+            ]
+          ],
+          "precision_m": 250
+        },
+        "event_time": "2026-01-01T00:12:00Z",
+        "published_time": "2026-01-01T00:18:00Z",
+        "received_time": "2026-01-01T00:18:20Z",
+        "replayed": false,
+        "revisions": []
+      }
+    ],
+    "coverage": [
+      {
+        "layer": "flight",
+        "interval": {
+          "start": "2026-01-01T00:00:00Z",
+          "end": "2026-01-01T01:00:00Z"
+        },
+        "state": "qualified",
+        "metric": {
+          "name": "tracks_observed",
+          "value": 1
+        }
+      },
+      {
+        "layer": "road",
+        "interval": {
+          "start": "2026-01-01T00:00:00Z",
+          "end": "2026-01-01T01:00:00Z"
+        },
+        "state": "qualified",
+        "reason": "feed healthy; nothing reported",
+        "metric": {
+          "name": "events_reported",
+          "value": 0
+        }
+      },
+      {
+        "layer": "vessel",
+        "interval": {
+          "start": "2026-01-01T00:00:00Z",
+          "end": "2026-01-01T01:00:00Z"
+        },
+        "state": "failed",
+        "reason": "synthetic provider timeout",
+        "metric": {
+          "name": "tracks_observed",
+          "value": null
+        }
+      }
+    ]
+  }
+}

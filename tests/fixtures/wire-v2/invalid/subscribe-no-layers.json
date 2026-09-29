@@ -1,0 +1,20 @@
+{
+  "entry": "ClientMessage",
+  "note": "at least one layer",
+  "message": {
+    "schema_version": "eye.wire/2",
+    "kind": "subscribe",
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "interval": {
+      "start": "2026-01-01T00:00:00Z",
+      "end": "2026-01-01T01:00:00Z"
+    },
+    "layers": [],
+    "resume_cursor": null
+  }
+}

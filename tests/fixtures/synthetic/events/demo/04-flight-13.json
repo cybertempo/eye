@@ -1,0 +1,60 @@
+{
+  "capture_format": "eye.synthetic-event-claims/1",
+  "synthetic": true,
+  "source_id": "synthetic-events",
+  "adapter_version": "synthetic-events/1",
+  "note": "Invented flight event report for the demo: the accident site revised in a final report.",
+  "layer": "flight",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-02-01T13:00:00Z",
+    "end": "2026-02-01T14:00:00Z",
+    "expected_interval_s": 3600
+  },
+  "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every claim",
+    "started_at": "2026-02-01T14:00:05Z",
+    "finished_at": "2026-02-01T14:00:10Z",
+    "provider_status": "ok",
+    "quota_cost": 0,
+    "observed_start": "2026-02-01T13:00:00Z",
+    "observed_end": "2026-02-01T14:00:00Z"
+  },
+  "provider_response": {
+    "claims": [
+      {
+        "case_id": "SYN-AV-1",
+        "basis": "official_report",
+        "kind": "aviation_accident",
+        "status": "final",
+        "event_time": "2026-02-01T12:18:00Z",
+        "event_time_uncertainty_s": 60,
+        "source_published_time": "2026-02-01T13:40:00Z",
+        "location": {
+          "type": "point",
+          "coords": [
+            0.07,
+            0.31
+          ],
+          "precision_m": 250
+        },
+        "evidence_ref": "synthetic-doc:SYN-AV-1:final-report",
+        "subject": {
+          "identifiers": [
+            "track:synthetic-fixture:flight:SYN-FLT-777"
+          ],
+          "window": {
+            "start": "2026-02-01T11:30:00Z",
+            "end": "2026-02-01T12:30:00Z"
+          }
+        },
+        "summary": "Invented final report: accident site revised."
+      }
+    ]
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "capture_format": "eye.synthetic-event-claims/1",
+  "synthetic": true,
+  "source_id": "synthetic-events",
+  "adapter_version": "synthetic-events/1",
+  "note": "Invented vessel event reports for the demo: a sourced casualty notice and an AIS-gap review candidate.",
+  "layer": "vessel",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-02-01T12:00:00Z",
+    "end": "2026-02-01T13:00:00Z",
+    "expected_interval_s": 3600
+  },
+  "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every claim",
+    "started_at": "2026-02-01T13:00:05Z",
+    "finished_at": "2026-02-01T13:00:10Z",
+    "provider_status": "ok",
+    "quota_cost": 0,
+    "observed_start": "2026-02-01T12:00:00Z",
+    "observed_end": "2026-02-01T13:00:00Z"
+  },
+  "provider_response": {
+    "claims": [
+      {
+        "case_id": "SYN-MC-1",
+        "basis": "official_report",
+        "kind": "marine_casualty",
+        "status": "reported",
+        "event_time": "2026-02-01T12:52:00Z",
+        "event_time_uncertainty_s": 300,
+        "source_published_time": "2026-02-01T12:58:00Z",
+        "location": {
+          "type": "area",
+          "coords": [
+            [
+              0.39,
+              -0.01
+            ],
+            [
+              0.41000000000000003,
+              -0.01
+            ],
+            [
+              0.41000000000000003,
+              0.01
+            ],
+            [
+              0.39,
+              0.01
+            ],
+            [
+              0.39,
+              -0.01
+            ]
+          ],
+          "precision_m": 1500
+        },
+        "evidence_ref": "synthetic-doc:SYN-MC-1:initial-notice",
+        "subject": {
+          "identifiers": [
+            "track:synthetic-ais:vessel:SYNV-0020"
+          ],
+          "window": {
+            "start": "2026-02-01T12:30:00Z",
+            "end": "2026-02-01T13:00:00Z"
+          }
+        },
+        "summary": "Invented marine casualty notice: vessel reported in difficulty; area approximate."
+      },
+      {
+        "case_id": "SYN-GAP-21",
+        "basis": "motion_inference",
+        "kind": "ais_gap",
+        "status": "candidate",
+        "event_time": "2026-02-01T12:29:00Z",
+        "event_time_uncertainty_s": 60,
+        "source_published_time": "2026-02-01T12:45:00Z",
+        "location": {
+          "type": "point",
+          "coords": [
+            0.15,
+            0.0566
+          ],
+          "precision_m": 1000
+        },
+        "evidence_ref": null,
+        "subject": {
+          "identifiers": [
+            "track:synthetic-ais:vessel:SYNV-0021"
+          ],
+          "window": {
+            "start": "2026-02-01T12:00:00Z",
+            "end": "2026-02-01T12:45:00Z"
+          }
+        },
+        "summary": "AIS reports stopped after 12:29. Review candidate only; not a report of any casualty."
+      }
+    ]
+  }
+}

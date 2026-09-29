@@ -2,7 +2,7 @@
   "entry": "ClientMessage",
   "note": "at least one layer",
   "message": {
-    "schema_version": "eye.wire/2",
+    "schema_version": "eye.wire/3",
     "kind": "subscribe",
     "bbox": [
       -0.5,

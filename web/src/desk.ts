@@ -2,9 +2,19 @@
 // uncertainty, timestamps, evidence IDs and source labels behind each count.
 // Values are inserted with textContent only, never as HTML.
 
-import type { Coverage, Track, TransitsMessage } from "./generated/wire-types.js";
+import type { Coverage, EventCase, Track, TransitsMessage } from "./generated/wire-types.js";
 import {
+  claimHistory,
   compareTime,
+  currentClaim,
+  eventAssessment,
+  eventCoverageText,
+  eventErrors,
+  reportsMeasured,
+  eventTimeText,
+  kindLabel,
+  lastObservedText,
+  locationText,
   countFigures,
   coverageMetric,
   crossingTime,
@@ -44,6 +54,7 @@ function ids(values: readonly string[]): Node {
 
 export function fillTable(
   table: HTMLTableElement, caption: string, headings: string[], rows: { cells: Cell[]; className?: string }[],
+  emptyText = "No rows for this interval.",
 ): void {
   table.replaceChildren();
   table.createCaption().textContent = caption;
@@ -57,7 +68,7 @@ export function fillTable(
   if (rows.length === 0) {
     const cell = body.insertRow().insertCell();
     cell.colSpan = headings.length;
-    cell.textContent = "No rows for this interval.";
+    cell.textContent = emptyText;
   }
   for (const row of rows) {
     const tr = body.insertRow();
@@ -189,18 +200,87 @@ export function renderTracks(tracks: readonly Track[]): void {
   );
 }
 
+/** Where event-report coverage is shown instead of the general coverage table. */
+export const EVENT_COVERAGE_POINTER =
+  "Event-report coverage is not listed here: its intervals are reporting windows and its per-capture " +
+  "counts must not be added together, so it is shown with those labels under DESK, world events, " +
+  "Event-report coverage.";
+
+/** An event-report row: shown only in the labelled event panel, never here. */
+function isEventCoverage(c: Coverage): boolean {
+  return c.metric.name === "event_cases_in_view" || c.interval_kind !== undefined || c.batch_id !== undefined;
+}
+
 export function renderCoverage(coverage: readonly Coverage[]): void {
   const table = document.getElementById("coverage-facts");
   if (!(table instanceof HTMLTableElement)) return;
   fillTable(
     table,
-    "Coverage in view. A missing or failed capture is unknown, never zero.",
+    `Coverage in view. A missing or failed capture is unknown, never zero. ${EVENT_COVERAGE_POINTER}`,
     ["Interval (UTC)", "Layer", "State", "Metric", "Reason"],
-    [...coverage]
+    coverage
+      .filter((c) => !isEventCoverage(c))
       .sort((a, b) => compareTime(a.interval.start, b.interval.start) || a.layer.localeCompare(b.layer))
       .map((c) => ({
         className: `state-${c.state}`,
         cells: [intervalText(c.interval), c.layer, c.state, coverageMetric(c), c.reason ?? "none"],
       })),
+    `No track coverage in view. ${EVENT_COVERAGE_POINTER}`,
+  );
+}
+
+/**
+ * World events: one row per case. The reported location and the last
+ * observed position are separate columns and never merged. A case that breaks
+ * a consistency rule is refused in its row, not shown as if it were valid.
+ */
+export function renderEvents(events: readonly EventCase[], coverage: readonly Coverage[], layers: readonly string[]): void {
+  const lines = eventCoverageText(coverage, layers);
+  const target = document.getElementById("event-coverage");
+  if (target) target.replaceChildren(list(lines));
+  const measured = reportsMeasured(coverage, layers);
+  const table = document.getElementById("event-facts");
+  if (!(table instanceof HTMLTableElement)) return;
+  const rows = [...events]
+    .sort((a, b) => a.layer.localeCompare(b.layer) || a.source.localeCompare(b.source) || a.case_id.localeCompare(b.case_id))
+    .map((event) => {
+      const errors = eventErrors(event);
+      if (errors.length > 0) {
+        return {
+          cells: [`${event.source_label}: ${event.case_id}`, `Refused an inconsistent case (${errors[0] ?? ""})`,
+            "", "", "", "", "", ""],
+          className: `event refused`,
+        };
+      }
+      const current = currentClaim(event);
+      const shown = current ?? event.claims.find((c) => c.is_current === null) ?? event.claims[event.claims.length - 1];
+      const reported = event.standing === "unresolved"
+        ? list(event.claims.filter((c) => c.is_current === null).map((c) => locationText(c.reported_event_location)))
+        : shown ? locationText(shown.reported_event_location) : "";
+      return {
+        cells: [
+          `${event.source_label}: ${event.case_id}`,
+          eventAssessment(event),
+          shown ? `${kindLabel(shown.kind)} (${event.layer})` : event.layer,
+          reported,
+          shown ? eventTimeText(shown) : "",
+          lastObservedText(event),
+          shown ? `${shown.evidence_ref ?? "none (motion data)"}; batches ${shown.evidence_batch_ids.join(", ")}` : "",
+          list(claimHistory(event)),
+        ],
+        className: `event standing-${event.standing}`,
+      };
+    });
+  fillTable(
+    table,
+    "World events: sourced reports, review candidates and their history",
+    ["Case", "Assessment", "Kind", "Reported event location", "Event time", "Last observed position (track)",
+      "Evidence", "History (every version)"],
+    rows,
+    measured
+      ? "No event reports in this view: the captures above found none published in their reporting windows. " +
+        "Whether any event occurred is Unknown: a report published later can still add one."
+      : "No event cases shown. Reports are unknown for part of this view (see event-report coverage above), " +
+        "and whether any event occurred is Unknown.",
   );
 }

@@ -18,7 +18,7 @@ def snapshot() -> dict:
 def test_marked_synthetic(snapshot):
     assert snapshot["synthetic"] is True
     assert all(t["source"] == "synthetic-fixture" for t in snapshot["tracks"])
-    assert all(e["source"] == "synthetic-fixture" for e in snapshot["events"])
+    assert all(e["source"] == "synthetic-events" for e in snapshot["events"])
 
 
 def test_source_and_receipt_times_are_separate(snapshot):
@@ -37,18 +37,30 @@ def test_outage_is_unknown_not_zero(snapshot):
 
 
 def test_late_correction_keeps_history(snapshot):
-    corrected = [e for e in snapshot["events"] if e["status"] == "corrected"]
+    corrected = [e for e in snapshot["events"] if len(e["claims"]) > 1]
     assert corrected
     for event in corrected:
-        revisions = event["revisions"]
-        assert len(revisions) >= 2
-        assert [r["revision"] for r in revisions] == sorted(r["revision"] for r in revisions)
-        assert revisions[-1]["location"] == event["reported_event_location"]
-        assert revisions[0]["location"] != revisions[-1]["location"]
+        claims = event["claims"]
+        assert [c["version"] for c in claims] == sorted(c["version"] for c in claims)
+        assert [c["published_time"] for c in claims] == sorted(c["published_time"] for c in claims)
+        current = [c["claim_id"] for c in claims if c["is_current"]]
+        assert current == [event["current_claim_id"]] == [claims[-1]["claim_id"]]
+        first, last = claims[0], claims[-1]
+        assert first["reported_event_location"] != last["reported_event_location"]
 
 
 def test_demo_contains_brief_cases(snapshot):
-    kinds = {e["kind"] for e in snapshot["events"]}
+    kinds = {c["kind"] for e in snapshot["events"] for c in e["claims"]}
     assert "road_closure" in kinds
-    assert any(e["replayed"] for e in snapshot["events"])
+    # A replayed delivery is a second receipt of the same claim, not a new claim.
+    assert any(len(c["evidence_batch_ids"]) >= 2 for e in snapshot["events"] for c in e["claims"])
     assert {t["kind"] for t in snapshot["tracks"]} >= {"flight", "vessel"}
+
+
+def test_motion_candidate_is_never_an_accident(snapshot):
+    candidates = [e for e in snapshot["events"] if e["standing"] == "review_candidate"]
+    assert candidates
+    for event in candidates:
+        for c in event["claims"]:
+            assert c["basis"] == "motion_inference" and c["status"] == "candidate"
+            assert c["kind"] not in {"aviation_accident", "marine_casualty", "road_collision"}

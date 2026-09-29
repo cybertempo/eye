@@ -1,6 +1,9 @@
 # ADR 0004: Package 3 browser and API
 
-Date: 2026-09-28. Status: proposed (awaiting owner review).
+Date: 2026-09-28. Status: accepted: merged to `main` in PR #4 (merge commit
+`01692ee`, 2026-09-29). The wire version in decisions 2 and 16 has since moved
+to `eye.wire/3` for event cases ([ADR 0005](0005-package-4c-event-ledger.md));
+the rest stands.
 
 ## Decisions
 

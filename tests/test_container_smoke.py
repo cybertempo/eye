@@ -33,10 +33,16 @@ def test_cleanup_failure_refuses_success_and_clean_cleanup_passes(tmp_path: Path
         {"state": "unknown", "total": None},
         {"state": "qualified", "total": 0},
     ]
+    candidates = {"SYN-SL-1", "SYN-GAP-21", "SYN-TS-1"}
+    events = [
+        {"case_id": case, "standing": "review_candidate" if case in candidates else "report"}
+        for case in (*sorted(candidates), "SYN-AV-1", "SYN-MC-1", "SYN-RD-1", "SYN-RD-2")
+    ]
     curl.write_text(
         "#!/bin/sh\n"
         'case "$*" in\n'
         f"  *transits*) echo '{json.dumps({'counts': counts})}' ;;\n"
+        f"  *snapshot*) echo '{json.dumps({'events': events})}' ;;\n"
         "esac\n"
         "exit 0\n",
         encoding="utf-8",
@@ -59,4 +65,45 @@ def test_cleanup_failure_refuses_success_and_clean_cleanup_passes(tmp_path: Path
         if expected:
             assert "cleanup FAILED" in result.stderr
         else:
-            assert "health, snapshot and transit counts OK" in result.stdout
+            assert "health, snapshot, event cases and transit counts OK" in result.stdout
+
+
+def test_smoke_refuses_a_candidate_shown_as_a_report(tmp_path: Path):
+    """Negative control for the event check: a candidate relabelled as a report fails."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker = bin_dir / "docker"
+    docker.write_text(
+        '#!/bin/sh\ncase "$4" in\n  port) echo "127.0.0.1:8765" ;;\nesac\nexit 0\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    events = [
+        {"case_id": case, "standing": "report"}
+        for case in (
+            "SYN-SL-1",
+            "SYN-GAP-21",
+            "SYN-TS-1",
+            "SYN-AV-1",
+            "SYN-MC-1",
+            "SYN-RD-1",
+            "SYN-RD-2",
+        )
+    ]
+    curl = bin_dir / "curl"
+    curl.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        f"  *snapshot*) echo '{json.dumps({'events': events})}' ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    env["EYE_DEMO_PORT"] = "8765"
+    result = subprocess.run(
+        [str(SMOKE)], cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=15
+    )
+    assert result.returncode != 0
+    assert "unexpected event cases" in result.stderr

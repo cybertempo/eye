@@ -1,0 +1,12 @@
+{
+  "entry": "ServerMessage",
+  "note": "unexpected fields are refused",
+  "message": {
+    "schema_version": "eye.wire/2",
+    "kind": "health",
+    "status": "ok",
+    "mode": "demo",
+    "synthetic": true,
+    "debug": true
+  }
+}

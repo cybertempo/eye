@@ -1,0 +1,22 @@
+{
+  "entry": "ClientMessage",
+  "note": "bbox has four numbers",
+  "message": {
+    "schema_version": "eye.wire/2",
+    "kind": "subscribe",
+    "bbox": [
+      0,
+      0,
+      1
+    ],
+    "interval": {
+      "start": "2026-01-01T00:00:00Z",
+      "end": "2026-01-01T01:00:00Z"
+    },
+    "layers": [
+      "flight",
+      "vessel"
+    ],
+    "resume_cursor": null
+  }
+}

@@ -6,8 +6,8 @@
 // they never change a stored position, a count or any text in the fact tables.
 // This is an illustrative view, not a measurement surface.
 
-import { routeRuns } from "./facts.js";
-import type { BBox, Position, Track, TrackPoint } from "./generated/wire-types.js";
+import { eventErrors, routeRuns } from "./facts.js";
+import type { BBox, EventCase, EventClaim, Position, Track, TrackPoint } from "./generated/wire-types.js";
 
 export type Preset = "low" | "balanced" | "high";
 
@@ -31,6 +31,7 @@ const RAD = Math.PI / 180;
 
 export interface GlobeData {
   tracks: readonly Track[];
+  events: readonly EventCase[];
   area: BBox | null;
   line: readonly [Position, Position] | null;
 }
@@ -53,7 +54,7 @@ export class Globe {
   private lat = 0;
   private zoom = 1;
   private preset: Preset = "balanced";
-  private data: GlobeData = { tracks: [], area: null, line: null };
+  private data: GlobeData = { tracks: [], events: [], area: null, line: null };
   private home: { lon: number; lat: number; zoom: number } = { lon: 0, lat: 0, zoom: 1 };
 
   constructor(private readonly canvas: HTMLCanvasElement, private readonly onChange: (text: string) => void) {}
@@ -86,6 +87,7 @@ export class Globe {
     }
     if (this.data.line) points.push(...this.data.line);
     if (points.length === 0) return null;
+    // Events do not move the fitted view: they are drawn where they fall.
     const lons = points.map((p) => p[0]);
     const lats = points.map((p) => p[1]);
     const pad = 0.05;
@@ -126,6 +128,77 @@ export class Globe {
       `${tracks} track${tracks === 1 ? "" : "s"}${this.data.line ? " and the count line" : ""} drawn. ` +
       "Graticule only: no basemap. Illustrative, not for measurement."
     );
+  }
+
+  /**
+   * Event cases: the reported location of the current claim (or of every
+   * conflicting latest claim) at its stated precision, and, separately, a
+   * linked track's last observed position. The two are never joined by a line.
+   * Review candidates are grey and dashed; sourced reports are solid.
+   */
+  private paintEvents(
+    ctx: CanvasRenderingContext2D, radius: number, colour: (name: string, fallback: string) => string,
+  ): void {
+    const marks: Record<string, { style: string; reported: string[]; lastObserved: boolean }> = {};
+    for (const event of this.data.events) {
+      if (eventErrors(event).length > 0) continue; // refused cases are not drawn
+      const shown = event.standing === "unresolved"
+        ? event.claims.filter((c) => c.is_current === null)
+        : event.claims.filter((c) => c.is_current === true);
+      const candidate = event.standing === "review_candidate";
+      ctx.strokeStyle = candidate ? colour("--globe-event-candidate", "#6b6b6b") : colour("--globe-event", "#b35900");
+      ctx.setLineDash(candidate || event.standing === "unresolved" ? [4, 3] : []);
+      ctx.lineWidth = 2;
+      for (const claim of shown) this.drawLocation(ctx, claim, radius);
+      ctx.setLineDash([]);
+      const last = event.last_observed_position;
+      if (last) {
+        const p = this.project(last.lon, last.lat, radius);
+        if (p) {
+          ctx.fillStyle = colour("--globe-last-seen", "#0b5cad");
+          ctx.fillRect(p[0] - 3, p[1] - 3, 6, 6);
+        }
+      }
+      marks[event.id] = {
+        style: event.standing,
+        reported: shown.map((c) => c.reported_event_location.type),
+        lastObserved: last !== null,
+      };
+    }
+    this.canvas.dataset.eventMarks = JSON.stringify(marks);
+  }
+
+  private drawLocation(ctx: CanvasRenderingContext2D, claim: EventClaim, radius: number): void {
+    const location = claim.reported_event_location;
+    if (location.type === "point") {
+      const [lon, lat] = location.coords;
+      const p = this.project(lon, lat, radius);
+      if (!p) return;
+      // Draw the stated precision, never a sharper point than the source gave.
+      const edge = this.project(lon, Math.min(90, lat + location.precision_m / 111_320), radius);
+      const size = edge ? Math.max(4, Math.hypot(edge[0] - p[0], edge[1] - p[1])) : 4;
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], size, 0, Math.PI * 2);
+      ctx.stroke();
+      return;
+    }
+    this.path(ctx, location.coords.map((c) => [c[0], c[1]] as const), radius);
+    if (location.type === "segment" && location.direction === "forward" && location.coords.length >= 2) {
+      // An arrowhead at the end: only this direction of travel is affected.
+      const a = location.coords[location.coords.length - 2];
+      const b = location.coords[location.coords.length - 1];
+      const pa = a ? this.project(a[0], a[1], radius) : null;
+      const pb = b ? this.project(b[0], b[1], radius) : null;
+      if (pa && pb) {
+        const angle = Math.atan2(pb[1] - pa[1], pb[0] - pa[0]);
+        ctx.beginPath();
+        ctx.moveTo(pb[0], pb[1]);
+        ctx.lineTo(pb[0] - 8 * Math.cos(angle - 0.4), pb[1] - 8 * Math.sin(angle - 0.4));
+        ctx.moveTo(pb[0], pb[1]);
+        ctx.lineTo(pb[0] - 8 * Math.cos(angle + 0.4), pb[1] - 8 * Math.sin(angle + 0.4));
+        ctx.stroke();
+      }
+    }
   }
 
   private project(lon: number, lat: number, radius: number): [number, number] | null {
@@ -237,6 +310,7 @@ export class Globe {
     }
     this.canvas.dataset.routePoints = String(routePoints);
     this.canvas.dataset.claimMarkers = String(claimMarkers);
+    this.paintEvents(ctx, radius, colour);
     // What was stroked, by track id: the observed times of each drawn run.
     this.canvas.dataset.routeRuns = JSON.stringify(drawnRuns);
   }

@@ -1,0 +1,41 @@
+{
+  "entry": "ServerMessage",
+  "note": "snapshot with no data is valid; coverage says why",
+  "message": {
+    "schema_version": "eye.wire/2",
+    "kind": "snapshot",
+    "cursor": "c-0001",
+    "generated_at": "2026-01-01T01:00:00Z",
+    "synthetic": true,
+    "area": {
+      "name": "Synthetic test area",
+      "bbox": [
+        -0.5,
+        -0.5,
+        0.5,
+        0.5
+      ]
+    },
+    "interval": {
+      "start": "2026-01-01T00:00:00Z",
+      "end": "2026-01-01T01:00:00Z"
+    },
+    "tracks": [],
+    "events": [],
+    "coverage": [
+      {
+        "layer": "vessel",
+        "interval": {
+          "start": "2026-01-01T00:00:00Z",
+          "end": "2026-01-01T01:00:00Z"
+        },
+        "state": "unknown",
+        "reason": "no source registered for this area",
+        "metric": {
+          "name": "tracks_observed",
+          "value": null
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "capture_format": "eye.synthetic-event-claims/1",
+  "synthetic": true,
+  "source_id": "synthetic-events",
+  "adapter_version": "synthetic-events/1",
+  "note": "Invented vessel event report for the demo: a revised casualty area.",
+  "layer": "vessel",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-02-01T13:00:00Z",
+    "end": "2026-02-01T14:00:00Z",
+    "expected_interval_s": 3600
+  },
+  "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every claim",
+    "started_at": "2026-02-01T14:00:05Z",
+    "finished_at": "2026-02-01T14:00:10Z",
+    "provider_status": "ok",
+    "quota_cost": 0,
+    "observed_start": "2026-02-01T13:00:00Z",
+    "observed_end": "2026-02-01T14:00:00Z"
+  },
+  "provider_response": {
+    "claims": [
+      {
+        "case_id": "SYN-MC-1",
+        "basis": "official_report",
+        "kind": "marine_casualty",
+        "status": "preliminary",
+        "event_time": "2026-02-01T12:51:00Z",
+        "event_time_uncertainty_s": 120,
+        "source_published_time": "2026-02-01T13:30:00Z",
+        "location": {
+          "type": "area",
+          "coords": [
+            [
+              0.40499999999999997,
+              0.005
+            ],
+            [
+              0.415,
+              0.005
+            ],
+            [
+              0.415,
+              0.015
+            ],
+            [
+              0.40499999999999997,
+              0.015
+            ],
+            [
+              0.40499999999999997,
+              0.005
+            ]
+          ],
+          "precision_m": 600
+        },
+        "evidence_ref": "synthetic-doc:SYN-MC-1:preliminary-report",
+        "subject": {
+          "identifiers": [
+            "track:synthetic-ais:vessel:SYNV-0020"
+          ],
+          "window": {
+            "start": "2026-02-01T12:30:00Z",
+            "end": "2026-02-01T13:00:00Z"
+          }
+        },
+        "summary": "Invented preliminary report: casualty area revised to the north-east."
+      }
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 """Loopback HTTP and WebSocket server for THEATRE and DESK (standard library + pg8000).
 
-Serves bounded, database-backed ``eye.wire/2`` messages:
+Serves bounded, database-backed ``eye.wire/3`` messages:
 
 - ``GET /api/v0/health``     process health (no database access)
 - ``GET /api/v0/snapshot``   tracks and coverage for an area, interval and layer set
@@ -88,6 +88,7 @@ def limits_for(config: EyeConfig) -> feed.Limits:
         max_coverage=api.max_coverage,
         max_counts=api.max_counts,
         max_crossings=api.max_crossings,
+        max_events=api.max_events,
         max_changes=api.max_pending_changes,
         query_timeout_ms=api.query_timeout_ms,
         default_view_hours=api.default_view_hours,

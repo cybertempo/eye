@@ -189,7 +189,7 @@ def test_migration_0004_refuses_a_database_with_old_identity_ids(make_db, tmp_pa
     old.close()
     # Control: an empty database takes 0004 and loads the fixtures under the new rule.
     fresh = connect(make_db())
-    assert migrate(fresh)[-1] == 4
+    assert 4 in migrate(fresh)
     load_fixtures(fresh, CAPTURES)
     assert verify_replay(fresh) == []
     fresh.close()

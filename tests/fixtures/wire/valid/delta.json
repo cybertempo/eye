@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "sequenced WebSocket delta",
   "message": {
-    "schema_version": "eye.wire/2",
+    "schema_version": "eye.wire/3",
     "kind": "delta",
     "sequence": 2,
     "cursor": "c-0002",
