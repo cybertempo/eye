@@ -407,7 +407,7 @@ PART_OF_VIEW = "the source's area covers only part of this view; outside it even
 
 
 def _coverage(
-    conn, query: Query, limits: Limits, batch: str | None
+    conn, query: Query, limits: Limits, batch: str | None, events: list[dict] | None = None
 ) -> tuple[list[dict], set, list[tuple]]:
     """Coverage rows in view, their sources, and the event-report spans whose
     source area covers the whole view (the only ones that can close a gap).
@@ -416,6 +416,13 @@ def _coverage(
     for all of it: a qualified row becomes partial (a lower bound) with the
     reason, so a small healthy source is never read as a measured zero for a
     larger view.
+
+    Event-report rows are served in the view's own scope: the interval is
+    clipped to the view, and the count is the number of cases in ``events``
+    (the event list for this view) whose current or conflicting latest report
+    came from that batch, under the metric ``event_cases_in_view``. The stored
+    per-batch metric, which counts the whole capture, is never shown as a
+    count for the view.
     """
     rows = conn.run(COVERAGE, **_params(query), batch=batch, cap=limits.max_coverage + 1)
     if len(rows) > limits.max_coverage:
@@ -423,19 +430,25 @@ def _coverage(
             413, f"more than {limits.max_coverage} coverage rows; narrow the request"
         )
     out, sources, full = [], set(), []
-    for _cid, source, layer, start, end, state, reason, metric, value, _b, _rx, covers in rows:
+    view_start, view_end = iso(query.start), iso(query.end)
+    for _cid, source, layer, start, end, state, reason, metric, value, bid, _rx, covers in rows:
         if layer not in LAYERS:
             continue
         sources.add(source)
+        start, end = _t(start), _t(end)
         if metric == event_ledger.EVENT_METRIC:
+            start, end = event_ledger.clip(start, end, view_start, view_end)
+            metric = event_ledger.EVENT_VIEW_METRIC
+            if value is not None:
+                value = event_ledger.cases_in_view_from(events or [], bid)
             if covers:
-                full.append((layer, _t(start), _t(end)))
+                full.append((layer, start, end))
             elif state in ("qualified", "partial"):
                 state = "partial"
                 reason = PART_OF_VIEW if reason is None else f"{reason}; {PART_OF_VIEW}"[:500]
         item = {
             "layer": layer,
-            "interval": {"start": _t(start), "end": _t(end)},
+            "interval": {"start": start, "end": end},
             "state": state,
             "metric": {"name": metric, "value": None if value is None else _number(value)},
         }
@@ -470,10 +483,10 @@ def snapshot(conn: Connection, query: Query, limits: Limits, area_name: str) -> 
     try:
         epoch, seq = head(conn)
         tracks = _tracks(conn, query, limits, None)
-        coverage, sources, full = _coverage(conn, query, limits, None)
+        events = _events(conn, query, limits, None)
+        coverage, sources, full = _coverage(conn, query, limits, None, events)
         # Where no event-report source covered the whole view, events are unknown.
         coverage += event_ledger.coverage_gaps(full, query.layers, iso(query.start), iso(query.end))
-        events = _events(conn, query, limits, None)
         sources |= {t["source"] for t in tracks} | {e["source"] for e in events}
         synthetic = _synthetic(conn, sources)
     finally:
@@ -527,9 +540,10 @@ def delta(
         )[0][0]
     if fmt == EVENT_CAPTURE_FORMAT:
         events = _event_delta(conn, query, limits, batch_id)
-        coverage, _, added = _coverage(conn, query, limits, batch_id)
+        coverage, _, added = _coverage(conn, query, limits, batch_id, events)
         if added:
             _check_gaps_unchanged(conn, query, limits, added)
+        _check_counts_unchanged(conn, query, limits, batch_id, events)
         if len(events) > DELTA_MAX_ITEMS or len(coverage) > DELTA_MAX_ITEMS:
             raise QueryRefused(413, "batch is larger than one delta allows")
     elif kind == "capture_batch" and layer in query.layers:
@@ -581,6 +595,36 @@ def delta(
         "events_upserted": events,
         "coverage_upserted": coverage,
     }
+
+
+def _check_counts_unchanged(
+    conn, query: Query, limits: Limits, batch_id: str, events: list[dict]
+) -> None:
+    """A batch that touches a case another in-view batch's count includes needs a snapshot.
+
+    A served event-coverage count covers the cases in view whose current
+    reports came from that batch. A new version of such a case can change an
+    earlier batch's count, and a delta cannot replace a coverage row the
+    client already holds, so the server resnapshots before the cursor
+    advances.
+    """
+    others = {b for e in events for c in e["claims"] for b in c["evidence_batch_ids"]}
+    others.discard(batch_id)
+    if not others:
+        return
+    in_view = conn.run(
+        "SELECT DISTINCT c.batch_id::text FROM eye.coverage c "
+        "JOIN eye.capture_batch b USING (batch_id) "
+        "WHERE c.metric_name = :metric AND c.layer = ANY(CAST(:layers AS text[])) "
+        "AND c.interval_start < :end AND c.interval_end > :start "
+        "AND b.requested_area && ST_MakeEnvelope(:w, :s, :e, :n, 4326) "
+        "AND c.batch_id::text = ANY(CAST(:ids AS text[]))",
+        metric=event_ledger.EVENT_METRIC,
+        ids=sorted(others),
+        **_params(query),
+    )
+    if in_view:
+        raise QueryRefused(409, "a new version changed which report an in-view count cites")
 
 
 def _check_gaps_unchanged(conn, query: Query, limits: Limits, added: list[tuple]) -> None:

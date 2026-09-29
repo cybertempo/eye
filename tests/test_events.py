@@ -72,7 +72,7 @@ def event_coverage(message: dict, layer: str) -> list[tuple]:
     return [
         (c["interval"]["start"], c["interval"]["end"], c["state"], c["metric"]["value"])
         for c in message["coverage"]
-        if c["layer"] == layer and c["metric"]["name"] == "event_reports"
+        if c["layer"] == layer and c["metric"]["name"] == "event_cases_in_view"
     ]
 
 
@@ -604,25 +604,21 @@ def test_migration_0005_leaves_earlier_history_unchanged(make_db, tmp_path):
 # --- live: event deltas ----------------------------------------------------------------------
 
 
+def road_counts(message: dict) -> list:
+    """Served road event coverage: (start, end, state, cases in view)."""
+    return event_coverage(message, "road")
+
+
 def test_event_batches_arrive_as_deltas_and_a_moved_case_resnapshots(api_server, tmp_path):
     api = api_server()
     client = WsClient(api.host, api.port)
     client.send(subscribe(AREA, HOURS))
     base = client.recv()
     assert base["kind"] == "snapshot" and base["events"] == []
+    closure = segment([(-0.2, -0.2), (-0.1, -0.2)])
     api.ingest(
         capture(
-            tmp_path,
-            "new",
-            "road",
-            [
-                claim(
-                    "LIVE-1",
-                    "road_closure",
-                    DAY + "12:20:00Z",
-                    segment([(-0.2, -0.2), (-0.1, -0.2)]),
-                )
-            ],
+            tmp_path, "new", "road", [claim("LIVE-1", "road_closure", DAY + "12:20:00Z", closure)]
         )
     )
     api.server.hub.tick()
@@ -634,34 +630,44 @@ def test_event_batches_arrive_as_deltas_and_a_moved_case_resnapshots(api_server,
     assert first["kind"] == "snapshot" and reference_valid(first)
     (event,) = first["events"]
     assert event["case_id"] == "LIVE-1" and event["standing"] == "report"
-    assert event_coverage(first, "road")[0] == (
-        DAY + "12:00:00Z",
-        DAY + "13:00:00Z",
-        "qualified",
-        1,
+    assert road_counts(first)[0] == (DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 1)
+    # Control: a new case from a new batch, in an hour already covered, is an
+    # ordinary upsert, and its row counts only its own case in view.
+    api.ingest(
+        capture(
+            tmp_path,
+            "second",
+            "road",
+            [claim("LIVE-2", "road_closure", DAY + "12:25:00Z", point(0.1, -0.1))],
+            received=DAY + "13:00:15Z",
+        )
     )
-    # Control: a correction inside the view, in an hour already covered, is an
-    # ordinary upsert.
+    api.server.hub.tick()
+    delta = client.recv()
+    assert delta["kind"] == "delta" and reference_valid(delta)
+    assert [e["case_id"] for e in delta["events_upserted"]] == ["LIVE-2"]
+    (row,) = delta["coverage_upserted"]
+    assert (row["metric"]["name"], row["metric"]["value"]) == ("event_cases_in_view", 1)
+    # A correction of LIVE-1 moves its current report to a new batch, which
+    # changes the first batch's in-view count: a fresh snapshot, not a delta.
+    moved_closure = segment([(-0.2, -0.25), (-0.1, -0.25)])
     api.ingest(
         capture(
             tmp_path,
             "inside",
             "road",
-            [
-                claim(
-                    "LIVE-1",
-                    "road_closure",
-                    DAY + "12:30:00Z",
-                    segment([(-0.2, -0.25), (-0.1, -0.25)]),
-                )
-            ],
+            [claim("LIVE-1", "road_closure", DAY + "12:30:00Z", moved_closure)],
             received=DAY + "13:00:20Z",
         )
     )
     api.server.hub.tick()
-    moved = client.recv()
-    assert moved["kind"] == "delta"
-    assert [c["version"] for c in moved["events_upserted"][0]["claims"]] == [1, 2]
+    resync = client.recv()
+    assert resync["kind"] == "resync_required" and resync["reason"] == "overflow"
+    corrected = client.recv()
+    assert [c["version"] for c in case_of(corrected, "LIVE-1")["claims"]] == [1, 2]
+    counts = sorted(c[3] for c in road_counts(corrected) if c[2] == "qualified")
+    assert counts == [0, 1, 1]  # the superseded report's batch now counts no case in view
+    assert coverage_rows(corrected) == coverage_rows(snapshot(api, VIEW))
     # A correction moving the case out of view cannot be an upsert: resnapshot.
     api.ingest(
         capture(
@@ -677,7 +683,8 @@ def test_event_batches_arrive_as_deltas_and_a_moved_case_resnapshots(api_server,
     resync = client.recv()
     assert resync["kind"] == "resync_required" and resync["reason"] == "overflow"
     fresh = client.recv()
-    assert fresh["kind"] == "snapshot" and fresh["events"] == []
+    assert fresh["kind"] == "snapshot"
+    assert [e["case_id"] for e in fresh["events"]] == ["LIVE-2"]
     client.close()
 
 
@@ -775,7 +782,7 @@ def test_small_source_area_is_partial_for_a_larger_view(api_server, tmp_path):
     api = api_server()
     api.ingest(capture(tmp_path, "small", "road", [], bbox=SMALL))  # healthy, nothing reported
     wide = snapshot(api, VIEW + "&layers=road")
-    rows = [c for c in wide["coverage"] if c["metric"]["name"] == "event_reports"]
+    rows = [c for c in wide["coverage"] if c["metric"]["name"] == "event_cases_in_view"]
     (partial,) = [c for c in rows if c["state"] == "partial"]
     assert partial["interval"] == {"start": DAY + "12:00:00Z", "end": DAY + "13:00:00Z"}
     assert partial["metric"]["value"] == 0  # a lower bound, not a measured zero
@@ -922,4 +929,108 @@ def test_a_capture_filling_part_of_a_gap_resnapshots_and_matches_rest(api_server
         (DAY + "13:00:00Z", DAY + "16:00:00Z", "unknown", None),
     ]
     assert coverage_rows(live) == coverage_rows(snapshot(api, VIEW))
+    client.close()
+
+
+# --- O59: counts are for the view, not the whole capture ------------------------------------
+
+HOUR12 = "/api/v0/snapshot?start=2026-02-01T12:00:00Z&end=2026-02-01T13:00:00Z&layers=road"
+
+
+def three_cases(tmp_path, name: str = "three", received: str | None = None):
+    """One road batch over the whole demo area, 12:00-13:00: two cases near
+    0.1,0.1 (12:15 and 12:45) and one far away at -0.4,-0.4 (12:15)."""
+    return capture(
+        tmp_path,
+        name,
+        "road",
+        [
+            claim(
+                "NEAR-EARLY",
+                "road_closure",
+                DAY + "12:16:00Z",
+                point(0.1, 0.1),
+                event_time=DAY + "12:15:00Z",
+                uncertainty=60,
+            ),
+            claim(
+                "NEAR-LATE",
+                "road_closure",
+                DAY + "12:46:00Z",
+                point(0.1, 0.1),
+                event_time=DAY + "12:45:00Z",
+                uncertainty=60,
+            ),
+            claim(
+                "FAR-EARLY",
+                "road_closure",
+                DAY + "12:16:00Z",
+                point(-0.4, -0.4),
+                event_time=DAY + "12:15:00Z",
+                uncertainty=60,
+            ),
+        ],
+        received=received,
+    )
+
+
+def view_count(message: dict) -> list:
+    return [(c[0], c[1], c[2], c[3]) for c in event_coverage(message, "road") if c[2] != "unknown"]
+
+
+def test_counts_follow_a_smaller_area(api_server, tmp_path):
+    api = api_server()
+    api.ingest(three_cases(tmp_path))
+    stored = api.conn.run(
+        "SELECT metric_value FROM eye.coverage WHERE metric_name = 'event_reports'"
+    )
+    assert stored == [[3]]  # the stored batch metric is unchanged: the whole capture
+    whole = snapshot(api, HOUR12)
+    assert view_count(whole) == [(DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 3)]
+    near = snapshot(api, HOUR12 + "&bbox=0.0,0.0,0.2,0.2")
+    assert {e["case_id"] for e in near["events"]} == {"NEAR-EARLY", "NEAR-LATE"}
+    assert view_count(near) == [(DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 2)]
+    # Paired: an area inside the capture with no case in it is a measured zero.
+    empty = snapshot(api, HOUR12 + "&bbox=0.3,0.3,0.45,0.45")
+    assert empty["events"] == []
+    assert view_count(empty) == [(DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 0)]
+
+
+def test_counts_follow_a_shorter_window(api_server, tmp_path):
+    api = api_server()
+    api.ingest(three_cases(tmp_path))
+    early = snapshot(
+        api, "/api/v0/snapshot?start=2026-02-01T12:00:00Z&end=2026-02-01T12:30:00Z&layers=road"
+    )
+    assert {e["case_id"] for e in early["events"]} == {"NEAR-EARLY", "FAR-EARLY"}
+    # The row is clipped to the window it speaks for, and counts only its cases.
+    assert view_count(early) == [(DAY + "12:00:00Z", DAY + "12:30:00Z", "qualified", 2)]
+    late = snapshot(
+        api, "/api/v0/snapshot?start=2026-02-01T12:30:00Z&end=2026-02-01T13:00:00Z&layers=road"
+    )
+    assert [e["case_id"] for e in late["events"]] == ["NEAR-LATE"]
+    assert view_count(late) == [(DAY + "12:30:00Z", DAY + "13:00:00Z", "qualified", 1)]
+
+
+def test_live_counts_are_view_scoped_and_match_rest(api_server, tmp_path):
+    api = api_server()
+    api.ingest(capture(tmp_path, "cover", "road", []))  # the hour is covered: next is a delta
+    small = (0.0, 0.0, 0.2, 0.2)
+    window = {"start": DAY + "12:00:00Z", "end": DAY + "13:00:00Z"}
+    client = WsClient(api.host, api.port)
+    client.send(subscribe(small, window, layers=("road",)))
+    base = client.recv()
+    assert base["kind"] == "snapshot" and base["events"] == []
+    api.ingest(three_cases(tmp_path, received=DAY + "13:00:20Z"))
+    api.server.hub.tick()
+    delta = client.recv()
+    assert delta["kind"] == "delta" and reference_valid(delta)
+    assert {e["case_id"] for e in delta["events_upserted"]} == {"NEAR-EARLY", "NEAR-LATE"}
+    (row,) = delta["coverage_upserted"]
+    assert (row["metric"]["name"], row["metric"]["value"]) == ("event_cases_in_view", 2)
+    rest = snapshot(api, HOUR12 + "&bbox=0.0,0.0,0.2,0.2")
+    live_rows = sorted(
+        json.dumps(c, sort_keys=True) for c in base["coverage"] + delta["coverage_upserted"]
+    )
+    assert live_rows == coverage_rows(rest)
     client.close()

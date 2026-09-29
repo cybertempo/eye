@@ -136,6 +136,8 @@ last observed position; THEATRE draws the two as separate marks.
   gap brings a fresh snapshot.
 - A case is shown when its event time, widened by its stated uncertainty,
   overlaps the view's interval.
+- Event-report counts in DESK are for the selected view (its area, interval
+  and current versions), never the whole capture's count.
 
 The only event source is `synthetic-events`, invented fixtures in
 `tests/fixtures/synthetic/events/`. See

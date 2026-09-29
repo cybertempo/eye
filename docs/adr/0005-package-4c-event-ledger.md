@@ -114,6 +114,20 @@ enabled; each waits for its own source-policy row (brief §6).
       no gap (for example one whose area lies outside the view) is an
       ordinary delta. The live DESK then matches a fresh REST view.
 
+13. **Review repair before merge (O59): counts are for the view.** The stored
+    per-batch metric `event_reports` counts the distinct cases in a whole
+    capture (its requested area and hour) and is kept unchanged for replay.
+    It is never served as a count for a view. Each event-coverage row is
+    served as `event_cases_in_view`: its interval is clipped to the view's
+    interval, and its value is the number of cases in the view's own event
+    list (same area, occurrence-interval and version rules) whose current or
+    conflicting latest report came from that batch. DESK reads "covered (n
+    cases in this view)". Because a new version of a case can change which
+    batch's row counts it, an event batch touching a case that another
+    in-view batch's row counts resnapshots rather than sending a delta; a
+    batch adding only new cases is still a delta. Rows are listed in a total
+    order so a live page and a fresh REST view read alike.
+
 ## Consequences
 
 - No worker derives review candidates from tracks yet; candidates arrive as

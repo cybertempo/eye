@@ -70,7 +70,11 @@ Every other earlier message is still a current message once relabelled.
   `current_claim_id` follow the current claim; conflicting latest claims have
   `is_current: null` and the case is `unresolved`. The browser refuses a case
   whose standing, current claim or link disagree.
-- Event-report coverage uses coverage rows with metric `event_reports`. A part
+- Event-report coverage is served with metric `event_cases_in_view`: the
+  row's interval is clipped to the view and its value counts the cases in
+  the view's own event list whose current report came from that batch (the
+  stored per-batch `event_reports` metric counts the whole capture and is
+  never served as a view count). A part
   of the view's interval that no event source covered over the whole view
   area is sent as `unknown` with a reason, never omitted, so absent reports
   are never read as "no events". A source whose area covers only part of the

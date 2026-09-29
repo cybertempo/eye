@@ -27,7 +27,11 @@ LINK_ALLOWANCE_M = 20_000
 MAX_CASE_CLAIMS = 100  # wire schema EventCase.claims maxItems
 MAX_CLAIM_EVIDENCE = 100  # wire schema evidence_batch_ids maxItems
 MAX_CANDIDATES = 10  # wire schema candidate_track_ids maxItems
-EVENT_METRIC = "event_reports"
+EVENT_METRIC = "event_reports"  # stored per batch: distinct cases in the whole capture
+# Served instead of the stored metric: cases in this view (the event list's own
+# area, occurrence-interval and version rules) whose current or conflicting
+# latest report came from that batch. The stored batch metric is unchanged.
+EVENT_VIEW_METRIC = "event_cases_in_view"
 NO_SOURCE = "no event-report source covers this area and time; events unknown, not absent"
 
 
@@ -357,6 +361,22 @@ def coverage_gaps(full_spans: list[tuple], layers, start: str, end: str) -> list
     return gaps
 
 
+def cases_in_view_from(events: list[dict], batch_id: str) -> int:
+    """Cases in this event list whose current (or conflicting latest) claim
+    came, possibly among others, from ``batch_id``."""
+    count = 0
+    for event in events:
+        latest = [c for c in event["claims"] if c["is_current"] is not False]
+        if any(batch_id in c["evidence_batch_ids"] for c in latest):
+            count += 1
+    return count
+
+
+def clip(interval_start: str, interval_end: str, start: str, end: str) -> tuple[str, str]:
+    """The part of [interval_start, interval_end) inside the view's [start, end)."""
+    return max(interval_start, start, key=_key), min(interval_end, end, key=_key)
+
+
 def _key(time: str) -> str:
     # Wire times: fixed-width fields, 0-6 fractional digits; pad for ordering.
     head, _, frac = time[:-1].partition(".")
@@ -369,5 +389,5 @@ def _gap(layer: str, start: str, end: str) -> dict:
         "interval": {"start": start, "end": end},
         "state": "unknown",
         "reason": NO_SOURCE,
-        "metric": {"name": EVENT_METRIC, "value": None},
+        "metric": {"name": EVENT_VIEW_METRIC, "value": None},
     }

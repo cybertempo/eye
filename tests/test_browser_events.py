@@ -232,9 +232,9 @@ def test_small_source_area_reads_partial_and_unknown_not_zero(api_server, page, 
     small_sources(api, tmp_path)
     open_events(page, api)  # the configured view is four times wider than the source area
     text = event_coverage_text(page)
-    assert text.count("partly covered (at least 0 cases") == 3
+    assert text.count("partly covered (at least 0 cases in this view") == 3
     assert text.count(f"{DAY}12:00:00Z to {DAY}16:00:00Z Unknown: no event-report source") == 3
-    assert " covered (0 cases)" not in text
+    assert " covered (0 cases in this view)" not in text
     empty = page.locator("#event-facts tbody").inner_text()
     assert "Events are unknown for part of this view" in empty
     assert "No event cases reported" not in empty
@@ -248,7 +248,7 @@ def test_view_inside_the_source_area_reads_measured_zero(api_server, page, tmp_p
     small_sources(api, tmp_path)
     open_events(page, api)
     text = event_coverage_text(page)
-    assert text.count(f"{DAY}12:00:00Z to {DAY}16:00:00Z covered (0 cases)") == 3
+    assert text.count(f"{DAY}12:00:00Z to {DAY}16:00:00Z covered (0 cases in this view)") == 3
     assert "Unknown" not in text and "partly" not in text
     empty = page.locator("#event-facts tbody").inner_text()
     assert "No event cases reported where event-report sources covered this view." in empty
@@ -275,7 +275,7 @@ def test_live_gap_fill_matches_a_fresh_rest_view(api_server, page, tmp_path):
     api.server.hub.tick()
     expect(status).to_have_attribute("data-snapshots", str(snapshots + 1), timeout=WAIT)
     expect(page.locator("#event-coverage")).to_contain_text(
-        f"road: {DAY}12:00:00Z to {DAY}13:00:00Z covered (0 cases); "
+        f"road: {DAY}12:00:00Z to {DAY}13:00:00Z covered (0 cases in this view); "
         f"{DAY}13:00:00Z to {DAY}16:00:00Z Unknown",
         timeout=WAIT,
     )
@@ -284,3 +284,124 @@ def test_live_gap_fill_matches_a_fresh_rest_view(api_server, page, tmp_path):
     page.reload()
     open_events(page, api)
     assert event_coverage_text(page) == live  # a fresh REST view shows the same
+
+
+# --- O59: DESK counts are for the view, not the whole capture ---------------------------------
+
+
+def set_window(page: Page, start: str, hours: int) -> None:
+    page.locator("#view-start").fill(start)
+    page.locator("#view-hours").fill(str(hours))
+    page.get_by_role("button", name="Show interval").click()
+    end = f"{start[:11]}{int(start[11:13]) + hours:02d}{start[13:]}"
+    expect(page.locator("#view-summary")).to_contain_text(f"{start} to {end}", timeout=WAIT)
+    expect(page.locator("#live-status")).to_have_attribute("data-state", "live", timeout=WAIT)
+
+
+def cover_other_layers(api, tmp_path, end: str = DAY + "13:00:00Z") -> None:
+    for layer in ("flight", "vessel"):
+        api.ingest(capture(tmp_path, f"quiet-{layer}", layer, [], end=end))
+
+
+def small_view_api(api_server, example_raw, bbox):
+    raw = json.loads(json.dumps(example_raw))
+    raw["view"]["bbox"] = list(bbox)
+    return api_server(mode_raw=raw)
+
+
+def test_desk_count_follows_a_smaller_area(api_server, page, tmp_path, example_raw):
+    from test_events import three_cases
+
+    api = small_view_api(api_server, example_raw, (0.0, 0.0, 0.2, 0.2))
+    api.ingest(three_cases(tmp_path))
+    cover_other_layers(api, tmp_path)
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    text = event_coverage_text(page)
+    assert f"road: {DAY}12:00:00Z to {DAY}13:00:00Z covered (2 cases in this view)" in text
+    assert "3 cases" not in text  # the whole capture's count is never shown for this view
+    for case in ("NEAR-EARLY", "NEAR-LATE"):
+        expect(event_row(page, case)).to_have_count(1)
+    expect(event_row(page, "FAR-EARLY")).to_have_count(0)
+
+
+def test_desk_area_without_cases_reads_zero_and_an_empty_table(
+    api_server, page, tmp_path, example_raw
+):
+    """Paired: inside the capture area but away from every case."""
+    from test_events import three_cases
+
+    api = small_view_api(api_server, example_raw, (0.3, 0.3, 0.45, 0.45))
+    api.ingest(three_cases(tmp_path))
+    cover_other_layers(api, tmp_path)
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    text = event_coverage_text(page)
+    assert f"road: {DAY}12:00:00Z to {DAY}13:00:00Z covered (0 cases in this view)" in text
+    assert "Unknown" not in text
+    empty = page.locator("#event-facts tbody").inner_text()
+    assert "No event cases reported where event-report sources covered this view." in empty
+
+
+def test_desk_count_follows_a_shorter_window(api_server, page, tmp_path):
+    api = api_server()
+    here = point(0.1, 0.1)
+    api.ingest(
+        capture(
+            tmp_path,
+            "two-hours",
+            "road",
+            [
+                claim(
+                    "HOUR-12",
+                    "road_closure",
+                    DAY + "12:16:00Z",
+                    here,
+                    event_time=DAY + "12:15:00Z",
+                    uncertainty=60,
+                ),
+                claim(
+                    "HOUR-13",
+                    "road_closure",
+                    DAY + "13:16:00Z",
+                    here,
+                    event_time=DAY + "13:15:00Z",
+                    uncertainty=60,
+                ),
+            ],
+            end=DAY + "14:00:00Z",
+        )
+    )
+    cover_other_layers(api, tmp_path, end=DAY + "14:00:00Z")
+    open_events(page, api)
+    for start, inside, outside in (("12", "HOUR-12", "HOUR-13"), ("13", "HOUR-13", "HOUR-12")):
+        set_window(page, f"{DAY}{start}:00:00Z", 1)
+        text = event_coverage_text(page)
+        span = f"{DAY}{start}:00:00Z to {DAY}{int(start) + 1}:00:00Z"
+        assert f"road: {span} covered (1 case in this view)" in text, text
+        assert "2 cases" not in text
+        expect(event_row(page, inside)).to_have_count(1)
+        expect(event_row(page, outside)).to_have_count(0)
+
+
+def test_live_desk_count_matches_a_fresh_rest_view(api_server, page, tmp_path, example_raw):
+    from test_events import three_cases
+
+    api = small_view_api(api_server, example_raw, (0.0, 0.0, 0.2, 0.2))
+    api.ingest(capture(tmp_path, "cover", "road", []))
+    cover_other_layers(api, tmp_path)
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    status = page.locator("#live-status")
+    deltas = int(status.get_attribute("data-deltas"))
+    api.ingest(three_cases(tmp_path, received=DAY + "13:00:20Z"))
+    api.server.hub.tick()
+    expect(status).to_have_attribute("data-deltas", str(deltas + 1), timeout=WAIT)
+    expect(page.locator("#event-coverage")).to_contain_text("covered (2 cases in this view)")
+    live = event_coverage_text(page)
+    assert "3 cases" not in live
+    expect(event_row(page, "FAR-EARLY")).to_have_count(0)
+    page.reload()
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    assert event_coverage_text(page) == live  # a fresh REST view shows the same counts

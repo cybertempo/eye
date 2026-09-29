@@ -129,7 +129,7 @@ def test_empty_result_is_still_marked_by_its_sources(api_server):
     assert empty["tracks"] == [] and empty["events"] == []
     # No event-report source covers it: events are unknown there, not absent.
     assert [(c["state"], c["metric"]) for c in empty["coverage"]] == [
-        ("unknown", {"name": "event_reports", "value": None})
+        ("unknown", {"name": "event_cases_in_view", "value": None})
     ]
     assert empty["synthetic"] is True  # every source in this database is invented
     api.conn.run("ALTER TABLE eye.capture_batch DISABLE TRIGGER capture_batch_guard")

@@ -345,13 +345,22 @@ export function eventErrors(event: EventCase): string[] {
 export function eventCoverageText(coverage: readonly Coverage[], layers: readonly string[]): string[] {
   return layers.map((layer) => {
     const rows = coverage
-      .filter((c) => c.layer === layer && c.metric.name === "event_reports")
-      .sort((a, b) => compareTime(a.interval.start, b.interval.start));
+      .filter((c) => c.layer === layer && c.metric.name === "event_cases_in_view")
+      // A total order, so a live page and a fresh REST view list rows alike.
+      .sort((a, b) =>
+        compareTime(a.interval.start, b.interval.start) ||
+        compareTime(a.interval.end, b.interval.end) ||
+        JSON.stringify(a).localeCompare(JSON.stringify(b)));
     if (rows.length === 0) return `${layer}: ${UNKNOWN}: no event-report coverage`;
     const parts = rows.map((c) => {
       const span = intervalText(c.interval);
-      if (c.state === "qualified") return `${span} covered (${c.metric.value} cases)`;
-      if (c.state === "partial") return `${span} partly covered (at least ${c.metric.value} cases; ${c.reason ?? ""})`;
+      // The count is scoped to this view (its area, interval and current
+      // versions), never the whole capture's count.
+      const cases = c.metric.value === 1 ? "1 case" : `${c.metric.value} cases`;
+      if (c.state === "qualified") return `${span} covered (${cases} in this view)`;
+      if (c.state === "partial") {
+        return `${span} partly covered (at least ${cases} in this view; ${c.reason ?? ""})`;
+      }
       return `${span} ${UNKNOWN}: ${c.reason ?? "no data"}`;
     });
     return `${layer}: ${parts.join("; ")}`;
