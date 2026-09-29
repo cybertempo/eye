@@ -35,6 +35,18 @@ EVENT_VIEW_METRIC = "event_cases_in_view"
 # Every event-coverage row's interval is its capture's reporting window: when
 # the reports it asked for were published, not when events happened.
 REPORTING_WINDOW = "reporting_window"
+# A reporting window never certifies which events occurred: a source can
+# publish a first report about an event long after it happened. Occurrence
+# completeness for the view is therefore always served as unknown. Only an
+# approved source with an explicit, evidenced occurrence-time guarantee or
+# reporting-delay watermark (recorded in the source-policy register, with its
+# own wire field) could change that; none exists, so no code path claims it.
+OCCURRENCE_WINDOW = "occurrence_window"
+OCCURRENCE_METRIC = "event_occurrence_completeness"
+NO_GUARANTEE = (
+    "no approved event source gives an occurrence-time guarantee or reporting-delay "
+    "watermark; a report published later can still add an event that occurred here"
+)
 NO_SOURCE = "no event-report source covers this area and time; events unknown, not absent"
 
 
@@ -400,6 +412,22 @@ def _key(time: str) -> str:
     # Wire times: fixed-width fields, 0-6 fractional digits; pad for ordering.
     head, _, frac = time[:-1].partition(".")
     return f"{head}.{frac.ljust(6, '0')}"
+
+
+def occurrence_rows(layers, start: str, end: str) -> list[dict]:
+    """Whether every event that occurred in the view's interval is known:
+    unknown for every layer, whatever the reporting windows say."""
+    return [
+        {
+            "layer": layer,
+            "interval": {"start": start, "end": end},
+            "interval_kind": OCCURRENCE_WINDOW,
+            "state": "unknown",
+            "reason": NO_GUARANTEE,
+            "metric": {"name": OCCURRENCE_METRIC, "value": None},
+        }
+        for layer in layers
+    ]
 
 
 def _gap(layer: str, start: str, end: str) -> dict:

@@ -503,6 +503,9 @@ def snapshot(conn: Connection, query: Query, limits: Limits, area_name: str) -> 
         coverage, sources, full = _coverage(conn, query, limits, None, events)
         # Where no event-report source covered the whole view, events are unknown.
         coverage += event_ledger.coverage_gaps(full, query.layers, iso(query.start), iso(query.end))
+        # Reporting windows say which reports were published, never which
+        # events occurred: occurrence completeness is always unknown.
+        coverage += event_ledger.occurrence_rows(query.layers, iso(query.start), iso(query.end))
         sources |= {t["source"] for t in tracks} | {e["source"] for e in events}
         synthetic = _synthetic(conn, sources)
     finally:

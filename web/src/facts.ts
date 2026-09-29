@@ -350,19 +350,36 @@ export const EVENT_COUNT_NOTE =
   "the event table lists each case once.";
 
 /**
+ * Occurrence completeness, per layer. A reporting window never certifies
+ * which events occurred, and no approved source gives an occurrence-time
+ * guarantee or reporting-delay watermark, so the only acceptable state is
+ * unknown: any other claim is refused rather than shown.
+ */
+export function occurrenceText(coverage: readonly Coverage[], layer: string): string {
+  const rows = coverage.filter((c) => c.layer === layer && c.interval_kind === "occurrence_window");
+  if (rows.length === 0) return `${layer}: events that occurred in this view: completeness ${UNKNOWN}: not stated`;
+  const parts = rows
+    .sort((a, b) => compareTime(a.interval.start, b.interval.start) || compareTime(a.interval.end, b.interval.end))
+    .map((c) => {
+      const span = `events that occurred ${intervalText(c.interval)}`;
+      if (c.state === "qualified" || c.state === "partial") {
+        return `${span}: refused: a completeness claim without an approved occurrence-time guarantee`;
+      }
+      return `${span}: completeness ${UNKNOWN}: ${c.reason ?? "no guarantee"}`;
+    });
+  return `${layer}: ${parts.join("; ")}`;
+}
+
+/**
  * Event-report coverage for the view, per layer, in words; unknown is never
  * "none". Every row is labelled as a reporting window; a row without that
- * label is refused rather than read as an occurrence interval.
+ * label is refused rather than read as an occurrence interval. A line per
+ * layer then states occurrence completeness, which reporting windows never
+ * certify.
  */
 export function eventCoverageText(coverage: readonly Coverage[], layers: readonly string[]): string[] {
   const lines = layers.map((layer) => {
-    const rows = coverage
-      .filter((c) => c.layer === layer && c.metric.name === "event_cases_in_view")
-      // A total order, so a live page and a fresh REST view list rows alike.
-      .sort((a, b) =>
-        compareTime(a.interval.start, b.interval.start) ||
-        compareTime(a.interval.end, b.interval.end) ||
-        JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    const rows = reportRows(coverage, layer);
     if (rows.length === 0) return `${layer}: ${UNKNOWN}: no event-report coverage`;
     const parts = rows.map((c) => {
       if (c.interval_kind !== "reporting_window") {
@@ -382,5 +399,27 @@ export function eventCoverageText(coverage: readonly Coverage[], layers: readonl
     });
     return `${layer}: ${parts.join("; ")}`;
   });
-  return [...lines, EVENT_COUNT_NOTE];
+  return [...lines, ...layers.map((layer) => occurrenceText(coverage, layer)), EVENT_COUNT_NOTE];
+}
+
+function reportRows(coverage: readonly Coverage[], layer: string): Coverage[] {
+  return coverage
+    .filter((c) => c.layer === layer && c.metric.name === "event_cases_in_view")
+    // A total order, so a live page and a fresh REST view list rows alike.
+    .sort((a, b) =>
+      compareTime(a.interval.start, b.interval.start) ||
+      compareTime(a.interval.end, b.interval.end) ||
+      JSON.stringify(a).localeCompare(JSON.stringify(b)));
+}
+
+/**
+ * True when every layer's reporting windows were captured over the whole
+ * view: the absence of reports is then a measured zero. It never means no
+ * event occurred.
+ */
+export function reportsMeasured(coverage: readonly Coverage[], layers: readonly string[]): boolean {
+  return layers.every((layer) => {
+    const rows = reportRows(coverage, layer);
+    return rows.length > 0 && rows.every((c) => c.interval_kind === "reporting_window" && c.state === "qualified");
+  });
 }

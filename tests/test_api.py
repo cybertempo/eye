@@ -128,8 +128,10 @@ def test_empty_result_is_still_marked_by_its_sources(api_server):
     empty = body(api.get("/api/v0/snapshot?bbox=-0.5,-0.5,-0.4,-0.4&layers=road"))
     assert empty["tracks"] == [] and empty["events"] == []
     # No event-report source covers it: events are unknown there, not absent.
+    # Nor is it known which events occurred (O62).
     assert [(c["state"], c["metric"]) for c in empty["coverage"]] == [
-        ("unknown", {"name": "event_cases_in_view", "value": None})
+        ("unknown", {"name": "event_cases_in_view", "value": None}),
+        ("unknown", {"name": "event_occurrence_completeness", "value": None}),
     ]
     assert empty["synthetic"] is True  # every source in this database is invented
     api.conn.run("ALTER TABLE eye.capture_batch DISABLE TRIGGER capture_batch_guard")

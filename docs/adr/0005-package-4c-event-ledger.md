@@ -59,8 +59,8 @@ enabled; each waits for its own source-policy row (brief §6).
    row, with its reason, for every part of the view's interval that no event
    source covered over the whole view area in each requested layer (see
    decision 12), so the absence of a source is never shown as "no events". DESK words it that way and distinguishes a
-   measured zero ("No event cases reported where event-report sources covered
-   this view").
+   measured zero of reports. A measured zero of reports is never a claim that
+   no event occurred (decision 16).
 7. **Wire version `eye.wire/3`.** Serving event cases changes a shape that
    `eye.wire/2` defined (the placeholder `Event`, never sent), which the v2
    validator would refuse, so this is a new version, following the rule set in
@@ -171,6 +171,35 @@ enabled; each waits for its own source-policy row (brief §6).
       same pointer.
     - **Unchanged:** track coverage rows, their order and their wording; the
       wire and the API.
+
+16. **Review repair before merge (O62): reports are not occurrences.** A
+    reporting window measures which reports a source published in it, and
+    an empty capture is a real zero of those reports. It cannot certify
+    which events *occurred* then, because a source can publish its first
+    report of a 12:30 event after 13:00.
+    - **Occurrence rows:** every snapshot adds, per requested layer, a row
+      with `interval_kind: "occurrence_window"`, metric
+      `event_occurrence_completeness`, the view's interval and state
+      `unknown`. Its reason: no approved event source gives an
+      occurrence-time guarantee or reporting-delay watermark.
+    - **Reporting windows unchanged:** reporting windows still close
+      reporting gaps.
+    - **DESK wording:**
+      - Each layer's occurrence line reads "events that occurred *start*
+        to *end*: completeness Unknown: …".
+      - With every reporting window captured and no case, the table says
+        the captures found no reports in their windows, and that whether
+        any event occurred is Unknown.
+      - Otherwise it says reports are unknown for part of the view.
+    - **Refusal:** DESK refuses any occurrence row that claims `qualified`
+      or `partial`.
+    - **No guarantee path yet:** none exists in code. An approved source
+      would need a register row recording its guarantee with evidence, and
+      a wire field carrying that evidence, before anything could claim
+      completeness.
+    - **Live updates:** occurrence rows are constant for a subscription, so
+      a first late report stays an ordinary delta.
+    - **Unchanged:** the stored metric, raw evidence and replay.
 
 ## Consequences
 

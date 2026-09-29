@@ -16,6 +16,13 @@ exists.** Each needs its own row (brief §6: occurrence reports are separate
 from position feeds), recording whether it is automatic, licensed or
 manual-document entry, before an adapter is enabled.
 
+Occurrence completeness: EYE treats each event capture as a reporting window
+(which reports were published then), never as proof of which events occurred.
+Occurrence completeness is shown as unknown unless a source's approved row
+records an explicit, evidenced occurrence-time guarantee or reporting-delay
+watermark, and a wire field carries it. `synthetic-events` gives none, and
+no code path claims completeness yet.
+
 ## Register
 
 | Source id | Status | Adapter | Reviewed |
@@ -35,6 +42,7 @@ identifiers or private hostnames.
 
 - Status: candidate | approved | disabled | rejected
 - Data class: position feed | occurrence report | news metadata | imagery | ephemeris | other
+- Occurrence-time guarantee or reporting-delay watermark (occurrence reports only; with evidence, or "none"):
 - API endpoint(s): <public documentation URL, not a keyed URL>
 - Official terms URL and review date:
 - Permitted purpose (research / noncommercial / commercial):

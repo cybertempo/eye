@@ -1167,11 +1167,11 @@ def test_a_later_report_about_an_earlier_event_is_counted_in_its_own_window(api_
     assert windows(hour13) == [(DAY + "13:00:00Z", DAY + "14:00:00Z", "qualified", 1)]
     # Track coverage rows carry no reporting-window label.
     whole = snapshot(api, VIEW)
+    event_metrics = {"event_cases_in_view", "event_occurrence_completeness"}
     assert all(
-        ("interval_kind" in c) == (c["metric"]["name"] == "event_cases_in_view")
-        for c in whole["coverage"]
+        ("interval_kind" in c) == (c["metric"]["name"] in event_metrics) for c in whole["coverage"]
     )
-    assert any(c["metric"]["name"] != "event_cases_in_view" for c in whole["coverage"])
+    assert any(c["metric"]["name"] not in event_metrics for c in whole["coverage"])
 
 
 def test_the_same_claim_in_two_batches_is_counted_by_both_rows(api_server, tmp_path):
@@ -1267,4 +1267,150 @@ def test_live_later_reports_and_repeats_match_rest(api_server, tmp_path):
     repeated = client.recv()
     assert sorted(r[3] for r in windows(repeated) if r[1] == DAY + "13:00:00Z") == [1, 1]
     assert coverage_rows(repeated) == coverage_rows(snapshot(api, HOUR12))
+    client.close()
+
+
+# --- O62: a reporting window never certifies which events occurred --------------------------
+
+
+def empty_hour(tmp_path, name: str = "empty-12"):
+    """A healthy road capture of reports published 12:00-13:00: none were."""
+    return capture(tmp_path, name, "road", [])
+
+
+def late_first_report(tmp_path, name: str = "late-first"):
+    """The first report of a 12:30 event, published at 13:10."""
+    return capture(
+        tmp_path,
+        name,
+        "road",
+        [
+            claim(
+                "LATE-FIRST",
+                "road_closure",
+                DAY + "13:10:00Z",
+                point(0.1, 0.1),
+                event_time=DAY + "12:30:00Z",
+            )
+        ],
+        start=DAY + "13:00:00Z",
+        end=DAY + "14:00:00Z",
+        received=LATE,
+    )
+
+
+def occurrence(message: dict, layer: str = "road") -> list:
+    """Occurrence completeness rows: (start, end, state, value, reason)."""
+    return [
+        (
+            c["interval"]["start"],
+            c["interval"]["end"],
+            c["state"],
+            c["metric"]["value"],
+            c["reason"],
+        )
+        for c in message["coverage"]
+        if c["layer"] == layer and c.get("interval_kind") == "occurrence_window"
+    ]
+
+
+OCCURRENCE_UNKNOWN = [
+    (
+        DAY + "12:00:00Z",
+        DAY + "13:00:00Z",
+        "unknown",
+        None,
+        "no approved event source gives an occurrence-time guarantee or reporting-delay "
+        "watermark; a report published later can still add an event that occurred here",
+    )
+]
+
+
+def test_an_empty_capture_is_a_zero_of_reports_never_of_events(api_server, tmp_path):
+    api = api_server()
+    api.ingest(empty_hour(tmp_path))
+    before = snapshot(api, HOUR12)
+    assert before["events"] == []
+    # A real, measured zero: no report was published 12:00-13:00 ...
+    assert windows(before) == [(DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 0)]
+    # ... which says nothing about events that occurred then.
+    assert occurrence(before) == OCCURRENCE_UNKNOWN
+    api.ingest(late_first_report(tmp_path))
+    after = snapshot(api, HOUR12)
+    assert [e["case_id"] for e in after["events"]] == ["LATE-FIRST"]
+    # The early capture's zero still stands: it measured reports published
+    # then, and none were. The 12:30 event arrives in the later window.
+    assert windows(after) == [
+        (DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 0),
+        (DAY + "13:00:00Z", DAY + "14:00:00Z", "qualified", 1),
+    ]
+    assert occurrence(after) == OCCURRENCE_UNKNOWN
+    # Evidence and replay are unchanged: stored metrics, raw evidence, replay.
+    stored = api.conn.run(
+        "SELECT c.metric_value, count(r.evidence_id) FROM eye.coverage c "
+        "JOIN eye.raw_evidence r USING (batch_id) WHERE c.metric_name = 'event_reports' "
+        "GROUP BY c.metric_value, c.interval_start ORDER BY c.interval_start"
+    )
+    assert stored == [[0, 1], [1, 1]]
+    assert verify_replay(api.conn) == []
+
+
+def test_an_early_capture_counts_the_reports_published_in_its_window(api_server, tmp_path):
+    """Control: what the early capture measured. A report published inside its
+    window is counted there; occurrence completeness is still unknown."""
+    api = api_server()
+    api.ingest(
+        capture(
+            tmp_path,
+            "on-time",
+            "road",
+            [
+                claim(
+                    "ON-TIME",
+                    "road_closure",
+                    DAY + "12:31:00Z",
+                    point(0.1, 0.1),
+                    event_time=DAY + "12:30:00Z",
+                )
+            ],
+        )
+    )
+    view = snapshot(api, HOUR12)
+    assert [e["case_id"] for e in view["events"]] == ["ON-TIME"]
+    assert windows(view) == [(DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 1)]
+    assert occurrence(view) == OCCURRENCE_UNKNOWN
+    # The same capture cannot hold a report published after its window: the
+    # parser rejects it, so the window measures publication only.
+    late = capture(
+        tmp_path,
+        "too-late",
+        "road",
+        [claim("TOO-LATE", "road_closure", DAY + "13:10:00Z", point(0.1, 0.1))],
+        received=DAY + "13:20:00Z",
+    )
+    api.ingest(late)
+    assert api.conn.run("SELECT count(*) FROM eye.event_claim WHERE case_id = 'TOO-LATE'") == [[0]]
+
+
+def test_live_first_late_report_is_a_delta_and_matches_rest(api_server, tmp_path):
+    api = api_server()
+    api.ingest(empty_hour(tmp_path))
+    client = WsClient(api.host, api.port)
+    client.send(
+        subscribe(AREA, {"start": DAY + "12:00:00Z", "end": DAY + "13:00:00Z"}, layers=("road",))
+    )
+    base = client.recv()
+    assert base["kind"] == "snapshot" and base["events"] == []
+    assert occurrence(base) == OCCURRENCE_UNKNOWN
+    api.ingest(late_first_report(tmp_path))
+    api.server.hub.tick()
+    delta = client.recv()
+    assert delta["kind"] == "delta" and reference_valid(delta)
+    assert [e["case_id"] for e in delta["events_upserted"]] == ["LATE-FIRST"]
+    (row,) = delta["coverage_upserted"]
+    assert (row["interval"]["start"], row["metric"]["value"]) == (DAY + "13:00:00Z", 1)
+    live = sorted(
+        json.dumps(c, sort_keys=True) for c in base["coverage"] + delta["coverage_upserted"]
+    )
+    assert live == coverage_rows(snapshot(api, HOUR12))
     client.close()

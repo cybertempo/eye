@@ -85,6 +85,13 @@ Every other earlier message is still a current message once relabelled.
   are never read as "no events". A source whose area covers only part of the
   view is sent as `partial` (a lower bound), never as a measured zero. When
   new coverage changes these gaps, the server resnapshots.
+- A reporting window measures reports published in it, never which events
+  occurred. Every snapshot therefore carries, per requested layer, an
+  `interval_kind: "occurrence_window"` row (metric
+  `event_occurrence_completeness`) for the view's interval with state
+  `unknown` and its reason. No approved source gives an occurrence-time
+  guarantee or reporting-delay watermark, and the browser refuses any such
+  row claiming `qualified` or `partial`.
 - A case is in a requested interval when its nominal event time ± stated
   uncertainty overlaps it; the nominal time and uncertainty are served as
   stated.

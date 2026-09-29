@@ -10,6 +10,7 @@ import {
   eventAssessment,
   eventCoverageText,
   eventErrors,
+  reportsMeasured,
   eventTimeText,
   kindLabel,
   lastObservedText,
@@ -237,7 +238,7 @@ export function renderEvents(events: readonly EventCase[], coverage: readonly Co
   const lines = eventCoverageText(coverage, layers);
   const target = document.getElementById("event-coverage");
   if (target) target.replaceChildren(list(lines));
-  const unknown = lines.some((line) => line.includes("Unknown"));
+  const measured = reportsMeasured(coverage, layers);
   const table = document.getElementById("event-facts");
   if (!(table instanceof HTMLTableElement)) return;
   const rows = [...events]
@@ -276,8 +277,10 @@ export function renderEvents(events: readonly EventCase[], coverage: readonly Co
     ["Case", "Assessment", "Kind", "Reported event location", "Event time", "Last observed position (track)",
       "Evidence", "History (every version)"],
     rows,
-    unknown
-      ? "No event cases shown. Events are unknown for part of this view: see event-report coverage above."
-      : "No event cases reported where event-report sources covered this view.",
+    measured
+      ? "No event reports in this view: the captures above found none published in their reporting windows. " +
+        "Whether any event occurred is Unknown: a report published later can still add one."
+      : "No event cases shown. Reports are unknown for part of this view (see event-report coverage above), " +
+        "and whether any event occurred is Unknown.",
   );
 }

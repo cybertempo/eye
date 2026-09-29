@@ -113,16 +113,17 @@ def test_no_event_source_reads_unknown_and_measured_zero_reads_none(api_server, 
     bare = api_server()
     open_events(page, bare)
     empty = page.locator("#event-facts tbody").inner_text()
-    assert "Events are unknown for part of this view" in empty
-    assert "No event cases reported" not in empty
+    assert REPORTS_UNKNOWN in empty
+    assert ZERO_REPORTS not in empty
     # Control: event sources covered the whole view and reported nothing.
     covered = api_server()
     for layer in ("flight", "vessel", "road"):
         covered.ingest(capture(tmp_path, f"zero-{layer}", layer, [], end=DAY + "16:00:00Z"))
     open_events(page, covered)
     zero = page.locator("#event-facts tbody").inner_text()
-    assert "No event cases reported where event-report sources covered this view." in zero
-    assert "unknown" not in zero.lower()
+    # A measured zero of reports, never a claim that no event occurred (O62).
+    assert ZERO_REPORTS in zero and OCCURRENCE_UNKNOWN in zero
+    assert REPORTS_UNKNOWN not in zero
 
 
 def test_conflicting_claims_are_unresolved_then_resolved_live(api_server, page, tmp_path):
@@ -216,6 +217,19 @@ def test_event_tables_are_accessible_and_reachable_by_keyboard(api_server, page)
 SMALL = (0.0, 0.0, 0.2, 0.2)
 
 
+REPORTS_UNKNOWN = "Reports are unknown for part of this view"
+ZERO_REPORTS = (
+    "No event reports in this view: the captures above found none published in their "
+    "reporting windows."
+)
+OCCURRENCE_UNKNOWN = "Whether any event occurred is Unknown"
+
+
+def reporting_lines(text: str) -> str:
+    """The reporting-window lines only, without the occurrence-completeness lines."""
+    return "\n".join(line for line in text.splitlines() if "events that occurred" not in line)
+
+
 def event_coverage_text(page: Page, captures: bool = False) -> str:
     """DESK's event-coverage text; without ``captures``, the batch ids naming
     each row's capture are left out so rows can be compared across databases."""
@@ -240,8 +254,8 @@ def test_small_source_area_reads_partial_and_unknown_not_zero(api_server, page, 
     assert text.count(f"{DAY}12:00:00Z to {DAY}16:00:00Z Unknown: no event-report source") == 3
     assert " covered (0 cases in this view)" not in text
     empty = page.locator("#event-facts tbody").inner_text()
-    assert "Events are unknown for part of this view" in empty
-    assert "No event cases reported" not in empty
+    assert REPORTS_UNKNOWN in empty
+    assert ZERO_REPORTS not in empty
 
 
 def test_view_inside_the_source_area_reads_measured_zero(api_server, page, tmp_path, example_raw):
@@ -253,9 +267,11 @@ def test_view_inside_the_source_area_reads_measured_zero(api_server, page, tmp_p
     open_events(page, api)
     text = event_coverage_text(page)
     assert text.count(f"{DAY}12:00:00Z to {DAY}16:00:00Z covered (0 cases in this view)") == 3
-    assert "Unknown" not in text and "partly" not in text
+    reports = reporting_lines(text)
+    assert "Unknown" not in reports and "partly" not in reports
+    assert text.count("completeness Unknown: no approved event source") == 3  # O62
     empty = page.locator("#event-facts tbody").inner_text()
-    assert "No event cases reported where event-report sources covered this view." in empty
+    assert ZERO_REPORTS in empty and OCCURRENCE_UNKNOWN in empty
 
 
 def test_live_gap_fill_matches_a_fresh_rest_view(api_server, page, tmp_path):
@@ -345,9 +361,9 @@ def test_desk_area_without_cases_reads_zero_and_an_empty_table(
     set_window(page, DAY + "12:00:00Z", 1)
     text = event_coverage_text(page)
     assert f"road: {reports_in('12:00', '13:00')} covered (0 cases in this view)" in text
-    assert "Unknown" not in text
+    assert "Unknown" not in reporting_lines(text)
     empty = page.locator("#event-facts tbody").inner_text()
-    assert "No event cases reported where event-report sources covered this view." in empty
+    assert ZERO_REPORTS in empty and OCCURRENCE_UNKNOWN in empty
 
 
 def test_desk_count_follows_a_shorter_window(api_server, page, tmp_path):
@@ -596,7 +612,7 @@ def general_coverage(page: Page) -> list:
 
 def track_rows(message: dict) -> list[list[str]]:
     """The non-event rows REST serves, as the general table should show them."""
-    rows = [c for c in message["coverage"] if c["metric"]["name"] != "event_cases_in_view"]
+    rows = [c for c in message["coverage"] if "interval_kind" not in c]
     rows.sort(key=lambda c: (c["interval"]["start"], c["layer"]))
     return [
         [
@@ -720,3 +736,110 @@ def test_live_general_coverage_matches_a_reload(api_server, page, tmp_path):
     set_window(page, DAY + "12:00:00Z", 1)
     assert general_coverage(page) == [live_caption, live_rows]  # a reload reads the same
     assert event_coverage_text(page, captures=True) == live_events
+
+
+# --- O62: DESK never reads a reporting window as the absence of events --------------------------
+
+
+def occurred_in(layer: str, start: str, end: str) -> str:
+    return (
+        f"{layer}: events that occurred {DAY}{start}:00Z to {DAY}{end}:00Z: completeness "
+        "Unknown: no approved event source gives an occurrence-time guarantee"
+    )
+
+
+def test_desk_empty_capture_then_late_first_report_live_and_reload(api_server, page, tmp_path):
+    from test_events import empty_hour, late_first_report
+
+    api = api_server()
+    api.ingest(empty_hour(tmp_path))
+    cover_other_layers(api, tmp_path, end=DAY + "14:00:00Z")
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    before = event_coverage_text(page)
+    # A real zero of reports published 12:00-13:00 ...
+    assert f"road: {reports_in('12:00', '13:00')} covered (0 cases in this view)" in before
+    # ... never read as "no event occurred".
+    assert occurred_in("road", "12:00", "13:00") in before, before
+    empty = page.locator("#event-facts tbody").inner_text()
+    assert ZERO_REPORTS in empty and OCCURRENCE_UNKNOWN in empty
+    # The first report of a 12:30 event, published at 13:10, arrives live.
+    status = page.locator("#live-status")
+    deltas = int(status.get_attribute("data-deltas"))
+    api.ingest(late_first_report(tmp_path))
+    api.server.hub.tick()
+    expect(status).to_have_attribute("data-deltas", str(deltas + 1), timeout=WAIT)
+    expect(event_row(page, "LATE-FIRST")).to_have_count(1)
+    live = event_coverage_text(page)
+    assert (
+        f"road: {reports_in('12:00', '13:00')} covered (0 cases in this view); "
+        f"{reports_in('13:00', '14:00')} covered (1 case in this view)"
+    ) in live, live
+    assert occurred_in("road", "12:00", "13:00") in live
+    page.reload()
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    assert event_coverage_text(page) == live  # a reload (fresh REST view) reads the same
+    expect(event_row(page, "LATE-FIRST")).to_have_count(1)
+
+
+def test_desk_on_time_report_is_counted_in_the_early_window(api_server, page, tmp_path):
+    """Control: what the early capture measures, reports published in its window."""
+    api = api_server()
+    api.ingest(
+        capture(
+            tmp_path,
+            "on-time",
+            "road",
+            [
+                claim(
+                    "ON-TIME",
+                    "road_closure",
+                    DAY + "12:31:00Z",
+                    point(0.1, 0.1),
+                    event_time=DAY + "12:30:00Z",
+                )
+            ],
+        )
+    )
+    cover_other_layers(api, tmp_path)
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    text = event_coverage_text(page)
+    assert f"road: {reports_in('12:00', '13:00')} covered (1 case in this view)" in text
+    assert occurred_in("road", "12:00", "13:00") in text  # still not a completeness claim
+    expect(event_row(page, "ON-TIME")).to_have_count(1)
+
+
+def test_desk_refuses_an_occurrence_completeness_claim(api_server, page, tmp_path):
+    from test_events import empty_hour
+
+    api = api_server()
+    api.ingest(empty_hour(tmp_path))
+    cover_other_layers(api, tmp_path)
+
+    def relay(client):
+        server = client.connect_to_server()
+
+        def from_server(message):
+            if isinstance(message, str) and '"kind":"snapshot"' in message:
+                data = json.loads(message)
+                for row in data["coverage"]:
+                    if row["layer"] == "road" and row.get("interval_kind") == "occurrence_window":
+                        row["state"] = "qualified"  # "complete", with no guarantee behind it
+                        row["metric"]["value"] = 0
+                        row.pop("reason", None)
+                message = json.dumps(data)
+            client.send(message)
+
+        server.on_message(from_server)
+        client.on_message(lambda message: server.send(message))
+
+    page.route_web_socket("**/api/v0/stream", relay)
+    open_events(page, api)
+    set_window(page, DAY + "12:00:00Z", 1)
+    text = event_coverage_text(page)
+    assert "refused: a completeness claim without an approved occurrence-time guarantee" in text
+    assert occurred_in("road", "12:00", "13:00") not in text
+    # Control: the other layers' unaltered rows read unknown.
+    assert occurred_in("flight", "12:00", "13:00") in text
