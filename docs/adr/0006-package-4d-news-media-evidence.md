@@ -30,15 +30,26 @@ Scope:
      the original URL (https only, no credentials), an optional syndication
      original, publisher, creator, headline, language, reuse rights, a
      claimed capture time for images and video, and an optional place.
-   - **Bodies and bytes refused before archiving:** no body text, image or
-     video bytes are stored anywhere, raw evidence included. Raw evidence is
-     kept exactly and can never be deleted, so a capture whose items carry
-     any field outside the reviewed allowlist (`body`, `content`,
-     `thumbnail`, or any unreviewed field such as `summary`) is refused
-     whole, before anything is archived. A future adapter drops such fields
-     before it builds the capture. (Review repair: the first version
-     rejected such items only after archiving, so their text stayed in
-     `eye.raw_evidence`.)
+   - **Validated in full before archiving:** raw evidence is kept exactly
+     and can never be deleted. So a news capture is checked completely
+     before anything is archived, and refused whole on any failure:
+     - **Envelope:** the capture's own keys and those of `request`,
+       `attempt` and `provider_response` must be on reviewed allowlists.
+     - **Adapter text:** the adapter's `note` and `attempt.written_by` are
+       bounded safe text.
+     - **Items:** every item must pass the full strict parse, which checks
+       key names, value types and lengths, nested `place` and `rights`
+       shapes, times and the reporting window. A body, image bytes, a
+       thumbnail or any unreviewed field fails it.
+     - **Failed attempts:** a failed or indeterminate attempt carries no
+       items.
+     - **No per-item rejections:** a news capture never has them. A future
+       adapter must clean its capture before building it.
+     - *Review repairs:* the first version rejected bad items only after
+       archiving. The second checked only top-level item key names, so
+       over-long values, nested keys, bare-string items, malformed rights
+       and envelope text still reached `eye.raw_evidence`. A test covers
+       each of those routes.
    - **Ids and receipts:** the id is derived from source, item id and
      content, so an exact repeat delivery adds a receipt
      (`eye.media_item_receipt`, receipt time stamped by EYE and checked

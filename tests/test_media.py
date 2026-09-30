@@ -153,10 +153,13 @@ def test_late_delivery_keeps_source_times_and_eye_receipt_time(db, tmp_path):
         "SELECT eye.iso_utc(m.first_published_time), eye.iso_utc(r.received_time) "
         "FROM eye.media_item m JOIN eye.media_item_receipt r USING (media_item_id)"
     ) == [[DAY + "12:10:00.000000Z", DAY + "15:30:00.000000Z"]]
-    # Control: an item revised after the capture's window is not from that window.
+    # Control: an item revised after the capture's window is not from that
+    # window; the whole news capture is refused before anything is archived.
     outside = item("LATE-2", DAY + "12:10:00Z", status="updated", revised=DAY + "13:40:00Z")
-    result = put(db, capture(tmp_path, "outside", [outside], received=DAY + "15:40:00Z"))
-    assert (result.accepted, result.rejected) == (0, 1)
+    path = capture(tmp_path, "outside", [outside], received=DAY + "15:40:00Z")
+    with pytest.raises(CaptureRejected, match="revised outside the request"):
+        archive(db, path.read_bytes())
+    assert db.run("SELECT count(*) FROM eye.capture_batch") == [[1]]  # only the first
 
 
 # --- outages ---------------------------------------------------------------------------------
@@ -171,21 +174,33 @@ def test_outage_is_failed_coverage_and_an_empty_capture_a_measured_zero(db, tmp_
     ]
 
 
-def test_items_in_a_failed_capture_are_not_stored(db, tmp_path):
-    put(db, capture(tmp_path, "error", [item("E-1", DAY + "12:10:00Z")], status="error"))
-    assert db.run("SELECT count(*) FROM eye.media_item") == [[0]]
+def test_a_failed_attempt_carrying_items_is_refused(db, tmp_path):
+    path = capture(tmp_path, "error", [item("E-1", DAY + "12:10:00Z")], status="error")
+    with pytest.raises(CaptureRejected, match="status error carries no items"):
+        archive(db, path.read_bytes())
+    assert db.run("SELECT count(*) FROM eye.capture_batch") == [[0]]
+    # Control: the adapter records the outage with no items.
+    put(db, capture(tmp_path, "error-empty", [], status="error"))
     assert coverage(db) == [["failed", None, "provider status error"]]
 
 
 # --- what an item may carry -----------------------------------------------------------------
 
 
-def rejected_reasons(db, tmp_path, name: str, bad: list[dict]) -> list:
-    """Ingest bad items beside one good control; return the stored rejection count."""
+def refused_each(db, tmp_path, name: str, bad: list[dict]) -> int:
+    """Each bad item, beside one good item, refuses its whole capture before
+    anything is archived; then the good item alone is stored (the control).
+    Returns how many captures were refused."""
     good = item("GOOD", DAY + "12:10:00Z")
-    result = put(db, capture(tmp_path, name, [good, *bad]))
-    assert result.accepted == 1  # the control in the same capture is stored
-    return result.rejected
+    refused = 0
+    for index, one in enumerate(bad):
+        path = capture(tmp_path, f"{name}-{index}", [good, one])
+        with pytest.raises(CaptureRejected):
+            archive(db, path.read_bytes())
+        refused += 1
+    assert db.run("SELECT count(*) FROM eye.capture_batch") == [[0]]
+    assert put(db, capture(tmp_path, f"{name}-good", [good])).accepted == 1
+    return refused
 
 
 def raw_evidence_holds(db, text: str) -> bool:
@@ -218,6 +233,79 @@ def test_bodies_media_and_unreviewed_fields_are_never_archived(db, tmp_path, fie
     assert db.run("SELECT item_id FROM eye.media_item ORDER BY 1") == [["CARRY"], ["GOOD"]]
 
 
+def news_doc(tmp_path, name: str) -> dict:
+    """A clean one-item news capture, as a document to alter."""
+    good = item("CLEAN", DAY + "12:10:00Z", where=place(0.1, 0.1))
+    return json.loads(capture(tmp_path, name, [good]).read_text(encoding="utf-8"))
+
+
+def _leak_headline(doc, marker):
+    doc["provider_response"]["items"][0]["headline"] = marker + "x" * 2000
+
+
+def _leak_publisher(doc, marker):
+    doc["provider_response"]["items"][0]["publisher"] = marker + "x" * 2000
+
+
+def _leak_string_item(doc, marker):
+    doc["provider_response"]["items"].append(marker + " a bare string item")
+
+
+def _leak_place_key(doc, marker):
+    doc["provider_response"]["items"][0]["place"]["note"] = marker
+
+
+def _leak_rights_string(doc, marker):
+    doc["provider_response"]["items"][0].update(rights="unknown", headline=marker)
+
+
+def _leak_note(doc, marker):
+    doc["note"] = marker + "x" * 2000
+
+
+def _leak_response_key(doc, marker):
+    doc["provider_response"]["raw_html"] = marker
+
+
+def _leak_attempt_key(doc, marker):
+    doc["attempt"]["provider_body"] = marker
+
+
+def _leak_request_key(doc, marker):
+    doc["request"]["query_text"] = marker
+
+
+LEAK_ROUTES = {
+    "over-long headline": _leak_headline,
+    "over-long publisher": _leak_publisher,
+    "string item": _leak_string_item,
+    "extra key in place": _leak_place_key,
+    "malformed rights with a headline": _leak_rights_string,
+    "over-long envelope note": _leak_note,
+    "extra key in provider_response": _leak_response_key,
+    "extra key in attempt": _leak_attempt_key,
+    "extra key in request": _leak_request_key,
+}
+
+
+@pytest.mark.parametrize("route", sorted(LEAK_ROUTES))
+def test_no_route_archives_text_before_validation(db, tmp_path, route):
+    """Raw evidence is permanent: a news capture is validated in full, envelope
+    and every item, before archiving, and refused whole on any failure."""
+    marker = "INVENTED-LEAK-" + route.replace(" ", "-").upper()
+    doc = news_doc(tmp_path, "leak")
+    LEAK_ROUTES[route](doc, marker)
+    with pytest.raises(CaptureRejected):
+        archive(db, json.dumps(doc).encode("utf-8"))
+    assert db.run("SELECT count(*) FROM eye.capture_batch") == [[0]]
+    assert not raw_evidence_holds(db, marker)
+    # Control: the clean capture is archived and stored, and the same search
+    # finds text that is really there.
+    put(db, capture(tmp_path, "clean", [item("CLEAN", DAY + "12:10:00Z", where=place(0.1, 0.1))]))
+    assert raw_evidence_holds(db, "https://news.invalid/clean")
+    assert db.run("SELECT item_id FROM eye.media_item") == [["CLEAN"]]
+
+
 def test_unknown_rights_headlines_are_never_stored(db, tmp_path):
     secret = "INVENTED-UNLICENSED-HEADLINE"
     unknown = item(
@@ -246,7 +334,7 @@ def test_untrusted_text_is_bounded_and_stored_as_given(db, tmp_path):
         item("HTTP", DAY + "12:10:00Z", url="http://news.invalid/a"),
         item("SCRIPT", DAY + "12:10:00Z", url="javascript:alert(1)"),
     ]
-    assert rejected_reasons(db, tmp_path, "text", bad) == 6
+    assert refused_each(db, tmp_path, "text", bad) == 6
     # Control: markup is only text; it is stored exactly as the source gave it.
     markup = '<img src=x onerror="alert(1)"> Invented & <b>bold</b> claim'
     put(db, capture(tmp_path, "markup", [item("MARKUP", DAY + "12:20:00Z", headline=markup)]))
@@ -264,7 +352,7 @@ def test_rights_must_be_consistent(db, tmp_path):
         ),
         item("NO-RIGHTS", DAY + "12:10:00Z", rights={"status": "free"}),
     ]
-    assert rejected_reasons(db, tmp_path, "rights", bad) == 3
+    assert refused_each(db, tmp_path, "rights", bad) == 3
     # Controls: each valid rights state is stored.
     put(
         db,
@@ -299,7 +387,7 @@ def test_times_and_places_must_be_consistent(db, tmp_path):
         item("ROLE", DAY + "12:10:00Z", where=place(0.1, 0.1, role="somewhere")),
         item("ZERO", DAY + "12:10:00Z", where=place(0.1, 0.1, precision=0)),
     ]
-    assert rejected_reasons(db, tmp_path, "times", bad) == 6
+    assert refused_each(db, tmp_path, "times", bad) == 6
     # Control: old footage reposted later is valid evidence of what was claimed.
     old = item("OLD", DAY + "12:20:00Z", kind="video", captured="2024-05-01T09:00:00Z")
     put(db, capture(tmp_path, "old", [old]))

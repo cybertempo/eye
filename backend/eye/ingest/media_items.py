@@ -208,6 +208,58 @@ def _rights(raw: object, what: str) -> tuple[str, str | None, str | None]:
     return status, licence, attribution
 
 
+# Every key a news capture may carry, at every level outside the items. Raw
+# evidence is permanent, so anything else is refused before archiving.
+ENVELOPE_KEYS = frozenset(
+    {
+        "capture_format",
+        "synthetic",
+        "source_id",
+        "adapter_version",
+        "note",
+        "layer",
+        "request",
+        "attempt",
+        "provider_response",
+    }
+)
+REQUEST_KEYS = frozenset({"bbox", "start", "end", "expected_interval_s"})
+ATTEMPT_KEYS = frozenset(
+    {
+        "written_by",
+        "started_at",
+        "finished_at",
+        "provider_status",
+        "quota_cost",
+        "observed_start",
+        "observed_end",
+    }
+)
+RESPONSE_KEYS = frozenset({"items"})
+MAX_NOTE = 300  # EYE's own adapter note and attempt label; never provider text
+
+
+def check_envelope(doc: dict) -> None:
+    """Refuse (ValueError) a news capture carrying anything outside the reviewed
+    shape around its items: unknown keys, or adapter notes that are too long or
+    unsafe. Called before anything is archived."""
+    for what, block, allowed in (
+        ("capture", doc, ENVELOPE_KEYS),
+        ("request", doc.get("request"), REQUEST_KEYS),
+        ("attempt", doc.get("attempt"), ATTEMPT_KEYS),
+        ("provider_response", doc.get("provider_response"), RESPONSE_KEYS),
+    ):
+        if not isinstance(block, dict):
+            raise ValueError(f"{what} must be an object")
+        extra = set(block) - allowed
+        if extra:
+            raise ValueError(
+                f"{what} carries {sorted(extra)}; a news capture holds only reviewed fields"
+            )
+    _text(doc.get("note"), "note", MAX_NOTE, required=False)
+    _text(doc["attempt"].get("written_by"), "attempt.written_by", MAX_NOTE, required=False)
+
+
 def unstorable(items: object) -> str | None:
     """Why a capture's raw bytes must not be archived at all, or None.
 

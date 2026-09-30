@@ -161,9 +161,10 @@ rights and history.
   area. A publisher's city, a mentioned place and an automated geocode are
   listed but never drawn.
 - An item whose reuse rights are unknown is a link only: its headline is
-  never stored, in raw evidence or anywhere else. A capture carrying a body,
-  media bytes, an unreviewed field or such a headline is refused before
-  anything is archived.
+  never stored, in raw evidence or anywhere else. Raw evidence is permanent,
+  so a news capture is validated in full (reviewed envelope keys and every
+  item's strict parse) before anything is archived, and refused whole on any
+  failure.
 - Exact repeat deliveries add receipts, not items. Related items across
   publishers, and syndicated copies, are listed as *suggestions*; nothing is
   merged or counted as independent confirmation.

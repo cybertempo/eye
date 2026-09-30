@@ -324,12 +324,24 @@ def parse_capture(raw: bytes) -> ParsedCapture:
                 return event_claims.parse_claim(item, index, layer, received, parse_time)
 
         elif capture_format == MEDIA_CAPTURE_FORMAT:
+            # Raw evidence is permanent, so a news capture is checked in full
+            # before anything is archived, and refused whole on any failure:
+            # the reviewed envelope shape, then every item's strict parse. A
+            # news capture therefore never has per-item rejections.
+            media_items.check_envelope(doc)
             records = doc["provider_response"]["items"]
             limit = MAX_ITEMS
-            # Refused before archiving: raw evidence is permanent.
             reason = media_items.unstorable(records)
             if reason is not None:
                 raise ValueError(reason)
+            if not isinstance(records, list) or len(records) > limit:
+                raise ValueError(f"items must be a list of at most {limit}")
+            if status != "ok" and records:
+                raise ValueError(f"a news attempt with status {status} carries no items")
+            for index, item in enumerate(records):
+                checked = media_items.parse_item(item, index, finished, parse_time)
+                if not start <= checked.revision_time <= end:
+                    raise ValueError(f"item {index} was revised outside the request")
 
             def parse_item(item, index, received):
                 return media_items.parse_item(item, index, received, parse_time)
