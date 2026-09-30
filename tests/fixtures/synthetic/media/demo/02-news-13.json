@@ -1,0 +1,58 @@
+{
+  "capture_format": "eye.synthetic-media-items/1",
+  "synthetic": true,
+  "source_id": "synthetic-news",
+  "adapter_version": "synthetic-news/1",
+  "note": "Invented news items revised 13:00-14:00: a correction of SN-A1.",
+  "layer": "news",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-02-01T13:00:00Z",
+    "end": "2026-02-01T14:00:00Z",
+    "expected_interval_s": 3600
+  },
+  "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every item",
+    "started_at": "2026-02-01T14:00:10Z",
+    "finished_at": "2026-02-01T14:00:10Z",
+    "provider_status": "ok",
+    "quota_cost": 0,
+    "observed_start": "2026-02-01T13:00:00Z",
+    "observed_end": "2026-02-01T14:00:00Z"
+  },
+  "provider_response": {
+    "items": [
+      {
+        "item_id": "SN-A1",
+        "kind": "article",
+        "status": "corrected",
+        "first_published_time": "2026-02-01T12:10:00Z",
+        "revision_time": "2026-02-01T13:15:00Z",
+        "url": "https://synthetic-daily.invalid/bridge-closure",
+        "syndicated_from": null,
+        "publisher": "Synthetic Daily",
+        "creator": "Invented Reporter",
+        "headline": "Invented: river bridge closed after invented incident (corrected location)",
+        "language": "en",
+        "rights": {
+          "status": "link_only"
+        },
+        "capture_time_claimed": null,
+        "place": {
+          "role": "event_place",
+          "method": "source_stated",
+          "coords": [
+            0.1,
+            0.1
+          ],
+          "precision_m": 500
+        }
+      }
+    ]
+  }
+}

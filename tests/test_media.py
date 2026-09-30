@@ -1,0 +1,375 @@
+"""Package 4d on PostGIS: news and media items as their own evidence.
+
+Every refusal has a working control beside it:
+
+* an unapproved or unknown source is refused before anything is archived,
+  beside the approved synthetic source;
+* an exact repeat delivery adds a receipt, not an item, beside a real
+  correction that adds a version;
+* a correction or retraction keeps every version; a conflict stays unresolved;
+* a late delivery keeps its source times and gets EYE's later receipt time;
+* a provider outage is failed coverage, never "no news", beside a healthy
+  empty capture that is a measured zero of items;
+* an item carrying a body, image or video, unsafe text, or inconsistent
+  rights or times is rejected, beside valid items in the same capture;
+* replay re-derives every item and catches a stray row.
+"""
+
+from __future__ import annotations
+
+import shutil
+
+import pytest
+from conftest import AIS_DEMO, CAPTURES, REPO_ROOT
+from eye.ingest.capture import CaptureRejected, archive, ingest, load_fixtures, verify_replay
+from eye.storage.db import connect
+from eye.storage.migrate import MIGRATIONS_DIR, migrate
+from pg8000.exceptions import DatabaseError
+from synthetic_media import DAY, capture, item, licensed, place
+
+EVENTS_DEMO = REPO_ROOT / "tests" / "fixtures" / "synthetic" / "events" / "demo"
+MEDIA_DEMO = REPO_ROOT / "tests" / "fixtures" / "synthetic" / "media" / "demo"
+
+
+def put(db, path) -> object:
+    return ingest(db, path.read_bytes())
+
+
+def items(db) -> list:
+    return db.run(
+        "SELECT m.item_id, v.version, v.is_current, m.status, v.receipt_count "
+        "FROM eye.media_item m JOIN eye.media_item_version v USING (media_item_id) "
+        "ORDER BY m.item_id, v.version, m.media_item_id"
+    )
+
+
+def coverage(db) -> list:
+    return db.run(
+        "SELECT state::text, metric_value, reason FROM eye.coverage "
+        "WHERE metric_name = 'media_items' ORDER BY interval_start"
+    )
+
+
+# --- sources ---------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        ("gdelt", "candidate in docs/news-media-source-shortlist.md"),
+        ("youtube-data", "candidate in docs/news-media-source-shortlist.md"),
+        ("google-news", "candidate in docs/news-media-source-shortlist.md"),
+        ("some-news-feed", "no approved row"),
+    ],
+)
+def test_unapproved_or_unknown_sources_are_refused(db, tmp_path, source, message):
+    path = capture(tmp_path, "refused", [item("N-1", DAY + "12:10:00Z")], source=source)
+    with pytest.raises(CaptureRejected, match=message):
+        archive(db, path.read_bytes())
+    assert db.run("SELECT count(*) FROM eye.capture_batch") == [[0]]  # nothing archived
+    # Control: the same items from the approved synthetic source are accepted.
+    result = put(db, capture(tmp_path, "ok", [item("N-1", DAY + "12:10:00Z")]))
+    assert (result.status, result.accepted, result.rejected) == ("committed", 1, 0)
+
+
+def test_a_capture_not_marked_synthetic_or_in_the_wrong_format_is_refused(db, tmp_path):
+    import json
+
+    path = capture(tmp_path, "real", [item("N-1", DAY + "12:10:00Z")])
+    doc = json.loads(path.read_text())
+    for change, message in (
+        ({"synthetic": False}, "synthetic"),
+        ({"capture_format": "eye.synthetic-event-claims/1"}, "capture_format"),
+        ({"layer": "road"}, "does not provide layer road"),
+    ):
+        with pytest.raises(CaptureRejected, match=message):
+            archive(db, json.dumps({**doc, **change}).encode())
+    assert db.run("SELECT count(*) FROM eye.capture_batch") == [[0]]
+    assert put(db, path).status == "committed"  # control
+
+
+# --- duplicates, late arrivals, corrections ---------------------------------------------------
+
+
+def test_repeat_delivery_adds_a_receipt_not_an_item(db, tmp_path):
+    story = item("DUP-1", DAY + "12:10:00Z", where=place(0.1, 0.1))
+    put(db, capture(tmp_path, "first", [story]))
+    put(db, capture(tmp_path, "again", [story], received=DAY + "13:00:20Z"))
+    assert db.run("SELECT count(*) FROM eye.media_item") == [[1]]
+    assert db.run("SELECT count(*) FROM eye.media_item_receipt") == [[2]]
+    assert items(db) == [["DUP-1", 1, True, "published", 2]]
+    # Control: changed content from the source is a new version, not a duplicate.
+    fixed = item(
+        "DUP-1",
+        DAY + "12:10:00Z",
+        status="corrected",
+        revised=DAY + "12:40:00Z",
+        headline="Invented report DUP-1 (corrected)",
+        where=place(0.1, 0.1),
+    )
+    put(db, capture(tmp_path, "fixed", [fixed], received=DAY + "13:00:30Z"))
+    assert items(db) == [
+        ["DUP-1", 1, False, "published", 2],
+        ["DUP-1", 2, True, "corrected", 1],
+    ]
+
+
+def test_corrections_retractions_and_conflicts_keep_every_version(db, tmp_path):
+    first = item("C-1", DAY + "12:05:00Z")
+    fixed = item("C-1", DAY + "12:05:00Z", status="corrected", revised=DAY + "12:30:00Z")
+    gone = item("C-1", DAY + "12:05:00Z", status="retracted", revised=DAY + "12:50:00Z")
+    a = item("X-1", DAY + "12:05:00Z", status="updated", revised=DAY + "12:20:00Z", headline="A")
+    b = item("X-1", DAY + "12:05:00Z", status="updated", revised=DAY + "12:20:00Z", headline="B")
+    put(db, capture(tmp_path, "all", [first, fixed, gone, a, b]))
+    assert items(db) == [
+        ["C-1", 1, False, "published", 1],
+        ["C-1", 2, False, "corrected", 1],
+        ["C-1", 3, True, "retracted", 1],
+        ["X-1", 1, None, "updated", 1],  # two versions at one revision time: unknown,
+        ["X-1", 1, None, "updated", 1],  # never an arbitrary choice
+    ]
+    # A later version resolves the conflict.
+    c = item("X-1", DAY + "12:05:00Z", status="updated", revised=DAY + "13:20:00Z", headline="C")
+    put(
+        db,
+        capture(
+            tmp_path,
+            "resolve",
+            [c],
+            start=DAY + "13:00:00Z",
+            end=DAY + "14:00:00Z",
+        ),
+    )
+    assert [r[1:3] for r in items(db) if r[0] == "X-1"] == [[1, False], [1, False], [2, True]]
+
+
+def test_late_delivery_keeps_source_times_and_eye_receipt_time(db, tmp_path):
+    story = item("LATE-1", DAY + "12:10:00Z")
+    put(db, capture(tmp_path, "late", [story], received=DAY + "15:30:00Z"))
+    assert db.run(
+        "SELECT eye.iso_utc(m.first_published_time), eye.iso_utc(r.received_time) "
+        "FROM eye.media_item m JOIN eye.media_item_receipt r USING (media_item_id)"
+    ) == [[DAY + "12:10:00.000000Z", DAY + "15:30:00.000000Z"]]
+    # Control: an item revised after the capture's window is not from that window.
+    outside = item("LATE-2", DAY + "12:10:00Z", status="updated", revised=DAY + "13:40:00Z")
+    result = put(db, capture(tmp_path, "outside", [outside], received=DAY + "15:40:00Z"))
+    assert (result.accepted, result.rejected) == (0, 1)
+
+
+# --- outages ---------------------------------------------------------------------------------
+
+
+def test_outage_is_failed_coverage_and_an_empty_capture_a_measured_zero(db, tmp_path):
+    put(db, capture(tmp_path, "down", [], status="timeout"))
+    put(db, capture(tmp_path, "empty", [], start=DAY + "13:00:00Z", end=DAY + "14:00:00Z"))
+    assert coverage(db) == [
+        ["failed", None, "provider status timeout"],
+        ["qualified", 0, None],  # control: a healthy, empty answer
+    ]
+
+
+def test_items_in_a_failed_capture_are_not_stored(db, tmp_path):
+    put(db, capture(tmp_path, "error", [item("E-1", DAY + "12:10:00Z")], status="error"))
+    assert db.run("SELECT count(*) FROM eye.media_item") == [[0]]
+    assert coverage(db) == [["failed", None, "provider status error"]]
+
+
+# --- what an item may carry -----------------------------------------------------------------
+
+
+def rejected_reasons(db, tmp_path, name: str, bad: list[dict]) -> list:
+    """Ingest bad items beside one good control; return the stored rejection count."""
+    good = item("GOOD", DAY + "12:10:00Z")
+    result = put(db, capture(tmp_path, name, [good, *bad]))
+    assert result.accepted == 1  # the control in the same capture is stored
+    return result.rejected
+
+
+def test_bodies_images_and_video_are_never_stored(db, tmp_path):
+    with_body = {**item("BODY", DAY + "12:10:00Z"), "body": "Full article text."}
+    with_bytes = {**item("IMG", DAY + "12:10:00Z", kind="image"), "thumbnail": "iVBORw0KGgo="}
+    assert rejected_reasons(db, tmp_path, "content", [with_body, with_bytes]) == 2
+    assert db.run("SELECT item_id FROM eye.media_item") == [["GOOD"]]
+
+
+def test_untrusted_text_is_bounded_and_stored_as_given(db, tmp_path):
+    bad = [
+        item("CTRL", DAY + "12:10:00Z", headline="Line one\nLine two"),
+        item("BIDI", DAY + "12:10:00Z", headline="Safe ‮emag"),
+        item("LONG", DAY + "12:10:00Z", headline="x" * 301),
+        item("CREDS", DAY + "12:10:00Z", url="https://user:pw@news.invalid/a"),
+        item("HTTP", DAY + "12:10:00Z", url="http://news.invalid/a"),
+        item("SCRIPT", DAY + "12:10:00Z", url="javascript:alert(1)"),
+    ]
+    assert rejected_reasons(db, tmp_path, "text", bad) == 6
+    # Control: markup is only text; it is stored exactly as the source gave it.
+    markup = '<img src=x onerror="alert(1)"> Invented & <b>bold</b> claim'
+    put(db, capture(tmp_path, "markup", [item("MARKUP", DAY + "12:20:00Z", headline=markup)]))
+    assert db.run("SELECT headline FROM eye.media_item WHERE item_id = 'MARKUP'") == [[markup]]
+
+
+def test_rights_must_be_consistent(db, tmp_path):
+    bad = [
+        item("NO-ATTR", DAY + "12:10:00Z", rights={"status": "licensed", "licence": "CC-BY-4.0"}),
+        item("UNK-LIC", DAY + "12:10:00Z", rights={"status": "unknown", "licence": "CC-BY-4.0"}),
+        item("NO-RIGHTS", DAY + "12:10:00Z", rights={"status": "free"}),
+    ]
+    assert rejected_reasons(db, tmp_path, "rights", bad) == 3
+    # Controls: each valid rights state is stored.
+    put(
+        db,
+        capture(
+            tmp_path,
+            "rights-ok",
+            [
+                item("LIC", DAY + "12:20:00Z", kind="image", rights=licensed()),
+                item("LINK", DAY + "12:20:00Z", rights={"status": "link_only"}),
+                item("UNK", DAY + "12:20:00Z", kind="video", rights={"status": "unknown"}),
+            ],
+        ),
+    )
+    assert db.run(
+        "SELECT item_id, rights_status, licence FROM eye.media_item "
+        "WHERE item_id <> 'GOOD' ORDER BY item_id"
+    ) == [["LIC", "licensed", "CC-BY-4.0"], ["LINK", "link_only", None], ["UNK", "unknown", None]]
+
+
+def test_times_and_places_must_be_consistent(db, tmp_path):
+    bad = [
+        item("REV-EARLY", DAY + "12:30:00Z", status="updated", revised=DAY + "12:10:00Z"),
+        item("PUB-LATER", DAY + "12:10:00Z", revised=DAY + "12:20:00Z"),  # published ≠ revised
+        item("ART-CAPT", DAY + "12:10:00Z", captured=DAY + "12:00:00Z"),
+        item("CAPT-AFTER", DAY + "12:10:00Z", kind="image", captured=DAY + "12:20:00Z"),
+        item("ROLE", DAY + "12:10:00Z", where=place(0.1, 0.1, role="somewhere")),
+        item("ZERO", DAY + "12:10:00Z", where=place(0.1, 0.1, precision=0)),
+    ]
+    assert rejected_reasons(db, tmp_path, "times", bad) == 6
+    # Control: old footage reposted later is valid evidence of what was claimed.
+    old = item("OLD", DAY + "12:20:00Z", kind="video", captured="2024-05-01T09:00:00Z")
+    put(db, capture(tmp_path, "old", [old]))
+    assert db.run(
+        "SELECT eye.iso_utc(capture_time_claimed) FROM eye.media_item WHERE item_id = 'OLD'"
+    ) == [["2024-05-01T09:00:00.000000Z"]]
+
+
+def test_database_refuses_inconsistent_rights_and_places(db):
+    base = (
+        "INSERT INTO eye.media_item (media_item_id, source_id, item_id, kind, status, "
+        "first_published_time, revision_time, url, publisher, rights_status, licence, "
+        "attribution, place_role, place_method, place, place_precision_m, content_sha256) "
+        "VALUES (gen_random_uuid(), 'synthetic-news', :item, 'article', 'published', "
+        "'2026-02-01T12:00:00Z', '2026-02-01T12:00:00Z', 'https://news.invalid/a', 'P', "
+        ":rights, :licence, :attribution, :role, :method, "
+        "ST_SetSRID(ST_MakePoint(0, 0), 4326), :precision, repeat('a', 64))"
+    )
+    good = {
+        "rights": "licensed",
+        "licence": "CC-BY-4.0",
+        "attribution": "A",
+        "role": "event_place",
+        "method": "source_stated",
+        "precision": 100,
+    }
+    for change in (
+        {"attribution": None},
+        {"rights": "unknown"},
+        {"role": None},
+        {"precision": None},
+    ):
+        with pytest.raises(DatabaseError, match="violates check constraint"):
+            db.run(base, item="BAD", **{**good, **change})
+    db.run(base, item="GOOD", **good)  # control
+    assert db.run("SELECT count(*) FROM eye.media_item") == [[1]]
+
+
+# --- replay, append-only, migration --------------------------------------------------------
+
+
+def test_replay_rederives_every_item_and_catches_a_stray_row(make_db):
+    ids = []
+    for reverse in (False, True):
+        conn = connect(make_db())
+        migrate(conn)
+        load_fixtures(conn, MEDIA_DEMO, reverse=reverse)
+        assert verify_replay(conn) == []
+        ids.append(
+            conn.run(
+                "SELECT media_item_id::text, item_id, version, is_current "
+                "FROM eye.media_item_version ORDER BY media_item_id"
+            )
+        )
+        if reverse:
+            conn.run(
+                "INSERT INTO eye.media_item (media_item_id, source_id, item_id, kind, status, "
+                "first_published_time, revision_time, url, publisher, rights_status, "
+                "content_sha256) VALUES (gen_random_uuid(), 'synthetic-news', 'STRAY', "
+                "'article', 'published', now(), now(), 'https://news.invalid/s', 'P', "
+                "'unknown', repeat('a', 64))"
+            )
+            problems = verify_replay(conn)
+            assert len(problems) == 1 and "not derivable" in problems[0]
+        conn.close()
+    assert ids[0] == ids[1] and len(ids[0]) >= 8  # same ids and versions in either order
+
+
+def test_items_and_receipts_are_append_only(db):
+    load_fixtures(db, MEDIA_DEMO)
+    assert db.run("SELECT count(*) > 0 FROM eye.media_item") == [[True]]  # control
+    for statement in (
+        "UPDATE eye.media_item SET headline = 'changed'",
+        "DELETE FROM eye.media_item",
+        "UPDATE eye.media_item_receipt SET adapter_version = 'x'",
+        "DELETE FROM eye.media_item_receipt",
+    ):
+        with pytest.raises(DatabaseError, match="not permitted"):
+            db.run(statement)
+
+
+def test_media_items_are_kept_apart_from_event_claims(db):
+    load_fixtures(db, EVENTS_DEMO)
+    claims = db.run("SELECT count(*) FROM eye.event_claim")
+    load_fixtures(db, MEDIA_DEMO)
+    assert db.run("SELECT count(*) FROM eye.event_claim") == claims  # no claim added
+    # No media table refers to an event table, or the other way round.
+    references = db.run(
+        "SELECT conrelid::regclass::text, confrelid::regclass::text FROM pg_constraint "
+        "WHERE contype = 'f' AND (conrelid::regclass::text LIKE 'eye.media%' "
+        "OR confrelid::regclass::text LIKE 'eye.media%') ORDER BY 1, 2"
+    )
+    assert references == [
+        ["eye.media_item_receipt", "eye.capture_batch"],
+        ["eye.media_item_receipt", "eye.media_item"],
+        ["eye.media_item_receipt", "eye.raw_evidence"],
+    ]
+
+
+def table_digest(conn, name: str) -> list:
+    sql = f"SELECT md5(string_agg(t::text, '|' ORDER BY t::text)) FROM eye.{name} t"  # noqa: S608
+    return conn.run(sql)
+
+
+def test_migration_0006_leaves_earlier_history_unchanged(make_db, tmp_path):
+    before = tmp_path / "migrations"
+    before.mkdir()
+    for path in sorted(MIGRATIONS_DIR.glob("000[1-5]_*.sql")):
+        shutil.copy(path, before / path.name)
+    conn = connect(make_db())
+    assert migrate(conn, before) == [1, 2, 3, 4, 5]
+    load_fixtures(conn, CAPTURES)
+    load_fixtures(conn, AIS_DEMO)
+    load_fixtures(conn, EVENTS_DEMO)
+    tables = (
+        "capture_batch",
+        "raw_evidence",
+        "observation",
+        "observation_receipt",
+        "coverage",
+        "feed_change",
+        "event_claim",
+        "event_claim_receipt",
+    )
+    prior = [table_digest(conn, name) for name in tables]
+    assert migrate(conn) == [6]
+    assert [table_digest(conn, name) for name in tables] == prior
+    assert verify_replay(conn) == []
+    conn.close()

@@ -594,7 +594,7 @@ def test_migration_0005_leaves_earlier_history_unchanged(make_db, tmp_path):
         "feed_change",
     )
     prior = [table_digest(conn, name) for name in tables]
-    assert migrate(conn) == [5]
+    assert migrate(conn)[0] == 5  # later migrations may follow
     after = [table_digest(conn, name) for name in tables]
     assert after == prior
     assert verify_replay(conn) == []

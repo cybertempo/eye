@@ -34,35 +34,57 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from eye.ingest import event_claims, synthetic_ais
+from eye.ingest import event_claims, media_items, synthetic_ais
 from eye.storage.db import Connection, transaction
 
 CAPTURE_FORMAT = "eye.synthetic-capture/2"
 EVENT_CAPTURE_FORMAT = "eye.synthetic-event-claims/1"
+MEDIA_CAPTURE_FORMAT = "eye.synthetic-media-items/1"
 # The wire version whose observation fields each receipt was recorded under.
 # eye.wire/2 and eye.wire/3 changed only how tracks, counts and events are
 # served, not an observation's fields, so receipts keep this label and replay
 # stays exact.
 RECEIPT_SCHEMA_VERSION = "eye.wire/1"
-APPROVED_SOURCES = frozenset({"synthetic-fixture", "synthetic-ais", "synthetic-events"})
+APPROVED_SOURCES = frozenset(
+    {"synthetic-fixture", "synthetic-ais", "synthetic-events", "synthetic-news"}
+)
+# News and media providers on the Package 4d shortlist: known, reviewed as
+# candidates only, and refused until their register row is approved.
+CANDIDATE_SOURCES = frozenset(
+    {
+        "gdelt",
+        "guardian-open-platform",
+        "nytimes",
+        "newsapi",
+        "youtube-data",
+        "wikimedia-commons",
+        "flickr",
+        "google-news",
+    }
+)
 # Record parser per approved source; the AIS adapter maps its own message shape.
 SOURCE_LAYERS = {
     "synthetic-fixture": frozenset({"flight", "vessel", "road"}),
     "synthetic-ais": frozenset({"vessel"}),
     "synthetic-events": frozenset({"flight", "vessel", "road"}),
+    "synthetic-news": frozenset({"news"}),
 }
 # The capture format each source delivers: positions, or event claims.
 SOURCE_FORMATS = {
     "synthetic-fixture": CAPTURE_FORMAT,
     "synthetic-ais": CAPTURE_FORMAT,
     "synthetic-events": EVENT_CAPTURE_FORMAT,
+    "synthetic-news": MEDIA_CAPTURE_FORMAT,
 }
 EVENT_METRIC_NAME = "event_reports"
-LAYERS = frozenset({"flight", "vessel", "road"})  # every layer any source may use
+MEDIA_METRIC_NAME = "media_items"
+MEDIA_LAYER = "news"
+LAYERS = frozenset({"flight", "vessel", "road", MEDIA_LAYER})  # every layer any source may use
 PROVIDER_STATUSES = frozenset({"ok", "error", "timeout", "indeterminate"})
 MAX_EVIDENCE_BYTES = 1_048_576
 MAX_RECORDS = 10_000
 MAX_CLAIMS = 1_000
+MAX_ITEMS = 1_000
 DERIVATION_VERSION = "coverage/2"
 METRIC_NAME = "tracks_observed"
 ID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://eye.invalid/ids/v1")
@@ -160,11 +182,12 @@ class ParsedCapture:
     submitted: int = 0
     records: list[Record] = field(default_factory=list)
     claims: list[event_claims.Claim] = field(default_factory=list)
+    items: list[media_items.Item] = field(default_factory=list)
     rejected: list[str] = field(default_factory=list)
 
     @property
     def metric_name(self) -> str:
-        return EVENT_METRIC_NAME if self.capture_format == EVENT_CAPTURE_FORMAT else METRIC_NAME
+        return metric_for(self.capture_format)
 
     @property
     def batch_id(self) -> str:
@@ -178,6 +201,14 @@ class ParsedCapture:
     def received_time(self) -> datetime:
         """EYE receipt time for every record in this response."""
         return self.finished_at
+
+
+def metric_for(capture_format: str) -> str:
+    if capture_format == EVENT_CAPTURE_FORMAT:
+        return EVENT_METRIC_NAME
+    if capture_format == MEDIA_CAPTURE_FORMAT:
+        return MEDIA_METRIC_NAME
+    return METRIC_NAME
 
 
 def _parse_record(raw: object, index: int, received: datetime) -> Record:
@@ -231,6 +262,11 @@ def parse_capture(raw: bytes) -> ParsedCapture:
         if doc.get("synthetic") is not True:
             raise ValueError('only captures marked "synthetic": true are accepted')
         source_id = doc.get("source_id")
+        if source_id in CANDIDATE_SOURCES:
+            raise ValueError(
+                f"source {source_id!r} is a candidate in docs/news-media-source-shortlist.md; "
+                "it has no approved row in docs/source-policy-register.md"
+            )
         if source_id not in APPROVED_SOURCES:
             raise ValueError(
                 f"source {source_id!r} has no approved row in docs/source-policy-register.md"
@@ -287,6 +323,13 @@ def parse_capture(raw: bytes) -> ParsedCapture:
             def parse_item(item, index, received, layer=layer):
                 return event_claims.parse_claim(item, index, layer, received, parse_time)
 
+        elif capture_format == MEDIA_CAPTURE_FORMAT:
+            records = doc["provider_response"]["items"]
+            limit = MAX_ITEMS
+
+            def parse_item(item, index, received):
+                return media_items.parse_item(item, index, received, parse_time)
+
         elif source_id == synthetic_ais.SOURCE_ID:
             records = synthetic_ais.messages(doc["provider_response"])
             parse_item = synthetic_ais.parse_message
@@ -333,6 +376,13 @@ def parse_capture(raw: bytes) -> ParsedCapture:
                 continue
             parsed.claims.append(record)
             continue
+        if isinstance(record, media_items.Item):
+            # A news source is asked what it published or revised during the request.
+            if not start <= record.revision_time <= end:
+                parsed.rejected.append(f"item {index}: revised outside the request")
+                continue
+            parsed.items.append(record)
+            continue
         if not start <= record.observed_time <= end:
             parsed.rejected.append(f"record {index}: observed_time outside the request")
             continue
@@ -347,7 +397,10 @@ def derive_coverage(parsed: ParsedCapture) -> dict:
         return {"state": "failed", "value": None, "reason": f"provider status {status}"}
     if status == "indeterminate":
         return {"state": "unknown", "value": None, "reason": "provider completeness unknown"}
-    usable = parsed.claims if parsed.capture_format == EVENT_CAPTURE_FORMAT else parsed.records
+    usable = {
+        EVENT_CAPTURE_FORMAT: parsed.claims,
+        MEDIA_CAPTURE_FORMAT: parsed.items,
+    }.get(parsed.capture_format, parsed.records)
     if parsed.submitted and not usable:
         # The provider answered, but nothing in the answer can be used: EYE was
         # not observing. Only an empty, healthy response is a measured zero.
@@ -358,6 +411,8 @@ def derive_coverage(parsed: ParsedCapture) -> dict:
         }
     if parsed.capture_format == EVENT_CAPTURE_FORMAT:
         distinct = len({c.case_id for c in parsed.claims})  # cases, not deliveries
+    elif parsed.capture_format == MEDIA_CAPTURE_FORMAT:
+        distinct = len({i.item_id for i in parsed.items})  # items, not versions
     else:
         distinct = len({r.source_record_id for r in parsed.records})
     reasons = []
@@ -420,6 +475,39 @@ def claim_row(source_id: str, layer: str, claim: event_claims.Claim) -> tuple:
     )
 
 
+def media_item_id(source_id: str, item: media_items.Item) -> str:
+    """Content-derived: a duplicate delivery of one item version is one media item."""
+    return stable_id("media_item", source_id, item.item_id, item.content_sha256(iso))
+
+
+def media_row(source_id: str, item: media_items.Item) -> tuple:
+    place = item.place
+    return (
+        source_id,
+        item.item_id,
+        item.kind,
+        item.status,
+        iso(item.first_published_time),
+        iso(item.revision_time),
+        item.url,
+        item.syndicated_from,
+        item.publisher,
+        item.creator,
+        item.headline,
+        item.language,
+        item.rights,
+        item.licence,
+        item.attribution,
+        None if item.capture_time_claimed is None else iso(item.capture_time_claimed),
+        None if place is None else place.role,
+        None if place is None else place.method,
+        None if place is None else place.lon,
+        None if place is None else place.lat,
+        None if place is None else place.precision_m,
+        item.content_sha256(iso),
+    )
+
+
 @dataclass(frozen=True)
 class Derived:
     """Everything one committed batch contributes, as stored values."""
@@ -430,6 +518,8 @@ class Derived:
     coverage: dict[str, tuple]
     claims: dict[str, tuple] = field(default_factory=dict)
     claim_receipts: dict[tuple[str, str], tuple] = field(default_factory=dict)
+    media: dict[str, tuple] = field(default_factory=dict)
+    media_receipts: dict[tuple[str, str], tuple] = field(default_factory=dict)
 
 
 def derive(parsed: ParsedCapture) -> Derived:
@@ -467,16 +557,28 @@ def derive(parsed: ParsedCapture) -> Derived:
             iso(parsed.received_time),
             parsed.adapter_version,
         )
+    media: dict[str, tuple] = {}
+    media_receipts: dict[tuple[str, str], tuple] = {}
+    for item in parsed.items:
+        mid = media_item_id(parsed.source_id, item)
+        media[mid] = media_row(parsed.source_id, item)
+        media_receipts[(mid, parsed.batch_id)] = (
+            parsed.evidence_id,
+            iso(parsed.received_time),
+            parsed.adapter_version,
+        )
     coverage = derive_coverage(parsed)
     metric = parsed.metric_name
     coverage_id = stable_id("coverage", parsed.batch_id, parsed.layer, metric)
-    accepted = len(parsed.records) + len(parsed.claims)
+    accepted = len(parsed.records) + len(parsed.claims) + len(parsed.items)
     return Derived(
         batch=("committed", accepted, len(parsed.rejected), None),
         observations=observations,
         receipts=receipts,
         claims=claims,
         claim_receipts=claim_receipts,
+        media=media,
+        media_receipts=media_receipts,
         coverage={
             coverage_id: (
                 parsed.batch_id,
@@ -500,7 +602,7 @@ INTEGRITY_REASON = "evidence checksum mismatch"
 def derive_integrity_failure(batch_id: str, facts: tuple) -> Derived:
     """What a batch whose stored evidence fails its checksum must contain."""
     source_id, layer, start, end, capture_format = facts
-    metric = EVENT_METRIC_NAME if capture_format == EVENT_CAPTURE_FORMAT else METRIC_NAME
+    metric = metric_for(capture_format)
     return Derived(
         batch=("failed", 0, 0, INTEGRITY_REASON),
         observations={},
@@ -723,6 +825,85 @@ def _write(conn: Connection, batch_id: str, derived: Derived) -> None:
             ON CONFLICT (claim_id, batch_id) DO NOTHING
             """,
             cid=cid,
+            bid=bid,
+            eid=evidence_id,
+            received=received,
+            adapter=adapter_version,
+        )
+    for mid, row in derived.media.items():
+        (
+            source,
+            item,
+            kind,
+            status,
+            first,
+            revision,
+            link,
+            syndicated,
+            publisher,
+            creator,
+            headline,
+            language,
+            rights,
+            licence,
+            attribution,
+            captured,
+            role,
+            method,
+            lon,
+            lat,
+            precision,
+            sha,
+        ) = row
+        conn.run(
+            """
+            INSERT INTO eye.media_item (
+                media_item_id, source_id, item_id, kind, status, first_published_time,
+                revision_time, url, syndicated_from, publisher, creator, headline, language,
+                rights_status, licence, attribution, capture_time_claimed, place_role,
+                place_method, place, place_precision_m, content_sha256)
+            VALUES (:id, :source, :item, :kind, :status, CAST(:first AS timestamptz),
+                CAST(:revision AS timestamptz), :url, :syndicated, :publisher, :creator,
+                :headline, :language, :rights, :licence, :attribution,
+                CAST(:captured AS timestamptz), :role, :method,
+                CASE WHEN CAST(:lon AS double precision) IS NULL THEN NULL
+                     ELSE ST_SetSRID(ST_MakePoint(:lon, :lat), 4326) END,
+                :precision, :sha)
+            ON CONFLICT (media_item_id) DO NOTHING
+            """,
+            id=mid,
+            source=source,
+            item=item,
+            kind=kind,
+            status=status,
+            first=first,
+            revision=revision,
+            url=link,
+            syndicated=syndicated,
+            publisher=publisher,
+            creator=creator,
+            headline=headline,
+            language=language,
+            rights=rights,
+            licence=licence,
+            attribution=attribution,
+            captured=captured,
+            role=role,
+            method=method,
+            lon=lon,
+            lat=lat,
+            precision=precision,
+            sha=sha,
+        )
+    for (mid, bid), (evidence_id, received, adapter_version) in derived.media_receipts.items():
+        conn.run(
+            """
+            INSERT INTO eye.media_item_receipt (
+                media_item_id, batch_id, evidence_id, received_time, adapter_version)
+            VALUES (:mid, :bid, :eid, CAST(:received AS timestamptz), :adapter)
+            ON CONFLICT (media_item_id, batch_id) DO NOTHING
+            """,
+            mid=mid,
             bid=bid,
             eid=evidence_id,
             received=received,
@@ -976,6 +1157,8 @@ def verify_replay(conn: Connection) -> list[str]:
     coverage: dict[str, tuple] = {}
     claims: dict[str, tuple] = {}
     claim_receipts: dict[tuple, tuple] = {}
+    media: dict[str, tuple] = {}
+    media_receipts: dict[tuple, tuple] = {}
     for batch_id, *row in conn.run(
         BATCH_FACTS.replace("SELECT ", "SELECT b.batch_id::text, ", 1) + " ORDER BY b.batch_id"
     ):
@@ -998,6 +1181,8 @@ def verify_replay(conn: Connection) -> list[str]:
         coverage.update(derived.coverage)
         claims.update(derived.claims)
         claim_receipts.update(derived.claim_receipts)
+        media.update(derived.media)
+        media_receipts.update(derived.media_receipts)
 
     _verify_archive(conn, problems)
 
@@ -1081,7 +1266,46 @@ def verify_replay(conn: Connection) -> list[str]:
     _compare(
         "event claim version", expected_claim_versions(claims), actual_claim_versions, problems
     )
+    actual_media = {r[0]: r[1:] for r in _rows(conn, MEDIA_FACTS)}
+    _compare("media item", media, actual_media, problems)
+    actual_media_receipts = {
+        (r[0], r[1]): r[2:]
+        for r in _rows(
+            conn,
+            "SELECT media_item_id::text, batch_id::text, evidence_id::text, "
+            "eye.iso_utc(received_time), adapter_version FROM eye.media_item_receipt",
+        )
+    }
+    _compare("media item receipt", media_receipts, actual_media_receipts, problems)
+    actual_media_versions = {
+        r[0]: r[1:]
+        for r in _rows(
+            conn,
+            "SELECT media_item_id::text, version, supersedes_media_item_id::text, is_current, "
+            "revision_conflict FROM eye.media_item_version",
+        )
+    }
+    _compare("media item version", expected_media_versions(media), actual_media_versions, problems)
     return problems
+
+
+def expected_media_versions(media: dict[str, tuple]) -> dict[str, tuple]:
+    """Version facts per item (mirrors eye.media_item_version): same rules."""
+    groups: dict[tuple, dict[str, list[str]]] = {}
+    for mid, row in media.items():
+        source, item, revision = row[0], row[1], row[5]
+        groups.setdefault((source, item), {}).setdefault(revision, []).append(mid)
+    return _version_facts(groups)
+
+
+MEDIA_FACTS = """
+    SELECT media_item_id::text, source_id, item_id, kind, status,
+           eye.iso_utc(first_published_time), eye.iso_utc(revision_time), url, syndicated_from,
+           publisher, creator, headline, language, rights_status, licence, attribution,
+           eye.iso_utc(capture_time_claimed), place_role, place_method, ST_X(place),
+           ST_Y(place), place_precision_m, content_sha256
+    FROM eye.media_item
+"""
 
 
 CLAIM_FACTS = """
