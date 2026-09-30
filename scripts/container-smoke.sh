@@ -41,6 +41,17 @@ candidates = {e["case_id"] for e in events if e["standing"] == "review_candidate
 ok = len(events) == 7 and candidates == {"SYN-SL-1", "SYN-GAP-21", "SYN-TS-1"}
 sys.exit(0 if ok else f"container-smoke: unexpected event cases {standing}")
 '
+    # News and media: separate items, unknown-rights headlines withheld,
+    # syndication a suggestion only (Package 4d).
+    curl -fsS "${base}/api/v0/snapshot" | python3 -c '
+import json, sys
+view = json.load(sys.stdin)
+media = {m["item_id"]: m for m in view["media"]}
+shown = [v["headline"] for m in view["media"] for v in m["versions"] if v["rights"]["status"] == "unknown"]
+bases = {s["basis"] for s in view["media_suggestions"]}
+ok = len(media) == 8 and shown == [None] and "syndicated_copy" in bases
+sys.exit(0 if ok else f"container-smoke: unexpected news items {sorted(media)} {shown} {bases}")
+'
     # The four demo hours: exact, partial, outage (unknown, never zero), measured zero.
     curl -fsS "${base}/api/v0/transits" | python3 -c '
 import json, sys
@@ -49,7 +60,7 @@ states = [(c["state"], c["total"]) for c in counts]
 expected = [("qualified", 1), ("partial", 1), ("unknown", None), ("qualified", 0)]
 sys.exit(0 if states == expected else f"container-smoke: unexpected transit counts {states}")
 '
-    echo "container-smoke: health, snapshot, event cases and transit counts OK on 127.0.0.1:${port}"
+    echo "container-smoke: health, snapshot, event cases, news items and transit counts OK on 127.0.0.1:${port}"
     exit 0
   fi
   sleep 1

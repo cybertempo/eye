@@ -6,6 +6,9 @@ import type {
   Coverage,
   EventCase,
   EventClaim,
+  MediaItem,
+  MediaSuggestion,
+  MediaVersion,
   Track,
   TrackPoint,
   TransitCount,
@@ -422,4 +425,214 @@ export function reportsMeasured(coverage: readonly Coverage[], layers: readonly 
     const rows = reportRows(coverage, layer);
     return rows.length > 0 && rows.every((c) => c.interval_kind === "reporting_window" && c.state === "qualified");
   });
+}
+
+// --- news and media evidence (Package 4d) -------------------------------------------
+
+/** The current version, or undefined when the latest versions conflict. */
+export function currentVersion(item: MediaItem): MediaVersion | undefined {
+  return item.versions.find((v) => v.version_id === item.current_version_id);
+}
+
+/** The version to describe: the current one, else the first conflicting latest one. */
+export function shownVersion(item: MediaItem): MediaVersion | undefined {
+  return currentVersion(item) ?? item.versions.find((v) => v.is_current === null);
+}
+
+/** Rules the schema cannot express; an item that breaks one is refused, not shown. */
+export function mediaErrors(item: MediaItem): string[] {
+  const errors: string[] = [];
+  const current = item.versions.filter((v) => v.is_current === true);
+  if (item.current_version_id === null) {
+    if (current.length > 0) errors.push("a current version without current_version_id");
+    if (item.standing !== "unresolved") errors.push("no current version but not unresolved");
+  } else {
+    const chosen = currentVersion(item);
+    if (!chosen || current.length !== 1) errors.push("current_version_id is not the one current version");
+    else if (item.standing !== chosen.status) errors.push(`standing ${item.standing} does not match the current version`);
+  }
+  for (const v of item.versions) {
+    const unknown = v.rights.status === "unknown";
+    // Unknown reuse rights: a link only. A headline alongside them is refused.
+    if (unknown && v.headline !== null) errors.push(`version ${v.version} shows a headline with unknown rights`);
+    if (v.headline_withheld && !unknown) errors.push(`version ${v.version} withholds a headline it may show`);
+    if (!v.url.startsWith("https://")) errors.push(`version ${v.version} links to a non-https address`);
+    if (compareTime(v.revision_time, v.first_published_time) < 0) {
+      errors.push(`version ${v.version} was revised before it was published`);
+    }
+  }
+  return errors;
+}
+
+const KIND_WORDS: Record<MediaItem["kind"], string> = { article: "Article", image: "Image", video: "Video" };
+const STANDING_WORDS: Record<MediaItem["standing"], string> = {
+  published: "as first published",
+  updated: "updated by its publisher",
+  corrected: "corrected by its publisher",
+  retracted: "retracted by its publisher",
+  unresolved: "latest versions conflict; which is current is unknown",
+};
+
+/**
+ * What the item is evidence of, and no more: that a publisher published it.
+ * It never confirms an event, a place, a time of capture or a crowd size.
+ */
+export function mediaAssessment(item: MediaItem): string {
+  const v = shownVersion(item);
+  const who = v ? v.publisher : "its publisher";
+  const base = `${KIND_WORDS[item.kind]} (${STANDING_WORDS[item.standing]}). Evidence that ${who} published it; ` +
+    "not a verified account of what happened.";
+  if (item.kind === "article") return base;
+  return `${base} It does not show when or where it was captured, or that it is live.`;
+}
+
+function span(seconds: number): string {
+  const s = Math.abs(seconds);
+  if (s < 3600) return `${Math.round(s / 60)} min`;
+  if (s < 172_800) return `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`;
+  if (s < 63_072_000) return `${Math.round(s / 86_400)} days`;
+  return `${(s / 31_557_600).toFixed(1)} years`;
+}
+
+function seconds(later: string, earlier: string): number {
+  return (Date.parse(later) - Date.parse(earlier)) / 1000;
+}
+
+/** Source times, EYE's receipt time and ages, relative to the end of the view. */
+export function mediaTimeText(version: MediaVersion, viewEnd: string): string[] {
+  const lines = [`First published ${version.first_published_time} (source time)`];
+  if (version.revision_time !== version.first_published_time) {
+    lines.push(`This version: ${version.status} ${version.revision_time} (source time)`);
+  }
+  const delay = seconds(version.received_time, version.revision_time);
+  lines.push(`Received by EYE ${version.received_time} (${span(delay)} after this version)`);
+  const age = seconds(viewEnd, version.first_published_time);
+  lines.push(age >= 0
+    ? `Age at the end of this view: ${span(age)}`
+    : "Published after the end of this view");
+  if (version.capture_time_claimed !== null) {
+    const before = seconds(version.first_published_time, version.capture_time_claimed);
+    lines.push(`Captured ${version.capture_time_claimed} according to the creator (a claim, not verified); ` +
+      `${span(before)} before publication. Not live.`);
+  }
+  return lines;
+}
+
+/**
+ * Why a version's place is or is not drawn. Only a place the source states
+ * as the event's place is drawn, as an approximate area. An image or video
+ * is drawn only when its claimed capture time lies inside the view: old
+ * footage reposted later is never shown as a current mark.
+ */
+export function mediaNotDrawnReason(
+  kind: MediaItem["kind"], version: MediaVersion, interval: { start: string; end: string },
+): string | null {
+  const place = version.place;
+  if (place === null) return "no place given";
+  if (place.role === "publisher_location") return "the publisher's location, not the event's place";
+  if (place.role === "mentioned") return "a place mentioned, not the event's place";
+  if (place.method === "automated_geocode") return "an automated geocode, which may be wrong";
+  if (version.status === "retracted") return "retracted by its publisher";
+  if (kind !== "article") {
+    const captured = version.capture_time_claimed;
+    if (captured === null) return "no capture time given";
+    if (compareTime(captured, interval.start) < 0 || compareTime(captured, interval.end) >= 0) {
+      return "captured outside this view, according to its creator";
+    }
+  }
+  return null;
+}
+
+/** Whether the globe may draw this version's place. */
+export function mediaDrawable(
+  kind: MediaItem["kind"], version: MediaVersion, interval: { start: string; end: string },
+): boolean {
+  return mediaNotDrawnReason(kind, version, interval) === null;
+}
+
+/** Where the item says it is about, by role and method, and whether it is drawn. */
+export function mediaPlaceText(
+  kind: MediaItem["kind"], version: MediaVersion, interval: { start: string; end: string },
+): string {
+  const place = version.place;
+  const reason = mediaNotDrawnReason(kind, version, interval);
+  const drawn = reason === null
+    ? "Drawn as an approximate area, not a site."
+    : `Not drawn: ${reason}.`;
+  if (place === null) return `No place given. ${drawn}`;
+  const where = `${formatPosition(place.coords[0], place.coords[1])} ± ${place.precision_m} m`;
+  if (place.role === "publisher_location") return `Publisher's location ${where}. ${drawn}`;
+  if (place.role === "mentioned") return `A place mentioned ${where}. ${drawn}`;
+  if (place.method === "automated_geocode") return `Event place from an automated geocode ${where}. ${drawn}`;
+  return `Event place stated by the source ${where}. ${drawn}`;
+}
+
+export function mediaRightsText(version: MediaVersion): string {
+  const rights = version.rights;
+  const copy = " EYE stores no copy of the work.";
+  if (rights.status === "licensed") {
+    return `Licensed ${rights.licence}; attribution: ${rights.attribution}.${copy}`;
+  }
+  if (rights.status === "link_only") return `Link and metadata only; the work may not be reused.${copy}`;
+  return `Reuse rights unknown: link only, headline withheld.${copy}`;
+}
+
+export function mediaHeadlineText(version: MediaVersion): string {
+  if (version.headline_withheld) return "Headline withheld: reuse rights unknown.";
+  return version.headline ?? "No headline given.";
+}
+
+export function mediaHistory(item: MediaItem): string[] {
+  return item.versions.map((v) => {
+    const state = v.is_current === true ? "current" : v.is_current === null ? "conflicting, unresolved" : "superseded";
+    return `v${v.version} ${v.status} ${v.revision_time}, received ${v.received_time} (${state}; ` +
+      `batches ${v.evidence_batch_ids.join(", ")})`;
+  });
+}
+
+/** A suggestion in words: never a merge, never a confirmation. */
+export function suggestionText(suggestion: MediaSuggestion, names: ReadonlyMap<string, string>): string {
+  // Named in a stable, readable order; the wire order is by opaque id.
+  const [a, b] = suggestion.items.map((id) => names.get(id) ?? id).sort((x, y) => x.localeCompare(y));
+  if (suggestion.basis === "syndicated_copy") {
+    return `Suggestion, not confirmed: ${a} and ${b} are copies of one report (syndication). ` +
+      "They are not independent confirmation.";
+  }
+  return `Suggestion, not confirmed: ${a} and ${b} come from different publishers, near the same stated ` +
+    "place and time. They may describe the same story; they are not merged and prove nothing more.";
+}
+
+/** Why a covered news window with no items is not "nothing happened". */
+export const MEDIA_COUNT_NOTE =
+  "Each news row is one capture's reporting window: items its source published or revised then. " +
+  "No items means that source published none there; it does not mean nothing happened. " +
+  "Rows can count an item more than once; do not add them together.";
+
+/** News coverage in words; an absent source is Unknown, never "no news". */
+export function mediaCoverageText(coverage: readonly Coverage[]): string[] {
+  const rows = coverage
+    .filter((c) => c.layer === "news" && c.metric.name === "media_items_in_view")
+    .sort((a, b) =>
+      compareTime(a.interval.start, b.interval.start) ||
+      compareTime(a.interval.end, b.interval.end) ||
+      JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  if (rows.length === 0) return [`news: ${UNKNOWN}: no news coverage`, MEDIA_COUNT_NOTE];
+  const parts = rows.map((c) => {
+    if (c.interval_kind !== "reporting_window") {
+      return `${intervalText(c.interval)} refused: a news count without its reporting window`;
+    }
+    const window = `items published ${intervalText(c.interval)}`;
+    const by = c.batch_id === undefined ? "" : ` by capture ${c.batch_id}`;
+    const items = c.metric.value === 1 ? "1 item" : `${c.metric.value} items`;
+    if (c.state === "qualified") return `${window} covered (${items} in this view)${by}`;
+    if (c.state === "partial") return `${window} partly covered (at least ${items} in this view; ${c.reason ?? ""})${by}`;
+    return `${window} ${UNKNOWN}: ${c.reason ?? "no data"}${by}`;
+  });
+  return [`news: ${parts.join("; ")}`, MEDIA_COUNT_NOTE];
+}
+
+/** True when news reporting windows were captured over the whole view. */
+export function mediaMeasured(coverage: readonly Coverage[]): boolean {
+  const rows = coverage.filter((c) => c.layer === "news" && c.metric.name === "media_items_in_view");
+  return rows.length > 0 && rows.every((c) => c.interval_kind === "reporting_window" && c.state === "qualified");
 }
