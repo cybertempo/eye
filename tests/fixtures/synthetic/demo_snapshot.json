@@ -1,5 +1,5 @@
 {
-  "schema_version": "eye.wire/3",
+  "schema_version": "eye.wire/4",
   "kind": "snapshot",
   "cursor": "demo-p1-0001",
   "generated_at": "2026-01-01T01:00:00Z",
@@ -281,6 +281,84 @@
       "last_observed_position": null
     }
   ],
+  "media": [
+    {
+      "id": "med-0123456789abcdef0123456789abcdef",
+      "source": "synthetic-news",
+      "source_label": "Synthetic news and media (invented items; not a real publisher)",
+      "item_id": "SN-DEMO-1",
+      "kind": "article",
+      "standing": "corrected",
+      "current_version_id": "syn-media-v2",
+      "versions": [
+        {
+          "version_id": "syn-media-v1",
+          "version": 1,
+          "is_current": false,
+          "status": "published",
+          "first_published_time": "2026-02-01T12:10:00Z",
+          "revision_time": "2026-02-01T12:10:00Z",
+          "received_time": "2026-02-01T13:00:10Z",
+          "evidence_batch_ids": [
+            "syn-news-batch-1"
+          ],
+          "url": "https://synthetic-daily.invalid/demo",
+          "syndicated_from": null,
+          "publisher": "Synthetic Daily",
+          "creator": null,
+          "headline": "Invented: bridge closed",
+          "headline_withheld": false,
+          "language": "en",
+          "rights": {
+            "status": "link_only"
+          },
+          "capture_time_claimed": null,
+          "place": {
+            "role": "event_place",
+            "method": "source_stated",
+            "coords": [
+              0.1,
+              0.1
+            ],
+            "precision_m": 2000
+          }
+        },
+        {
+          "version_id": "syn-media-v2",
+          "version": 2,
+          "is_current": true,
+          "status": "corrected",
+          "first_published_time": "2026-02-01T12:10:00Z",
+          "revision_time": "2026-02-01T13:15:00Z",
+          "received_time": "2026-02-01T14:00:10Z",
+          "evidence_batch_ids": [
+            "syn-news-batch-2"
+          ],
+          "url": "https://synthetic-daily.invalid/demo",
+          "syndicated_from": null,
+          "publisher": "Synthetic Daily",
+          "creator": null,
+          "headline": "Invented: bridge closed (corrected location)",
+          "headline_withheld": false,
+          "language": "en",
+          "rights": {
+            "status": "link_only"
+          },
+          "capture_time_claimed": null,
+          "place": {
+            "role": "event_place",
+            "method": "source_stated",
+            "coords": [
+              0.1,
+              0.1
+            ],
+            "precision_m": 500
+          }
+        }
+      ]
+    }
+  ],
+  "media_suggestions": [],
   "coverage": [
     {
       "layer": "flight",

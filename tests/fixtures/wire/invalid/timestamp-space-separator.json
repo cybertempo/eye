@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "timestamps must be RFC 3339 with T",
   "message": {
-    "schema_version": "eye.wire/3",
+    "schema_version": "eye.wire/4",
     "kind": "snapshot",
     "cursor": "c-0001",
     "generated_at": "2026-01-01 01:00:00Z",
@@ -127,6 +127,8 @@
         "last_observed_position": null
       }
     ],
+    "media": [],
+    "media_suggestions": [],
     "coverage": [
       {
         "layer": "flight",

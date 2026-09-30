@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "snapshot with no data is valid; coverage says why",
   "message": {
-    "schema_version": "eye.wire/3",
+    "schema_version": "eye.wire/4",
     "kind": "snapshot",
     "cursor": "c-0001",
     "generated_at": "2026-01-01T01:00:00Z",
@@ -22,6 +22,8 @@
     },
     "tracks": [],
     "events": [],
+    "media": [],
+    "media_suggestions": [],
     "coverage": [
       {
         "layer": "vessel",

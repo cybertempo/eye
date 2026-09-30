@@ -1,0 +1,93 @@
+{
+  "entry": "ServerMessage",
+  "note": "delta adding one news or media item",
+  "message": {
+    "schema_version": "eye.wire/4",
+    "kind": "delta",
+    "sequence": 2,
+    "cursor": "c-0002",
+    "previous_cursor": "c-0001",
+    "tracks_upserted": [
+      {
+        "id": "syn-track-flt-001",
+        "kind": "flight",
+        "source": "synthetic-fixture",
+        "source_record_id": "SYN-FLT-001",
+        "display_type": "observed",
+        "points": [
+          {
+            "observed_time": "2026-01-01T00:00:00Z",
+            "received_time": "2026-01-01T00:00:04Z",
+            "lon": -0.4,
+            "lat": -0.2,
+            "alt_m": 9100
+          }
+        ],
+        "quality_flags": []
+      }
+    ],
+    "events_upserted": [],
+    "media_upserted": [
+      {
+        "id": "med-00112233445566778899aabbccddeeff",
+        "source": "synthetic-news",
+        "source_label": "Synthetic news and media (invented items; not a real publisher)",
+        "item_id": "SN-P1",
+        "kind": "image",
+        "standing": "published",
+        "current_version_id": "syn-media-v7",
+        "versions": [
+          {
+            "version_id": "syn-media-v7",
+            "version": 1,
+            "is_current": true,
+            "status": "published",
+            "first_published_time": "2026-02-01T12:50:00Z",
+            "revision_time": "2026-02-01T12:50:00Z",
+            "received_time": "2026-02-01T13:00:10Z",
+            "evidence_batch_ids": [
+              "syn-news-batch-1"
+            ],
+            "url": "https://commons.invalid/file/bridge.jpg",
+            "syndicated_from": null,
+            "publisher": "Invented Commons",
+            "creator": "Invented Photographer",
+            "headline": "Invented: closed bridge",
+            "headline_withheld": false,
+            "language": "en",
+            "rights": {
+              "status": "licensed",
+              "licence": "CC-BY-4.0",
+              "attribution": "Invented Photographer, CC BY 4.0"
+            },
+            "capture_time_claimed": "2026-02-01T12:05:00Z",
+            "place": {
+              "role": "event_place",
+              "method": "source_stated",
+              "coords": [
+                0.1,
+                0.1
+              ],
+              "precision_m": 500
+            }
+          }
+        ]
+      }
+    ],
+    "coverage_upserted": [
+      {
+        "layer": "vessel",
+        "interval": {
+          "start": "2026-01-01T00:00:00Z",
+          "end": "2026-01-01T01:00:00Z"
+        },
+        "state": "failed",
+        "reason": "synthetic provider timeout",
+        "metric": {
+          "name": "tracks_observed",
+          "value": null
+        }
+      }
+    ]
+  }
+}

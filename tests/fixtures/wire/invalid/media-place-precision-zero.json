@@ -1,0 +1,230 @@
+{
+  "entry": "ServerMessage",
+  "note": "a place claiming zero uncertainty",
+  "message": {
+    "schema_version": "eye.wire/4",
+    "kind": "snapshot",
+    "cursor": "c-0001",
+    "generated_at": "2026-01-01T01:00:00Z",
+    "synthetic": true,
+    "area": {
+      "name": "Synthetic test area",
+      "bbox": [
+        -0.5,
+        -0.5,
+        0.5,
+        0.5
+      ]
+    },
+    "interval": {
+      "start": "2026-01-01T00:00:00Z",
+      "end": "2026-01-01T01:00:00Z"
+    },
+    "tracks": [],
+    "events": [],
+    "media": [
+      {
+        "id": "med-0123456789abcdef0123456789abcdef",
+        "source": "synthetic-news",
+        "source_label": "Synthetic news and media (invented items; not a real publisher)",
+        "item_id": "SN-DEMO-1",
+        "kind": "article",
+        "standing": "corrected",
+        "current_version_id": "syn-media-v2",
+        "versions": [
+          {
+            "version_id": "syn-media-v1",
+            "version": 1,
+            "is_current": false,
+            "status": "published",
+            "first_published_time": "2026-02-01T12:10:00Z",
+            "revision_time": "2026-02-01T12:10:00Z",
+            "received_time": "2026-02-01T13:00:10Z",
+            "evidence_batch_ids": [
+              "syn-news-batch-1"
+            ],
+            "url": "https://synthetic-daily.invalid/demo",
+            "syndicated_from": null,
+            "publisher": "Synthetic Daily",
+            "creator": null,
+            "headline": "Invented: bridge closed",
+            "headline_withheld": false,
+            "language": "en",
+            "rights": {
+              "status": "link_only"
+            },
+            "capture_time_claimed": null,
+            "place": {
+              "role": "event_place",
+              "method": "source_stated",
+              "coords": [
+                0.1,
+                0.1
+              ],
+              "precision_m": 2000
+            }
+          },
+          {
+            "version_id": "syn-media-v2",
+            "version": 2,
+            "is_current": true,
+            "status": "corrected",
+            "first_published_time": "2026-02-01T12:10:00Z",
+            "revision_time": "2026-02-01T13:15:00Z",
+            "received_time": "2026-02-01T14:00:10Z",
+            "evidence_batch_ids": [
+              "syn-news-batch-2"
+            ],
+            "url": "https://synthetic-daily.invalid/demo",
+            "syndicated_from": null,
+            "publisher": "Synthetic Daily",
+            "creator": null,
+            "headline": "Invented: bridge closed (corrected location)",
+            "headline_withheld": false,
+            "language": "en",
+            "rights": {
+              "status": "link_only"
+            },
+            "capture_time_claimed": null,
+            "place": {
+              "role": "event_place",
+              "method": "source_stated",
+              "coords": [
+                0.1,
+                0.1
+              ],
+              "precision_m": 500
+            }
+          }
+        ]
+      },
+      {
+        "id": "med-fedcba9876543210fedcba9876543210",
+        "source": "synthetic-news",
+        "source_label": "Synthetic news and media (invented items; not a real publisher)",
+        "item_id": "SN-V1",
+        "kind": "video",
+        "standing": "published",
+        "current_version_id": "syn-media-v9",
+        "versions": [
+          {
+            "version_id": "syn-media-v9",
+            "version": 1,
+            "is_current": true,
+            "status": "published",
+            "first_published_time": "2026-02-01T12:45:00Z",
+            "revision_time": "2026-02-01T12:45:00Z",
+            "received_time": "2026-02-01T13:00:10Z",
+            "evidence_batch_ids": [
+              "syn-news-batch-1"
+            ],
+            "url": "https://clips.invalid/watch/abc123",
+            "syndicated_from": null,
+            "publisher": "Invented Clips",
+            "creator": null,
+            "headline": null,
+            "headline_withheld": true,
+            "language": "en",
+            "rights": {
+              "status": "unknown"
+            },
+            "capture_time_claimed": "2024-05-01T09:00:00Z",
+            "place": {
+              "role": "event_place",
+              "method": "source_stated",
+              "coords": [
+                0.2,
+                -0.1
+              ],
+              "precision_m": 1000
+            }
+          }
+        ]
+      },
+      {
+        "id": "med-00112233445566778899aabbccddeeff",
+        "source": "synthetic-news",
+        "source_label": "Synthetic news and media (invented items; not a real publisher)",
+        "item_id": "SN-P1",
+        "kind": "image",
+        "standing": "published",
+        "current_version_id": "syn-media-v7",
+        "versions": [
+          {
+            "version_id": "syn-media-v7",
+            "version": 1,
+            "is_current": true,
+            "status": "published",
+            "first_published_time": "2026-02-01T12:50:00Z",
+            "revision_time": "2026-02-01T12:50:00Z",
+            "received_time": "2026-02-01T13:00:10Z",
+            "evidence_batch_ids": [
+              "syn-news-batch-1"
+            ],
+            "url": "https://commons.invalid/file/bridge.jpg",
+            "syndicated_from": null,
+            "publisher": "Invented Commons",
+            "creator": "Invented Photographer",
+            "headline": "Invented: closed bridge",
+            "headline_withheld": false,
+            "language": "en",
+            "rights": {
+              "status": "licensed",
+              "licence": "CC-BY-4.0",
+              "attribution": "Invented Photographer, CC BY 4.0"
+            },
+            "capture_time_claimed": "2026-02-01T12:05:00Z",
+            "place": {
+              "role": "event_place",
+              "method": "source_stated",
+              "coords": [
+                0.1,
+                0.1
+              ],
+              "precision_m": 0
+            }
+          }
+        ]
+      }
+    ],
+    "media_suggestions": [
+      {
+        "items": [
+          "med-00112233445566778899aabbccddeeff",
+          "med-0123456789abcdef0123456789abcdef"
+        ],
+        "basis": "place_and_time",
+        "status": "suggestion"
+      }
+    ],
+    "coverage": [
+      {
+        "layer": "vessel",
+        "interval": {
+          "start": "2026-01-01T00:00:00Z",
+          "end": "2026-01-01T01:00:00Z"
+        },
+        "state": "unknown",
+        "reason": "no source registered for this area",
+        "metric": {
+          "name": "tracks_observed",
+          "value": null
+        }
+      },
+      {
+        "layer": "news",
+        "interval": {
+          "start": "2026-02-01T12:00:00Z",
+          "end": "2026-02-01T13:00:00Z"
+        },
+        "interval_kind": "reporting_window",
+        "batch_id": "syn-news-batch-1",
+        "state": "qualified",
+        "metric": {
+          "name": "media_items_in_view",
+          "value": 3
+        }
+      }
+    ]
+  }
+}

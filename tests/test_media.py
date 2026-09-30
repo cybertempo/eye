@@ -17,15 +17,20 @@ Every refusal has a working control beside it:
 
 from __future__ import annotations
 
+import copy
+import json
 import shutil
 
+import jsonschema
 import pytest
 from conftest import AIS_DEMO, CAPTURES, REPO_ROOT
 from eye.ingest.capture import CaptureRejected, archive, ingest, load_fixtures, verify_replay
 from eye.storage.db import connect
 from eye.storage.migrate import MIGRATIONS_DIR, migrate
+from eye.wire import SCHEMA_PATH, validate_message
 from pg8000.exceptions import DatabaseError
 from synthetic_media import DAY, capture, item, licensed, place
+from ws_client import WsClient, subscribe
 
 EVENTS_DEMO = REPO_ROOT / "tests" / "fixtures" / "synthetic" / "events" / "demo"
 MEDIA_DEMO = REPO_ROOT / "tests" / "fixtures" / "synthetic" / "media" / "demo"
@@ -73,8 +78,6 @@ def test_unapproved_or_unknown_sources_are_refused(db, tmp_path, source, message
 
 
 def test_a_capture_not_marked_synthetic_or_in_the_wrong_format_is_refused(db, tmp_path):
-    import json
-
     path = capture(tmp_path, "real", [item("N-1", DAY + "12:10:00Z")])
     doc = json.loads(path.read_text())
     for change, message in (
@@ -373,3 +376,282 @@ def test_migration_0006_leaves_earlier_history_unchanged(make_db, tmp_path):
     assert [table_digest(conn, name) for name in tables] == prior
     assert verify_replay(conn) == []
     conn.close()
+
+
+# --- the API: REST snapshots ------------------------------------------------------------------
+
+SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+VIEW = "/api/v0/snapshot?start=2026-02-01T12:00:00Z&end=2026-02-01T16:00:00Z"
+AREA = (-0.5, -0.5, 0.5, 0.5)
+HOURS = {"start": DAY + "12:00:00Z", "end": DAY + "16:00:00Z"}
+
+
+def reference_valid(message: dict) -> bool:
+    document = copy.deepcopy(SCHEMA)
+    document["$ref"] = "#/$defs/ServerMessage"
+    return jsonschema.Draft202012Validator(document).is_valid(message)
+
+
+def snapshot(api, path: str = VIEW) -> dict:
+    response, body = api.get(path)
+    assert response.status == 200, body
+    message = json.loads(body)
+    assert validate_message(message, "ServerMessage") and reference_valid(message)
+    return message
+
+
+def media_of(message: dict, item_id: str) -> dict:
+    (found,) = [m for m in message["media"] if m["item_id"] == item_id]
+    return found
+
+
+def current(item: dict) -> dict:
+    (version,) = [v for v in item["versions"] if v["version_id"] == item["current_version_id"]]
+    return version
+
+
+def news_rows(message: dict) -> list:
+    return sorted(
+        (c["interval"]["start"], c["interval"]["end"], c["state"], c["metric"]["value"])
+        for c in message["coverage"]
+        if c["layer"] == "news"
+    )
+
+
+def pairs(message: dict) -> set:
+    """Suggestions as ((item id, item id), basis), by the items' source ids."""
+    ids = {m["id"]: m["item_id"] for m in message["media"]}
+    return {
+        (tuple(sorted(ids[i] for i in s["items"])), s["basis"])
+        for s in message["media_suggestions"]
+    }
+
+
+def demo_media(api_server):
+    api = api_server()
+    for path in sorted(MEDIA_DEMO.glob("*.json")):
+        api.ingest(path)
+    return api
+
+
+def test_demo_items_carry_source_times_rights_and_history(api_server):
+    api = demo_media(api_server)
+    view = snapshot(api)
+    assert view["events"] == []  # news never becomes an event case
+    assert sorted(m["item_id"] for m in view["media"]) == [
+        "SN-A1",
+        "SN-B1",
+        "SN-C1",
+        "SN-G1",
+        "SN-L1",
+        "SN-P1",
+        "SN-V1",
+        "SN-W1",
+    ]
+    for served in view["media"]:
+        assert served["source"] == "synthetic-news"
+        assert served["source_label"].startswith("Synthetic news and media")
+    # A correction keeps every version, each with its own times.
+    a1 = media_of(view, "SN-A1")
+    assert a1["standing"] == "corrected"
+    assert [(v["version"], v["is_current"], v["place"]["precision_m"]) for v in a1["versions"]] == [
+        (1, False, 2000.0),
+        (2, True, 500.0),
+    ]
+    assert [v["received_time"] for v in a1["versions"]] == [DAY + "13:00:10Z", DAY + "14:00:10Z"]
+    # A repeat delivery is two receipts of one version.
+    (b1,) = media_of(view, "SN-B1")["versions"]
+    assert len(b1["evidence_batch_ids"]) == 2 and b1["received_time"] == DAY + "13:00:10Z"
+    # A late delivery keeps its publication time and EYE's later receipt time.
+    (l1,) = media_of(view, "SN-L1")["versions"]
+    assert (l1["first_published_time"], l1["received_time"]) == (
+        DAY + "13:20:00Z",
+        DAY + "15:30:00Z",
+    )
+    # Unknown rights: a link only, headline withheld. Controls beside it.
+    v1 = current(media_of(view, "SN-V1"))
+    assert (v1["rights"], v1["headline"], v1["headline_withheld"]) == (
+        {"status": "unknown"},
+        None,
+        True,
+    )
+    assert v1["url"] == "https://clips.invalid/watch/abc123"
+    assert v1["capture_time_claimed"] == "2024-05-01T09:00:00Z"  # old footage, as claimed
+    p1 = current(media_of(view, "SN-P1"))
+    assert p1["rights"]["licence"] == "CC-BY-4.0" and p1["headline"] is not None
+    assert current(media_of(view, "SN-B1"))["headline"] is not None  # link_only keeps it
+    # Places keep their role and method.
+    assert current(media_of(view, "SN-W1"))["place"]["role"] == "publisher_location"
+    assert current(media_of(view, "SN-G1"))["place"]["method"] == "automated_geocode"
+    # News coverage: reporting windows, the outage failed, the rest unknown.
+    assert news_rows(view) == [
+        (DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 1),  # the repeat of SN-B1
+        (DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 6),
+        (DAY + "13:00:00Z", DAY + "14:00:00Z", "qualified", 1),
+        (DAY + "13:00:00Z", DAY + "14:00:00Z", "qualified", 1),
+        (DAY + "14:00:00Z", DAY + "15:00:00Z", "failed", None),  # the outage, never zero
+        (DAY + "15:00:00Z", DAY + "16:00:00Z", "unknown", None),  # no capture at all
+    ]
+
+
+def test_suggestions_link_items_but_never_merge_them(api_server):
+    api = demo_media(api_server)
+    view = snapshot(api)
+    found = pairs(view)
+    # A syndicated copy is flagged as a copy, never as a second report.
+    assert (("SN-A1", "SN-C1"), "syndicated_copy") in found
+    assert not any(p == ("SN-A1", "SN-C1") and b == "place_and_time" for p, b in found)
+    # Independent publishers near the same stated place and time: a suggestion only.
+    assert (("SN-A1", "SN-B1"), "place_and_time") in found
+    assert all(s["status"] == "suggestion" for s in view["media_suggestions"])
+    # Both stay separate items, each with its own history.
+    assert len({m["id"] for m in view["media"]}) == len(view["media"])
+    # Negatives: a publisher's city, an automated geocode and a far-away
+    # video never take part in a place-and-time suggestion.
+    involved = {i for p, b in found if b == "place_and_time" for i in p}
+    assert involved.isdisjoint({"SN-W1", "SN-G1", "SN-V1"})
+
+
+def test_suggestion_rules_each_have_a_control(api_server, tmp_path):
+    api = api_server()
+    near = place(0.1, 0.1, 2000)
+    items = [
+        item("X-1", DAY + "12:10:00Z", publisher="Invented One", where=near),
+        item("X-2", DAY + "12:20:00Z", publisher="Invented Two", where=place(0.11, 0.1, 2000)),
+        item("SAME", DAY + "12:20:00Z", publisher="invented one", where=near),  # same publisher
+        item("FAR", DAY + "12:20:00Z", publisher="Invented Three", where=place(0.3, 0.1, 2000)),
+        item(
+            "AUTO",
+            DAY + "12:20:00Z",
+            publisher="Invented Four",
+            where=place(0.1, 0.1, 2000, method="automated_geocode"),
+        ),
+        item(
+            "CITY",
+            DAY + "12:20:00Z",
+            publisher="Invented Five",
+            where=place(0.1, 0.1, 2000, role="publisher_location"),
+        ),
+    ]
+    api.ingest(capture(tmp_path, "rules", items))
+    late = item("LATER", DAY + "18:30:00Z", publisher="Invented Six", where=near)
+    api.ingest(capture(tmp_path, "later", [late], start=DAY + "18:00:00Z", end=DAY + "19:00:00Z"))
+    view = snapshot(api, "/api/v0/snapshot?start=2026-02-01T12:00:00Z&end=2026-02-01T19:00:00Z")
+    found = {p for p, _ in pairs(view)}
+    assert ("X-1", "X-2") in found  # control: independent, near, close in time
+    assert ("SAME", "X-2") in found  # SAME and X-2 differ in publisher: also a suggestion
+    assert ("SAME", "X-1") not in found  # one publisher is not two reports
+    assert not any("FAR" in p or "AUTO" in p or "CITY" in p for p in found)
+    assert not any("LATER" in p for p in found)  # more than six hours apart
+
+
+def test_outage_is_unknown_and_an_empty_capture_a_zero_of_items(api_server, tmp_path):
+    api = api_server()
+    api.ingest(capture(tmp_path, "empty", []))
+    api.ingest(
+        capture(
+            tmp_path, "down", [], start=DAY + "13:00:00Z", end=DAY + "14:00:00Z", status="error"
+        )
+    )
+    view = snapshot(api)
+    assert view["media"] == []
+    assert news_rows(view) == [
+        (DAY + "12:00:00Z", DAY + "13:00:00Z", "qualified", 0),  # a real zero of items
+        (DAY + "13:00:00Z", DAY + "14:00:00Z", "failed", None),  # never "no news"
+        (DAY + "14:00:00Z", DAY + "16:00:00Z", "unknown", None),
+    ]
+    reasons = {c["reason"] for c in view["coverage"] if c["layer"] == "news" and "reason" in c}
+    assert "no news source covers this area and time; items unknown, not absent" in reasons
+
+
+def test_item_limit_is_refused_by_name(api_server, tmp_path):
+    api = api_server(api={"max_media": 2})
+    api.ingest(capture(tmp_path, "three", [item(f"L-{i}", DAY + "12:10:00Z") for i in range(3)]))
+    response, body = api.get(VIEW)
+    assert response.status == 413 and "more than 2 news and media items" in body.decode()
+    # Control: a narrower interval holds two and is served.
+    api.ingest(
+        capture(
+            tmp_path,
+            "later",
+            [item("L-9", DAY + "13:10:00Z")],
+            start=DAY + "13:00:00Z",
+            end=DAY + "14:00:00Z",
+        )
+    )
+    narrow = snapshot(api, "/api/v0/snapshot?start=2026-02-01T13:00:00Z&end=2026-02-01T14:00:00Z")
+    assert [m["item_id"] for m in narrow["media"]] == ["L-9"]
+
+
+# --- the API: live updates ------------------------------------------------------------------
+
+
+def rows(message: dict, key: str) -> list:
+    return sorted(json.dumps(c, sort_keys=True) for c in message[key])
+
+
+def test_live_items_arrive_as_deltas_and_changes_resnapshot(api_server, tmp_path):
+    api = api_server()
+    # Cover the whole view first, so later captures do not change the gaps.
+    api.ingest(capture(tmp_path, "cover", [], end=DAY + "16:00:00Z"))
+    client = WsClient(api.host, api.port)
+    client.send(subscribe(AREA, HOURS))
+    base = client.recv()
+    assert base["kind"] == "snapshot" and base["media"] == []
+    # A new, unmatched item is an ordinary delta, and live equals REST.
+    lone = item("LIVE-1", DAY + "12:20:00Z", where=place(-0.3, -0.3))
+    api.ingest(capture(tmp_path, "new", [lone], received=DAY + "13:00:20Z"))
+    api.server.hub.tick()
+    delta = client.recv()
+    assert delta["kind"] == "delta" and reference_valid(delta)
+    assert [m["item_id"] for m in delta["media_upserted"]] == ["LIVE-1"]
+    rest = snapshot(api)
+    assert rows(delta, "media_upserted") == rows(rest, "media")
+    assert sorted(
+        json.dumps(c, sort_keys=True) for c in base["coverage"] + delta["coverage_upserted"]
+    ) == rows(rest, "coverage")
+    # A late delivery of another unmatched item is a delta too.
+    late = item("LIVE-2", DAY + "12:40:00Z", where=place(0.3, -0.3))
+    api.ingest(capture(tmp_path, "late", [late], received=DAY + "15:45:00Z"))
+    api.server.hub.tick()
+    delta = client.recv()
+    assert delta["kind"] == "delta"
+    (version,) = delta["media_upserted"][0]["versions"]
+    assert version["received_time"] == DAY + "15:45:00Z"
+    # A repeat delivery changes an earlier row's receipts: a fresh snapshot.
+    api.ingest(capture(tmp_path, "repeat", [lone], received=DAY + "13:00:30Z"))
+    api.server.hub.tick()
+    assert client.recv()["kind"] == "resync_required"
+    repeated = client.recv()
+    assert rows(repeated, "media") == rows(snapshot(api), "media")
+    # An item that matches another changes the suggestions: a fresh snapshot.
+    near = item("LIVE-3", DAY + "12:30:00Z", publisher="Invented Other", where=place(-0.3, -0.3))
+    api.ingest(capture(tmp_path, "near", [near], received=DAY + "13:00:40Z"))
+    api.server.hub.tick()
+    assert client.recv()["kind"] == "resync_required"
+    matched = client.recv()
+    assert pairs(matched) == {(("LIVE-1", "LIVE-3"), "place_and_time")} == pairs(snapshot(api))
+    # A correction moving an item out of view cannot be an upsert: resnapshot.
+    moved = item(
+        "LIVE-2",
+        DAY + "12:40:00Z",
+        status="corrected",
+        revised=DAY + "13:10:00Z",
+        where=place(1.3, 1.3),
+    )
+    api.ingest(
+        capture(
+            tmp_path,
+            "moved",
+            [moved],
+            start=DAY + "13:00:00Z",
+            end=DAY + "14:00:00Z",
+            bbox=(-2, -2, 2, 2),
+        )
+    )
+    api.server.hub.tick()
+    assert client.recv()["kind"] == "resync_required"
+    fresh = client.recv()
+    assert "LIVE-2" not in {m["item_id"] for m in fresh["media"]}
+    assert rows(fresh, "media") == rows(snapshot(api), "media")
+    client.close()

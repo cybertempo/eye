@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "unknown message kind",
   "message": {
-    "schema_version": "eye.wire/3",
+    "schema_version": "eye.wire/4",
     "kind": "telemetry",
     "status": "ok"
   }

@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "unexpected fields are refused",
   "message": {
-    "schema_version": "eye.wire/3",
+    "schema_version": "eye.wire/4",
     "kind": "health",
     "status": "ok",
     "mode": "demo",

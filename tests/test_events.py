@@ -1165,9 +1165,13 @@ def test_a_later_report_about_an_earlier_event_is_counted_in_its_own_window(api_
     )
     assert [e["case_id"] for e in hour13["events"]] == ["LATE-ONLY"]
     assert windows(hour13) == [(DAY + "13:00:00Z", DAY + "14:00:00Z", "qualified", 1)]
-    # Track coverage rows carry no reporting-window label.
+    # Track coverage rows carry no reporting-window label; event and news rows do.
     whole = snapshot(api, VIEW)
-    event_metrics = {"event_cases_in_view", "event_occurrence_completeness"}
+    event_metrics = {
+        "event_cases_in_view",
+        "event_occurrence_completeness",
+        "media_items_in_view",
+    }
     assert all(
         ("interval_kind" in c) == (c["metric"]["name"] in event_metrics) for c in whole["coverage"]
     )

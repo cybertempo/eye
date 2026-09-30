@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "HTTP status is an integer",
   "message": {
-    "schema_version": "eye.wire/3",
+    "schema_version": "eye.wire/4",
     "kind": "error",
     "status": 404.5,
     "error": "not found"

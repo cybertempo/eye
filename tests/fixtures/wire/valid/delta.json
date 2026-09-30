@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "sequenced WebSocket delta",
   "message": {
-    "schema_version": "eye.wire/3",
+    "schema_version": "eye.wire/4",
     "kind": "delta",
     "sequence": 2,
     "cursor": "c-0002",
@@ -27,6 +27,7 @@
       }
     ],
     "events_upserted": [],
+    "media_upserted": [],
     "coverage_upserted": [
       {
         "layer": "vessel",

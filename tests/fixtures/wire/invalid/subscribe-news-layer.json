@@ -1,0 +1,22 @@
+{
+  "entry": "ClientMessage",
+  "note": "news is not a subscription layer; items come with every snapshot",
+  "message": {
+    "schema_version": "eye.wire/4",
+    "kind": "subscribe",
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "interval": {
+      "start": "2026-01-01T00:00:00Z",
+      "end": "2026-01-01T01:00:00Z"
+    },
+    "layers": [
+      "news"
+    ],
+    "resume_cursor": null
+  }
+}

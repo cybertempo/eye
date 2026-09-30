@@ -2,7 +2,7 @@
   "entry": "ClientMessage",
   "note": "subscription bbox latitude above 90",
   "message": {
-    "schema_version": "eye.wire/3",
+    "schema_version": "eye.wire/4",
     "kind": "subscribe",
     "bbox": [
       0,

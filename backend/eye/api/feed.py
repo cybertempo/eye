@@ -1,6 +1,6 @@
 """Bounded, database-backed wire messages for the browser API (Package 3).
 
-Everything here reads the database and returns ``eye.wire/3`` message dicts;
+Everything here reads the database and returns ``eye.wire/4`` message dicts;
 nothing writes. Callers pass a connection opened by ``open_reader`` (read-only
 session, statement timeout). Every query is bounded by area, interval, layer
 and row limits; a request that would exceed a limit is refused with
@@ -21,7 +21,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from eye.api import events as event_ledger
-from eye.ingest.capture import APPROVED_SOURCES, EVENT_CAPTURE_FORMAT
+from eye.api import media as media_ledger
+from eye.ingest.capture import APPROVED_SOURCES, EVENT_CAPTURE_FORMAT, MEDIA_CAPTURE_FORMAT
 from eye.storage.db import Connection, connect
 from eye.wire import SCHEMA_VERSION
 
@@ -31,6 +32,7 @@ SOURCE_LABELS = {
     "synthetic-ais": "Synthetic AIS (invented vessels; not a real AIS feed)",
     "synthetic-fixture": "Synthetic fixture (invented records)",
     "synthetic-events": "Synthetic event reports (invented cases; not a real authority)",
+    "synthetic-news": "Synthetic news and media (invented items; not a real publisher)",
 }
 SYNTHETIC_NOTICE = (
     "Invented data for the public demo. No record describes a real aircraft, vessel, road or event."
@@ -63,6 +65,7 @@ class Limits:
     max_counts: int
     max_crossings: int
     max_events: int
+    max_media: int
     max_changes: int
     query_timeout_ms: int
     default_view_hours: int
@@ -408,7 +411,12 @@ PART_OF_VIEW = "the source's area covers only part of this view; outside it even
 
 
 def _coverage(
-    conn, query: Query, limits: Limits, batch: str | None, events: list[dict] | None = None
+    conn,
+    query: Query,
+    limits: Limits,
+    batch: str | None,
+    events: list[dict] | None = None,
+    media: list[dict] | None = None,
 ) -> tuple[list[dict], set, list[tuple]]:
     """Coverage rows in view, their sources, and the event-report spans whose
     source area covers the whole view (the only ones that can close a gap).
@@ -430,11 +438,16 @@ def _coverage(
     One case can be counted by more than one row (the same claim delivered
     twice), so the rows are never a total. The stored per-batch metric, which
     counts the whole capture, is never shown as a count for the view.
+
+    News captures (layer ``news``) follow the same rules with metric
+    ``media_items_in_view``: items in ``media`` whose current version came from
+    that batch. They are listed whatever layers the request names.
     """
-    counted = sorted(event_ledger.reporting_batches(events or []))
-    rows = conn.run(
-        COVERAGE, **_params(query), batch=batch, counted=counted, cap=limits.max_coverage + 1
+    counted = sorted(
+        event_ledger.reporting_batches(events or []) | media_ledger.reporting_batches(media or [])
     )
+    params = {**_params(query), "layers": [*query.layers, media_ledger.NEWS_LAYER]}
+    rows = conn.run(COVERAGE, **params, batch=batch, counted=counted, cap=limits.max_coverage + 1)
     if len(rows) > limits.max_coverage:
         raise QueryRefused(
             413, f"more than {limits.max_coverage} coverage rows; narrow the request"
@@ -442,16 +455,21 @@ def _coverage(
     out, sources, full = [], set(), []
     view_start, view_end = iso(query.start), iso(query.end)
     for _cid, source, layer, start, end, state, reason, metric, value, bid, _rx, covers in rows:
-        if layer not in LAYERS:
+        if layer not in LAYERS and layer != media_ledger.NEWS_LAYER:
             continue
         sources.add(source)
         start, end = _t(start), _t(end)
         interval_kind = None
-        if metric == event_ledger.EVENT_METRIC:
+        if metric in (event_ledger.EVENT_METRIC, media_ledger.MEDIA_METRIC):
             interval_kind = event_ledger.REPORTING_WINDOW
-            metric = event_ledger.EVENT_VIEW_METRIC
-            if value is not None:
-                value = event_ledger.cases_in_view_from(events or [], bid)
+            if metric == event_ledger.EVENT_METRIC:
+                metric = event_ledger.EVENT_VIEW_METRIC
+                if value is not None:
+                    value = event_ledger.cases_in_view_from(events or [], bid)
+            else:
+                metric = media_ledger.MEDIA_VIEW_METRIC
+                if value is not None:
+                    value = media_ledger.items_in_view_from(media or [], bid)
             span = event_ledger.clip(start, end, view_start, view_end)
             if covers:
                 if event_ledger.before(span[0], span[1]):
@@ -494,19 +512,44 @@ def _events(conn, query: Query, limits: Limits, keys: list[str] | None) -> list[
         raise QueryRefused(exc.status, str(exc)) from exc
 
 
+def _media(conn, query: Query, limits: Limits, keys: list[str] | None) -> list[dict]:
+    try:
+        return media_ledger.items(conn, _params(query), limits, keys, SOURCE_LABELS)
+    except media_ledger.MediaRefused as exc:
+        raise QueryRefused(exc.status, str(exc)) from exc
+
+
+def _gaps(full: list[tuple], query: Query) -> list[dict]:
+    """Unknown rows where no event-report or news source covered the whole view."""
+    start, end = iso(query.start), iso(query.end)
+    return event_ledger.coverage_gaps(full, query.layers, start, end) + (
+        event_ledger.coverage_gaps(
+            full,
+            [media_ledger.NEWS_LAYER],
+            start,
+            end,
+            media_ledger.MEDIA_VIEW_METRIC,
+            media_ledger.NO_NEWS_SOURCE,
+        )
+    )
+
+
 def snapshot(conn: Connection, query: Query, limits: Limits, area_name: str) -> dict:
     _begin(conn)
     try:
         epoch, seq = head(conn)
         tracks = _tracks(conn, query, limits, None)
         events = _events(conn, query, limits, None)
-        coverage, sources, full = _coverage(conn, query, limits, None, events)
-        # Where no event-report source covered the whole view, events are unknown.
-        coverage += event_ledger.coverage_gaps(full, query.layers, iso(query.start), iso(query.end))
+        media = _media(conn, query, limits, None)
+        coverage, sources, full = _coverage(conn, query, limits, None, events, media)
+        # Where no event-report or news source covered the whole view, reports
+        # and items are unknown there.
+        coverage += _gaps(full, query)
         # Reporting windows say which reports were published, never which
         # events occurred: occurrence completeness is always unknown.
         coverage += event_ledger.occurrence_rows(query.layers, iso(query.start), iso(query.end))
         sources |= {t["source"] for t in tracks} | {e["source"] for e in events}
+        sources |= {m["source"] for m in media}
         synthetic = _synthetic(conn, sources)
     finally:
         _end(conn)
@@ -520,6 +563,8 @@ def snapshot(conn: Connection, query: Query, limits: Limits, area_name: str) -> 
         "interval": {"start": iso(query.start), "end": iso(query.end)},
         "tracks": tracks,
         "events": events,
+        "media": media,
+        "media_suggestions": media_ledger.suggestions(media),
         "coverage": coverage,
     }
     if synthetic:
@@ -550,9 +595,10 @@ def delta(
     seq, kind, batch_id, _run_id, layer = change
     tracks: list[dict] = []
     events: list[dict] = []
+    media: list[dict] = []
     coverage: list[dict] = []
     fmt = None
-    if kind == "capture_batch" and layer in query.layers:
+    if kind == "capture_batch" and (layer in query.layers or layer == media_ledger.NEWS_LAYER):
         fmt = conn.run(
             "SELECT capture_format FROM eye.capture_batch WHERE batch_id = CAST(:b AS uuid)",
             b=batch_id,
@@ -564,6 +610,14 @@ def delta(
             _check_gaps_unchanged(conn, query, limits, added)
         _check_counts_unchanged(batch_id, events)
         if len(events) > DELTA_MAX_ITEMS or len(coverage) > DELTA_MAX_ITEMS:
+            raise QueryRefused(413, "batch is larger than one delta allows")
+    elif fmt == MEDIA_CAPTURE_FORMAT:
+        media = _media_delta(conn, query, limits, batch_id)
+        coverage, _, added = _coverage(conn, query, limits, batch_id, None, media)
+        if added:
+            _check_gaps_unchanged(conn, query, limits, added)
+        _check_media_unchanged(conn, query, limits, batch_id, media)
+        if len(media) > DELTA_MAX_ITEMS or len(coverage) > DELTA_MAX_ITEMS:
             raise QueryRefused(413, "batch is larger than one delta allows")
     elif kind == "capture_batch" and layer in query.layers:
         limit = min(limits.max_tracks, DELTA_MAX_ITEMS)
@@ -612,6 +666,7 @@ def delta(
         "previous_cursor": make_cursor(epoch, previous_seq),
         "tracks_upserted": tracks,
         "events_upserted": events,
+        "media_upserted": media,
         "coverage_upserted": coverage,
     }
 
@@ -641,14 +696,50 @@ def _check_gaps_unchanged(conn, query: Query, limits: Limits, added: list[tuple]
     resnapshots before the cursor advances; otherwise the delta stands.
     """
     _, _, full = _coverage(conn, query, limits, None)
-    start, end = iso(query.start), iso(query.end)
     remaining = list(full)
     for span in added:
         remaining.remove(span)
-    before = event_ledger.coverage_gaps(remaining, query.layers, start, end)
-    after = event_ledger.coverage_gaps(full, query.layers, start, end)
-    if before != after:
-        raise QueryRefused(409, "new event coverage changed the unknown gaps in view")
+    if _gaps(remaining, query) != _gaps(full, query):
+        raise QueryRefused(409, "new coverage changed the unknown gaps in view")
+
+
+def _media_delta(conn, query: Query, limits: Limits, batch_id: str) -> list[dict]:
+    """Items a news batch changed that have, or had, any version in view."""
+    limit = min(limits.max_media, DELTA_MAX_ITEMS)
+    touched = media_ledger.touched(conn, _params(query), batch_id, limit)
+    if len(touched) > limit:
+        raise QueryRefused(413, f"batch changes more than {limit} news and media items in view")
+    if not touched:
+        return []
+    keys = [f"{s} {i}" for s, i in touched]
+    result = _media(conn, query, limits, keys)
+    if len(result) != len(keys):
+        # A correction moved an item out of view. Deltas only upsert, so the
+        # client needs a fresh snapshot without it.
+        raise QueryRefused(409, "a change removed a news or media item from the view")
+    return result
+
+
+def _check_media_unchanged(
+    conn, query: Query, limits: Limits, batch_id: str, media: list[dict]
+) -> None:
+    """A news batch that changes what the client already holds needs a snapshot.
+
+    A delta can add items and rows but can neither replace a coverage row nor
+    change suggestions, which snapshots alone carry. So a batch touching an
+    item another batch delivered (a repeat, an update or a correction), or
+    whose items take part in a suggestion, resnapshots. A batch of new items
+    that match nothing is an ordinary delta.
+    """
+    others = media_ledger.reporting_batches(media, every_version=True)
+    others.discard(batch_id)
+    if others:
+        raise QueryRefused(409, "a batch touched an item another batch delivered")
+    ids = {m["id"] for m in media}
+    if ids and any(
+        ids & set(s["items"]) for s in media_ledger.suggestions(_media(conn, query, limits, None))
+    ):
+        raise QueryRefused(409, "new items changed the suggestions in view")
 
 
 def _event_delta(conn, query: Query, limits: Limits, batch_id: str) -> list[dict]:
