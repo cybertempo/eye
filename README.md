@@ -112,7 +112,7 @@ byte cap (a slow client is disconnected). See
 ## World events (Package 4c, source-independent part)
 
 Snapshots and deltas carry **event cases** from an append-only claim ledger
-(migration 0005, wire `eye.wire/3`). Each case keeps every version its source
+(migration 0005, wire `eye.wire/3`, now served as `eye.wire/4`). Each case keeps every version its source
 published, with the reported event location at its stated precision (a point,
 a road segment with its affected direction, or an area), event time and
 uncertainty, evidence reference and receipt batches. DESK's *world events*
@@ -143,6 +143,37 @@ The only event source is `synthetic-events`, invented fixtures in
 `tests/fixtures/synthetic/events/`. See
 [ADR 0005](docs/adr/0005-package-4c-event-ledger.md).
 
+## News and media evidence (Package 4d, provider-neutral part)
+
+Snapshots carry **news and media items** (migration 0006, wire `eye.wire/4`),
+kept apart from event cases. Each item is one article, image or video with
+every version its source published: first-publication and revision times,
+EYE's receipt time, a link to the original, publisher and creator, the
+headline (untrusted text), reuse rights and an optional place. EYE stores
+metadata and a link only, never the work itself. DESK's *news and media
+evidence* table shows each item's source, age, delivery delay, place role,
+rights and history.
+
+- An item is evidence that it was published, never a verified account. An
+  image or video's capture time is its creator's claim; nothing is labelled
+  live, and old footage is not drawn in a current view.
+- Only a source-stated event place is drawn on THEATRE, as an approximate
+  area. A publisher's city, a mentioned place and an automated geocode are
+  listed but never drawn.
+- An item whose reuse rights are unknown is shown as a link only, with its
+  headline withheld.
+- Exact repeat deliveries add receipts, not items. Related items across
+  publishers, and syndicated copies, are listed as *suggestions*; nothing is
+  merged or counted as independent confirmation.
+- A news source's outage is *failed* coverage, and time no news source
+  covered is *unknown*, never "no news".
+
+The only news source is `synthetic-news`, invented fixtures in
+`tests/fixtures/synthetic/media/`. Candidate providers are listed in
+[`docs/news-media-source-shortlist.md`](docs/news-media-source-shortlist.md);
+none is approved or enabled. See
+[ADR 0006](docs/adr/0006-package-4d-news-media-evidence.md).
+
 ## Layout
 
 ```text
@@ -159,7 +190,7 @@ docs/                 brief, source-policy register, dependencies, ADRs
 migrations/           forward-only PostgreSQL/PostGIS migrations
 reference/lines/      versioned synthetic count lines
 requirements/         hash-locked Python tool manifests
-schemas/              versioned wire schema (eye.wire/3; v1 and v2 kept unchanged)
+schemas/              versioned wire schema (eye.wire/4; v1 to v3 kept unchanged)
 scripts/              setup, verify, demo, boundary check, fixture generators
 tests/                tests and synthetic fixtures
 web/                  browser client: THEATRE globe and DESK panel

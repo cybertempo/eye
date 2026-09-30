@@ -655,3 +655,35 @@ def test_live_items_arrive_as_deltas_and_changes_resnapshot(api_server, tmp_path
     assert "LIVE-2" not in {m["item_id"] for m in fresh["media"]}
     assert rows(fresh, "media") == rows(snapshot(api), "media")
     client.close()
+
+
+# --- no model and no network on the way in ------------------------------------------------
+
+FORBIDDEN_IMPORTS = ("socket", "http", "urllib.request", "requests", "httpx", "anthropic", "openai")
+
+
+def ingest_imports(path) -> set[str]:
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found |= {alias.name for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            found.add(node.module)
+    return found
+
+
+def forbidden(names: set[str]) -> set[str]:
+    return {n for n in names for f in FORBIDDEN_IMPORTS if n == f or n.startswith(f + ".")}
+
+
+def test_ingestion_imports_no_network_client_and_no_model(tmp_path):
+    ingest_dir = REPO_ROOT / "backend" / "eye" / "ingest"
+    for path in sorted(ingest_dir.glob("*.py")):
+        assert forbidden(ingest_imports(path)) == set(), path.name
+    # Control: the same check flags a planted module that would call out.
+    planted = tmp_path / "planted.py"
+    planted.write_text("import urllib.request\nfrom anthropic import Anthropic\n", encoding="utf-8")
+    assert forbidden(ingest_imports(planted)) == {"urllib.request", "anthropic"}
