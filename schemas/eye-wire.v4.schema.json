@@ -1048,7 +1048,7 @@
           "maxLength": 300
         },
         "headline_withheld": {
-          "description": "True when the source gave a headline that EYE does not show because reuse rights are unknown.",
+          "description": "True exactly when reuse rights are unknown: EYE neither stores nor shows a headline for such a version, and headline is null.",
           "type": "boolean"
         },
         "language": {

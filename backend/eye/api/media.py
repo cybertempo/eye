@@ -9,8 +9,8 @@ kept apart from event cases. Rules, all conservative:
 * An item is in view when it was first published in the requested interval
   and either its latest place lies in the area, or it states no place and a
   capture that delivered it asked about the area.
-* An item whose reuse rights are unknown is served as a link only: its
-  headline is withheld (``headline_withheld``), never shown.
+* An item whose reuse rights are unknown is served as a link only
+  (``headline_withheld``): its headline is never stored, so never shown.
 * Matching across publishers is only ever a **suggestion**: two items may
   describe the same story, or one is a syndicated copy of the other. A
   suggestion never merges items, never counts as independent confirmation
@@ -151,7 +151,7 @@ def _version(row: tuple) -> dict:
         "creator": creator,
         # Unknown reuse rights: a link only, never the source's words.
         "headline": None if withheld else headline,
-        "headline_withheld": withheld and headline is not None,
+        "headline_withheld": withheld,
         "language": language,
         "rights": {"status": rights}
         if licence is None

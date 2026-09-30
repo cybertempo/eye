@@ -30,9 +30,15 @@ Scope:
      the original URL (https only, no credentials), an optional syndication
      original, publisher, creator, headline, language, reuse rights, a
      claimed capture time for images and video, and an optional place.
-   - **Bodies and bytes refused:** no body text, image or video bytes are
-     stored. A capture item carrying `body`, `content`, `thumbnail` and
-     similar fields is rejected.
+   - **Bodies and bytes refused before archiving:** no body text, image or
+     video bytes are stored anywhere, raw evidence included. Raw evidence is
+     kept exactly and can never be deleted, so a capture whose items carry
+     any field outside the reviewed allowlist (`body`, `content`,
+     `thumbnail`, or any unreviewed field such as `summary`) is refused
+     whole, before anything is archived. A future adapter drops such fields
+     before it builds the capture. (Review repair: the first version
+     rejected such items only after archiving, so their text stayed in
+     `eye.raw_evidence`.)
    - **Ids and receipts:** the id is derived from source, item id and
      content, so an exact repeat delivery adds a receipt
      (`eye.media_item_receipt`, receipt time stamped by EYE and checked
@@ -59,9 +65,15 @@ Scope:
    - **`licensed`:** needs a licence identifier and the attribution text, and
      only a licensed item has them.
    - **`link_only`:** shows metadata and a link.
-   - **`unknown`:** shown as a link only. The API withholds the headline
-     (`headline: null`, `headline_withheld: true`), and the browser refuses an
-     item whose unknown-rights version carries a headline.
+   - **`unknown`:** a link only. Its headline is never stored:
+     - **Capture:** a capture carrying one is refused before archiving (the
+       adapter drops it).
+     - **Database:** the constraint `unknown_rights_store_no_headline`
+       refuses one.
+     - **API:** it serves `headline: null` with `headline_withheld: true`.
+     - **Browser:** it refuses a version that breaks either rule.
+     - *Review repair:* the first version hid the headline only in the API
+       while storing it.
    - **No copies:** EYE never stores or processes the work itself, whatever
      the rights.
 6. **Places say what they are.** A place has a role (`event_place`,

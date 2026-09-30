@@ -1,6 +1,7 @@
 # ADR 0001: Package 0 foundation choices
 
-Date: 2026-09-28. Status: proposed (awaiting owner review).
+Date: 2026-09-28. Status: accepted: merged to `main` in merge commit `d655dc2`
+(2026-09-28).
 
 ## Decisions
 

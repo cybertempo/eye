@@ -18,8 +18,8 @@ Rules enforced here, again by migration 0006, and again by the wire schema:
   A capture time for an image or video is the creator's **claim**, unverified.
 * Reuse rights are per item. ``licensed`` needs a licence identifier and the
   attribution text; ``link_only`` means the source allows a link and metadata
-  but no reuse of the work; ``unknown`` is shown as a link only, with its
-  headline withheld.
+  but no reuse of the work; ``unknown`` is a link only: its headline is
+  never stored (a capture carrying one is refused before archiving).
 * A location states its role (the event's place, the publisher's location or
   a place merely mentioned) and its method (stated by the source, or an
   automated geocode). Only a source-stated event place can be drawn.
@@ -208,6 +208,38 @@ def _rights(raw: object, what: str) -> tuple[str, str | None, str | None]:
     return status, licence, attribution
 
 
+def unstorable(items: object) -> str | None:
+    """Why a capture's raw bytes must not be archived at all, or None.
+
+    Raw evidence is kept exactly and can never be deleted, so anything EYE
+    must not store has to be refused before archiving, not merely rejected
+    item by item afterwards: a field outside the allowlist (an article body,
+    image or video bytes, a thumbnail, or anything else unreviewed), or a
+    headline on an item whose reuse rights are unknown. A future adapter
+    drops these before it builds the capture.
+    """
+    if not isinstance(items, list):
+        return None  # the envelope check reports this
+    for index, raw in enumerate(items):
+        if not isinstance(raw, dict):
+            continue  # rejected item by item, with nothing extra to store
+        extra = set(raw) - ITEM_FIELDS - {"received_time"}
+        if extra:
+            named = sorted(extra & CONTENT_FIELDS) or sorted(extra)
+            return (
+                f"item {index} carries {named}; EYE stores metadata and a link only, never "
+                "article text, images, video or unreviewed fields"
+            )
+        rights = raw.get("rights")
+        unknown = isinstance(rights, dict) and rights.get("status") == "unknown"
+        if unknown and raw.get("headline") is not None:
+            return (
+                f"item {index} has unknown reuse rights but carries a headline; "
+                "the adapter must drop it"
+            )
+    return None
+
+
 def parse_item(raw: object, index: int, received: datetime, parse_time) -> Item:
     """One item version. ``parse_time`` is the capture module's strict parser."""
     what = f"item {index}"
@@ -254,6 +286,8 @@ def parse_item(raw: object, index: int, received: datetime, parse_time) -> Item:
     if language is not None and (not isinstance(language, str) or not LANGUAGE.match(language)):
         raise ValueError(f"{what}.language must be a language tag such as en or pt-BR")
     rights, licence, attribution = _rights(raw.get("rights"), f"{what}.rights")
+    if rights == "unknown" and raw.get("headline") is not None:
+        raise ValueError(f"{what} has unknown reuse rights but carries a headline")
     syndicated = raw.get("syndicated_from")
     return Item(
         item_id=item_id,

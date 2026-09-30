@@ -455,7 +455,9 @@ export function mediaErrors(item: MediaItem): string[] {
     const unknown = v.rights.status === "unknown";
     // Unknown reuse rights: a link only. A headline alongside them is refused.
     if (unknown && v.headline !== null) errors.push(`version ${v.version} shows a headline with unknown rights`);
-    if (v.headline_withheld && !unknown) errors.push(`version ${v.version} withholds a headline it may show`);
+    if (v.headline_withheld !== unknown) {
+      errors.push(`version ${v.version} withholding its headline does not match its rights`);
+    }
     if (!v.url.startsWith("https://")) errors.push(`version ${v.version} links to a non-https address`);
     if (compareTime(v.revision_time, v.first_published_time) < 0) {
       errors.push(`version ${v.version} was revised before it was published`);

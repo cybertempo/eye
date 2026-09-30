@@ -326,6 +326,10 @@ def parse_capture(raw: bytes) -> ParsedCapture:
         elif capture_format == MEDIA_CAPTURE_FORMAT:
             records = doc["provider_response"]["items"]
             limit = MAX_ITEMS
+            # Refused before archiving: raw evidence is permanent.
+            reason = media_items.unstorable(records)
+            if reason is not None:
+                raise ValueError(reason)
 
             def parse_item(item, index, received):
                 return media_items.parse_item(item, index, received, parse_time)

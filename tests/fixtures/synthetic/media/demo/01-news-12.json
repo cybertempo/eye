@@ -3,7 +3,7 @@
   "synthetic": true,
   "source_id": "synthetic-news",
   "adapter_version": "synthetic-news/1",
-  "note": "Invented news and media items published 12:00-13:00: two publishers, a syndicated copy, a publisher-city location, an automated geocode, reposted old footage with unknown rights and a licensed image.",
+  "note": "Invented news and media items published 12:00-13:00: two publishers, a syndicated copy, a publisher-city location, an automated geocode, reposted old footage with unknown rights (its headline dropped by the adapter) and a licensed image.",
   "layer": "news",
   "request": {
     "bbox": [
@@ -159,7 +159,7 @@
         "syndicated_from": null,
         "publisher": "Invented Clips",
         "creator": null,
-        "headline": "Invented: 'live' flooding video",
+        "headline": null,
         "language": "en",
         "rights": {
           "status": "unknown"

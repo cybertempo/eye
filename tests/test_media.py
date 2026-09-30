@@ -188,11 +188,53 @@ def rejected_reasons(db, tmp_path, name: str, bad: list[dict]) -> list:
     return result.rejected
 
 
-def test_bodies_images_and_video_are_never_stored(db, tmp_path):
-    with_body = {**item("BODY", DAY + "12:10:00Z"), "body": "Full article text."}
-    with_bytes = {**item("IMG", DAY + "12:10:00Z", kind="image"), "thumbnail": "iVBORw0KGgo="}
-    assert rejected_reasons(db, tmp_path, "content", [with_body, with_bytes]) == 2
-    assert db.run("SELECT item_id FROM eye.media_item") == [["GOOD"]]
+def raw_evidence_holds(db, text: str) -> bool:
+    """Whether any archived raw capture contains ``text`` (the permanent record)."""
+    rows = db.run("SELECT content FROM eye.raw_evidence")
+    return any(text.encode("utf-8") in bytes(content) for (content,) in rows)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("body", "INVENTED-BODY-TEXT full article"),
+        ("thumbnail", "INVENTED-THUMBNAIL-BYTES iVBORw0KGgo="),
+        ("summary", "INVENTED-SUMMARY-TEXT an unreviewed field"),
+    ],
+)
+def test_bodies_media_and_unreviewed_fields_are_never_archived(db, tmp_path, field, value):
+    """Raw evidence is permanent, so such a capture is refused before archiving,
+    not merely rejected item by item after its bytes are stored."""
+    good = item("GOOD", DAY + "12:10:00Z")
+    carrying = {**item("CARRY", DAY + "12:10:00Z", kind="image"), field: value}
+    path = capture(tmp_path, "content", [good, carrying])
+    with pytest.raises(CaptureRejected, match="metadata and a link only"):
+        archive(db, path.read_bytes())
+    assert db.run("SELECT count(*) FROM eye.capture_batch") == [[0]]
+    assert not raw_evidence_holds(db, value.split()[0])
+    # Control: the same capture without the field is archived and stored.
+    put(db, capture(tmp_path, "clean", [good, item("CARRY", DAY + "12:10:00Z", kind="image")]))
+    assert raw_evidence_holds(db, "https://news.invalid/carry")  # the search does find text
+    assert db.run("SELECT item_id FROM eye.media_item ORDER BY 1") == [["CARRY"], ["GOOD"]]
+
+
+def test_unknown_rights_headlines_are_never_stored(db, tmp_path):
+    secret = "INVENTED-UNLICENSED-HEADLINE"
+    unknown = item(
+        "UNK", DAY + "12:10:00Z", kind="video", headline=secret, rights={"status": "unknown"}
+    )
+    path = capture(tmp_path, "unknown", [item("GOOD", DAY + "12:10:00Z"), unknown])
+    with pytest.raises(CaptureRejected, match="unknown reuse rights but carries a headline"):
+        archive(db, path.read_bytes())
+    assert db.run("SELECT count(*) FROM eye.capture_batch") == [[0]]
+    assert not raw_evidence_holds(db, secret)
+    # Control: the adapter drops the headline, and the item is stored as a link.
+    dropped = {**unknown, "headline": None}
+    put(db, capture(tmp_path, "dropped", [dropped]))
+    assert db.run("SELECT rights_status, headline, url FROM eye.media_item") == [
+        ["unknown", None, "https://news.invalid/unk"]
+    ]
+    assert not raw_evidence_holds(db, secret)
 
 
 def test_untrusted_text_is_bounded_and_stored_as_given(db, tmp_path):
@@ -214,7 +256,12 @@ def test_untrusted_text_is_bounded_and_stored_as_given(db, tmp_path):
 def test_rights_must_be_consistent(db, tmp_path):
     bad = [
         item("NO-ATTR", DAY + "12:10:00Z", rights={"status": "licensed", "licence": "CC-BY-4.0"}),
-        item("UNK-LIC", DAY + "12:10:00Z", rights={"status": "unknown", "licence": "CC-BY-4.0"}),
+        item(
+            "UNK-LIC",
+            DAY + "12:10:00Z",
+            headline=None,
+            rights={"status": "unknown", "licence": "CC-BY-4.0"},
+        ),
         item("NO-RIGHTS", DAY + "12:10:00Z", rights={"status": "free"}),
     ]
     assert rejected_reasons(db, tmp_path, "rights", bad) == 3
@@ -227,7 +274,13 @@ def test_rights_must_be_consistent(db, tmp_path):
             [
                 item("LIC", DAY + "12:20:00Z", kind="image", rights=licensed()),
                 item("LINK", DAY + "12:20:00Z", rights={"status": "link_only"}),
-                item("UNK", DAY + "12:20:00Z", kind="video", rights={"status": "unknown"}),
+                item(
+                    "UNK",
+                    DAY + "12:20:00Z",
+                    kind="video",
+                    headline=None,
+                    rights={"status": "unknown"},
+                ),
             ],
         ),
     )
@@ -283,6 +336,25 @@ def test_database_refuses_inconsistent_rights_and_places(db):
             db.run(base, item="BAD", **{**good, **change})
     db.run(base, item="GOOD", **good)  # control
     assert db.run("SELECT count(*) FROM eye.media_item") == [[1]]
+
+
+def test_database_refuses_a_headline_with_unknown_rights(db):
+    insert = (
+        "INSERT INTO eye.media_item (media_item_id, source_id, item_id, kind, status, "
+        "first_published_time, revision_time, url, publisher, headline, rights_status, "
+        "content_sha256) VALUES (gen_random_uuid(), 'synthetic-news', :item, 'article', "
+        "'published', '2026-02-01T12:00:00Z', '2026-02-01T12:00:00Z', "
+        "'https://news.invalid/a', 'P', :headline, :rights, repeat('a', 64))"
+    )
+    with pytest.raises(DatabaseError, match="unknown_rights_store_no_headline"):
+        db.run(insert, item="UNK", headline="Invented headline", rights="unknown")
+    # Controls: a link-only headline is stored; an unknown-rights item without one is too.
+    db.run(insert, item="LINK", headline="Invented headline", rights="link_only")
+    db.run(insert, item="UNK", headline=None, rights="unknown")
+    assert db.run("SELECT item_id, headline FROM eye.media_item ORDER BY 1") == [
+        ["LINK", "Invented headline"],
+        ["UNK", None],
+    ]
 
 
 # --- replay, append-only, migration --------------------------------------------------------

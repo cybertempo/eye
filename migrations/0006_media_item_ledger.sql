@@ -14,7 +14,9 @@
 --   stored as given; the capture parser also refuses control and
 --   bidirectional-override characters.
 -- * Reuse rights are per item: licensed items name a licence and attribution;
---   link_only and unknown items name neither.
+--   link_only and unknown items name neither, and an unknown-rights item stores
+--   no headline. The capture parser refuses such a capture before archiving
+--   it, so the headline never reaches raw evidence either.
 -- * A location states its role (event place, publisher location, or a place
 --   merely mentioned), its method (source-stated or automated geocode) and a
 --   precision. A capture time for an image or video is the creator's claim.
@@ -51,6 +53,8 @@ CREATE TABLE eye.media_item (
     CHECK (revision_time >= first_published_time),
     -- A first publication is its own revision; a later version is revised later.
     CHECK ((status = 'published') = (revision_time = first_published_time)),
+    -- Unknown reuse rights: a link only. The headline is never stored.
+    CONSTRAINT unknown_rights_store_no_headline CHECK (rights_status <> 'unknown' OR headline IS NULL),
     CONSTRAINT licensed_names_licence_and_attribution CHECK (
         (rights_status = 'licensed') = (licence IS NOT NULL)
         AND (rights_status = 'licensed') = (attribution IS NOT NULL)),

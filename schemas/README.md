@@ -109,8 +109,9 @@ the empty `media` arrays version 4 requires added.
     with `role`, `method` and `precision_m`.
   - `rights` is `licensed` (with `licence` and `attribution`), `link_only` or
     `unknown`. An unknown-rights version has `headline: null` and
-    `headline_withheld: true`, and the browser refuses one that carries a
-    headline.
+    `headline_withheld: true` (EYE never stores its headline), and the
+    browser refuses a version where `headline_withheld` does not match
+    unknown rights, or that carries a headline with them.
   - `media_suggestions` pairs are `syndicated_copy` or `place_and_time`,
     always `status: suggestion`: never a merge or a confirmation.
   - News coverage rows use layer `news` and metric `media_items_in_view`,

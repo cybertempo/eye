@@ -249,14 +249,20 @@ def test_live_item_and_repeat_match_a_reload(api_server, page, tmp_path):
     page.reload()
     open_media(page, api)
     assert desk_media(page) == live  # a fresh REST view reads the same
-    # A repeat delivery: a fresh snapshot, and it too matches a reload.
-    snapshots = int(status.get_attribute("data-snapshots"))
+    # A repeat delivery: a fresh snapshot (never a delta), and it too matches
+    # a reload. The snapshot counter is not compared: the window's own
+    # subscribe snapshot may still be arriving after the reload. The delta
+    # counter cannot race that way.
+    deltas = int(status.get_attribute("data-deltas"))
     api.ingest(capture(tmp_path, "repeat", [lone], received=DAY + "13:00:30Z"))
     api.server.hub.tick()
-    expect(status).to_have_attribute("data-snapshots", str(snapshots + 1), timeout=WAIT)
-    expect(page.locator("#media-coverage")).to_contain_text("covered (1 item in this view)")
+    page.wait_for_function(
+        "() => document.getElementById('media-coverage').innerText"
+        ".split('covered (1 item in this view)').length === 3",
+        timeout=WAIT,
+    )
+    assert int(status.get_attribute("data-deltas")) == deltas  # a resnapshot, not a delta
     repeated = desk_media(page)
-    assert repeated[1].count("covered (1 item in this view)") == 2
     page.reload()
     open_media(page, api)
     assert desk_media(page) == repeated

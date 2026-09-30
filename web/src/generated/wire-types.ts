@@ -250,7 +250,7 @@ export type MediaVersion = {
   readonly creator: MediaName | null;
   /** Untrusted text from the source; null when withheld or absent. Render only as text. */
   readonly headline: string | null;
-  /** True when the source gave a headline that EYE does not show because reuse rights are unknown. */
+  /** True exactly when reuse rights are unknown: EYE neither stores nor shows a headline for such a version, and headline is null. */
   readonly headline_withheld: boolean;
   readonly language: string | null;
   readonly rights: MediaRights;

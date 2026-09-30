@@ -117,8 +117,8 @@ Every field is UNVERIFIED: search returned no pages.
 ## What the synthetic path already enforces for any future adapter
 
 - **Approved sources only:** a capture from a source without an approved row is refused before anything is archived. The candidates above are named in code as known and unapproved, so their refusal is tested.
-- **Metadata and links only:** EYE stores metadata and a link, never article bodies, images or video. A capture carrying inline media or body text is refused.
-- **Rights per item:** a source's policy row allows metadata storage, and each item states its own reuse rights. Unknown rights are shown as link only, with the headline withheld.
+- **Metadata and links only:** EYE stores metadata and a link, never article bodies, images or video. A capture whose items carry any field outside the reviewed allowlist is refused before anything is archived, because raw evidence is permanent. An adapter must drop such fields before building the capture.
+- **Rights per item:** a source's policy row allows metadata storage, and each item states its own reuse rights. An unknown-rights item is stored as a link without its headline; a capture carrying one is refused before archiving.
 - **Untrusted text:** headlines and media metadata are untrusted text. They are bounded, stored as given, and rendered only as text.
 - **Location roles:** a location says what it is (the event place, the publisher's location, or a place merely mentioned) and how it was obtained (stated by the source, or an automated geocode).
 
