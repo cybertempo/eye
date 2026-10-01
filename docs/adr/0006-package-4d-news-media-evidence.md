@@ -33,6 +33,10 @@ Scope:
    - **Validated in full before archiving:** raw evidence is kept exactly
      and can never be deleted. So a news capture is checked completely
      before anything is archived, and refused whole on any failure:
+     - **Duplicate keys:** a key repeated in any one JSON object, at any
+       depth, refuses the capture. A parser keeps the last value, so a
+       repeat would let validated text differ from the archived bytes,
+       which keep the first. This applies to every capture format.
      - **Envelope:** the capture's own keys and those of `request`,
        `attempt` and `provider_response` must be on reviewed allowlists.
      - **Adapter text:** the adapter's `note` and `attempt.written_by` are
@@ -48,8 +52,9 @@ Scope:
      - *Review repairs:* the first version rejected bad items only after
        archiving. The second checked only top-level item key names, so
        over-long values, nested keys, bare-string items, malformed rights
-       and envelope text still reached `eye.raw_evidence`. A test covers
-       each of those routes.
+       and envelope text still reached `eye.raw_evidence`. The third
+       accepted duplicate JSON keys whose first value carried text. A test
+       covers each of those routes.
    - **Ids and receipts:** the id is derived from source, item id and
      content, so an exact repeat delivery adds a receipt
      (`eye.media_item_receipt`, receipt time stamped by EYE and checked

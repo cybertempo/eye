@@ -10,8 +10,9 @@ Every refusal has a working control beside it:
 * a late delivery keeps its source times and gets EYE's later receipt time;
 * a provider outage is failed coverage, never "no news", beside a healthy
   empty capture that is a measured zero of items;
-* an item carrying a body, image or video, unsafe text, or inconsistent
-  rights or times is rejected, beside valid items in the same capture;
+* a capture carrying a body, image or video, unsafe text, inconsistent
+  rights or times, or a duplicate JSON key is refused whole before archiving,
+  beside a clean capture that is stored;
 * replay re-derives every item and catches a stray row.
 """
 
@@ -304,6 +305,56 @@ def test_no_route_archives_text_before_validation(db, tmp_path, route):
     put(db, capture(tmp_path, "clean", [item("CLEAN", DAY + "12:10:00Z", where=place(0.1, 0.1))]))
     assert raw_evidence_holds(db, "https://news.invalid/clean")
     assert db.run("SELECT item_id FROM eye.media_item") == [["CLEAN"]]
+
+
+def _splice(raw: bytes, anchor: bytes, inserted: bytes) -> bytes:
+    """Insert raw bytes before the first ``anchor``: the duplicate is written
+    as bytes, never produced by ``json.dumps``, which cannot repeat a key."""
+    assert raw.count(anchor) >= 1, anchor
+    return raw.replace(anchor, inserted + anchor, 1)
+
+
+# Each route puts the marker in the FIRST of two equal keys. json.loads keeps
+# the last (clean) value, so the old parser validated clean text while the
+# archived bytes kept the marker.
+DUPLICATE_ROUTES = {
+    "duplicate top-level note": lambda raw, marker: _splice(
+        raw, b'"note": ', b'"note": "' + marker + b'", '
+    ),
+    "duplicate item headline": lambda raw, marker: _splice(
+        raw, b'"headline": ', b'"headline": "' + marker + b'", '
+    ),
+    "duplicate items key": lambda raw, marker: _splice(
+        raw, b'"items": ', b'"items": ["' + marker + b"x" * 2048 + b'"], '
+    ),
+}
+
+
+def two_item_capture(tmp_path, name: str) -> bytes:
+    """Clean bytes with two items, so sibling objects share key names."""
+    items = [
+        item("CLEAN", DAY + "12:10:00Z", where=place(0.1, 0.1)),
+        item("SIBLING", DAY + "12:20:00Z"),
+    ]
+    return capture(tmp_path, name, items).read_bytes()
+
+
+@pytest.mark.parametrize("route", sorted(DUPLICATE_ROUTES))
+def test_duplicate_json_keys_are_refused_before_archiving(db, tmp_path, route):
+    marker = ("INVENTED-DUP-" + route.replace(" ", "-").upper()).encode("utf-8")
+    raw = DUPLICATE_ROUTES[route](two_item_capture(tmp_path, "dup"), marker)
+    assert marker in raw
+    # The route is real: a plain parse keeps the last value and loses the marker.
+    assert marker not in json.dumps(json.loads(raw)).encode("utf-8")
+    with pytest.raises(CaptureRejected, match="duplicate JSON key"):
+        archive(db, raw)
+    assert db.run("SELECT count(*) FROM eye.capture_batch") == [[0]]
+    assert not raw_evidence_holds(db, marker.decode("utf-8"))
+    # Control: the same bytes without the repeat, where both items use the
+    # same key names in separate objects, are archived and stored.
+    ingest(db, two_item_capture(tmp_path, "clean"))
+    assert raw_evidence_holds(db, "https://news.invalid/clean")
+    assert db.run("SELECT item_id FROM eye.media_item ORDER BY 1") == [["CLEAN"], ["SIBLING"]]
 
 
 def test_unknown_rights_headlines_are_never_stored(db, tmp_path):

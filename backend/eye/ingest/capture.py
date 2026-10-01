@@ -128,6 +128,19 @@ def iso(moment: datetime) -> str:
     return moment.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+def _unique_keys(pairs: list[tuple[str, object]]) -> dict:
+    """``object_pairs_hook``: refuse a key repeated in one JSON object, at any depth.
+
+    ``json.loads`` keeps the last value, so a repeat would let validated text
+    differ from the archived bytes, which keep the first."""
+    out: dict = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate JSON key {key[:64]!r}; the capture is refused")
+        out[key] = value
+    return out
+
+
 def _number(value: object, what: str, low: float, high: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:
         raise ValueError(f"{what} must be a number from {low} to {high}")
@@ -256,7 +269,7 @@ def parse_capture(raw: bytes) -> ParsedCapture:
     if not raw or len(raw) > MAX_EVIDENCE_BYTES:
         raise CaptureRejected(f"capture must be 1..{MAX_EVIDENCE_BYTES} bytes")
     try:
-        doc = json.loads(raw)
+        doc = json.loads(raw, object_pairs_hook=_unique_keys)
         if not isinstance(doc, dict):
             raise ValueError("capture must be a JSON object")
         if doc.get("synthetic") is not True:
