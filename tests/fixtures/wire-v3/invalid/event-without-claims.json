@@ -1,0 +1,102 @@
+{
+  "entry": "ServerMessage",
+  "note": "a case has at least one claim",
+  "message": {
+    "schema_version": "eye.wire/3",
+    "kind": "snapshot",
+    "cursor": "c-0001",
+    "generated_at": "2026-01-01T01:00:00Z",
+    "synthetic": true,
+    "area": {
+      "name": "Synthetic test area",
+      "bbox": [
+        -0.5,
+        -0.5,
+        0.5,
+        0.5
+      ]
+    },
+    "interval": {
+      "start": "2026-01-01T00:00:00Z",
+      "end": "2026-01-01T01:00:00Z"
+    },
+    "tracks": [
+      {
+        "id": "syn-track-flt-001",
+        "kind": "flight",
+        "source": "synthetic-fixture",
+        "source_record_id": "SYN-FLT-001",
+        "display_type": "observed",
+        "points": [
+          {
+            "observed_time": "2026-01-01T00:00:00Z",
+            "received_time": "2026-01-01T00:00:04Z",
+            "lon": -0.4,
+            "lat": -0.2,
+            "alt_m": 9100
+          }
+        ],
+        "quality_flags": []
+      }
+    ],
+    "events": [
+      {
+        "id": "evt-0123456789abcdef0123456789abcdef",
+        "layer": "road",
+        "source": "synthetic-events",
+        "source_label": "Synthetic event reports (invented cases)",
+        "case_id": "SYN-RD-2",
+        "standing": "report",
+        "current_claim_id": "clm-2",
+        "claims": [],
+        "link": {
+          "state": "not_applicable",
+          "track_id": null,
+          "reason": "no subject named",
+          "candidate_track_ids": []
+        },
+        "last_observed_position": null
+      }
+    ],
+    "coverage": [
+      {
+        "layer": "flight",
+        "interval": {
+          "start": "2026-01-01T00:00:00Z",
+          "end": "2026-01-01T01:00:00Z"
+        },
+        "state": "qualified",
+        "metric": {
+          "name": "tracks_observed",
+          "value": 1
+        }
+      },
+      {
+        "layer": "road",
+        "interval": {
+          "start": "2026-01-01T00:00:00Z",
+          "end": "2026-01-01T01:00:00Z"
+        },
+        "state": "qualified",
+        "reason": "feed healthy; nothing reported",
+        "metric": {
+          "name": "events_reported",
+          "value": 0
+        }
+      },
+      {
+        "layer": "vessel",
+        "interval": {
+          "start": "2026-01-01T00:00:00Z",
+          "end": "2026-01-01T01:00:00Z"
+        },
+        "state": "failed",
+        "reason": "synthetic provider timeout",
+        "metric": {
+          "name": "tracks_observed",
+          "value": null
+        }
+      }
+    ]
+  }
+}

@@ -2,7 +2,7 @@
   "entry": "ClientMessage",
   "note": "layers are enumerated",
   "message": {
-    "schema_version": "eye.wire/3",
+    "schema_version": "eye.wire/4",
     "kind": "subscribe",
     "bbox": [
       -0.5,

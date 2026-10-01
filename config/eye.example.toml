@@ -46,6 +46,8 @@ max_counts = 168
 max_crossings = 1000
 # Event-ledger cases per snapshot (each with at most 100 versions).
 max_events = 500
+# News and media items per snapshot (each with at most 100 versions).
+max_media = 200
 # A subscriber further behind than this gets a fresh snapshot instead of deltas.
 max_pending_changes = 50
 # The default view is the latest hours that have any coverage.
@@ -71,6 +73,8 @@ capture_fixtures = "../tests/fixtures/synthetic/captures"
 ais_capture_fixtures = "../tests/fixtures/synthetic/ais/demo"
 # Synthetic event-report captures (Package 4c) loaded by the same command (demo only).
 event_capture_fixtures = "../tests/fixtures/synthetic/events/demo"
+# Synthetic news and media captures (Package 4d) loaded by the same command (demo only).
+media_capture_fixtures = "../tests/fixtures/synthetic/media/demo"
 # Versioned count lines used by `python -m eye db-derive-transits`.
 count_lines = "../reference/lines"
 

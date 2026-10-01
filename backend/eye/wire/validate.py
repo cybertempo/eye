@@ -18,13 +18,18 @@ from pathlib import Path
 from typing import Any
 
 SCHEMAS_DIR = Path(__file__).resolve().parents[3] / "schemas"
-SCHEMA_PATH = SCHEMAS_DIR / "eye-wire.v3.schema.json"
-SCHEMA_VERSION = "eye.wire/3"
+SCHEMA_PATH = SCHEMAS_DIR / "eye-wire.v4.schema.json"
+SCHEMA_VERSION = "eye.wire/4"
 # Frozen: earlier schemas exactly as merged. Nothing serves them; tests use
 # them to show that current messages are not mistaken for an earlier version.
 V1_SCHEMA_PATH = SCHEMAS_DIR / "eye-wire.v1.schema.json"
 V2_SCHEMA_PATH = SCHEMAS_DIR / "eye-wire.v2.schema.json"
-FROZEN_SCHEMAS = {"eye.wire/1": V1_SCHEMA_PATH, "eye.wire/2": V2_SCHEMA_PATH}
+V3_SCHEMA_PATH = SCHEMAS_DIR / "eye-wire.v3.schema.json"
+FROZEN_SCHEMAS = {
+    "eye.wire/1": V1_SCHEMA_PATH,
+    "eye.wire/2": V2_SCHEMA_PATH,
+    "eye.wire/3": V3_SCHEMA_PATH,
+}
 MAX_MESSAGE_BYTES = 1_048_576
 ENTRY_POINTS = ("ServerMessage", "ClientMessage")
 MAX_ERRORS = 20

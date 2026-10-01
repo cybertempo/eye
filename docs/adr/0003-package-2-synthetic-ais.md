@@ -1,6 +1,7 @@
 # ADR 0003: Package 2 synthetic AIS vertical slice
 
-Date: 2026-09-28. Status: proposed (awaiting owner review).
+Date: 2026-09-28. Status: accepted: merged to `main` in merge commit `b62cf4a`
+(2026-09-28).
 
 ## Decisions
 

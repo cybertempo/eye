@@ -1,7 +1,7 @@
 # Wire schemas
 
-`eye-wire.v3.schema.json` is the single authoritative definition of every REST
-response and WebSocket message (protocol version `eye.wire/3`). Entry points:
+`eye-wire.v4.schema.json` is the single authoritative definition of every REST
+response and WebSocket message (protocol version `eye.wire/4`). Entry points:
 `ServerMessage` (health, error, snapshot, delta, resync_required, transits) and
 `ClientMessage` (subscribe, unsubscribe).
 
@@ -16,8 +16,12 @@ every current message, and the new shapes even when relabelled:
 - `eye-wire.v2.schema.json` (`tests/fixtures/wire-v2`): as merged with Package
   3. Version 3 replaced the placeholder `Event` (never sent) with event-ledger
   cases (`EventCase`, below).
+- `eye-wire.v3.schema.json` (`tests/fixtures/wire-v3`): as merged with Package
+  4c. Version 4 added news and media items (`media`, `media_suggestions`,
+  `media_upserted`) and the `news` coverage layer (below).
 
-Every other earlier message is still a current message once relabelled.
+Every other earlier message is still a current message once relabelled, with
+the empty `media` arrays version 4 requires added.
 
 - **Server side:** `backend/eye/wire/validate.py` validates every outgoing body
   and any incoming client message at runtime.
@@ -95,6 +99,23 @@ Every other earlier message is still a current message once relabelled.
 - A case is in a requested interval when its nominal event time ± stated
   uncertainty overlaps it; the nominal time and uncertainty are served as
   stated.
+- A news or media item (`MediaItem`, `eye.wire/4`) is one article, image or
+  video with every version as `versions`, kept apart from event cases.
+  - Each `MediaVersion` carries the source's `first_published_time` and
+    `revision_time`, EYE's `received_time`, the delivering
+    `evidence_batch_ids`, an https `url` (and `syndicated_from`), publisher,
+    creator, `headline` (untrusted text), `language`, `rights`, a
+    `capture_time_claimed` for images and video, and an optional `place`
+    with `role`, `method` and `precision_m`.
+  - `rights` is `licensed` (with `licence` and `attribution`), `link_only` or
+    `unknown`. An unknown-rights version has `headline: null` and
+    `headline_withheld: true` (EYE never stores its headline), and the
+    browser refuses a version where `headline_withheld` does not match
+    unknown rights, or that carries a headline with them.
+  - `media_suggestions` pairs are `syndicated_copy` or `place_and_time`,
+    always `status: suggestion`: never a merge or a confirmation.
+  - News coverage rows use layer `news` and metric `media_items_in_view`,
+    as reporting windows. `news` is not a subscription layer.
 - Transit counts (`transits`) have three forms:
   `qualified` (exact numbers, every uncertainty count 0, no reason), `partial`
   (numbers are lower bounds, reason required) and `unknown`/`failed` (null
@@ -118,7 +139,8 @@ Run on the developer laptop, then commit all three:
 
 1. Edit the schema. A change that an existing validator would refuse, or that
    gives an existing field a new meaning, needs a new file and version
-   (`eye.wire/3`); keep the old file unchanged.
+   (`eye.wire/5`); keep the old file unchanged, pin its hash in
+   `tests/test_wire.py` and copy its corpus to `tests/fixtures/wire-vN`.
 2. `.venv/bin/python scripts/gen_wire_types.py`
 3. Add valid and invalid corpus cases, then `scripts/verify.sh`.
 

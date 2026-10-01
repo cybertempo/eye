@@ -351,7 +351,14 @@ def cases(conn, params: dict, limits, keys: list[str] | None, labels: dict) -> l
     return out
 
 
-def coverage_gaps(full_spans: list[tuple], layers, start: str, end: str) -> list[dict]:
+def coverage_gaps(
+    full_spans: list[tuple],
+    layers,
+    start: str,
+    end: str,
+    metric: str = EVENT_VIEW_METRIC,
+    reason: str = NO_SOURCE,
+) -> list[dict]:
     """Unknown event coverage for every part of the view's interval that no
     event source covered over the whole view area.
 
@@ -366,13 +373,13 @@ def coverage_gaps(full_spans: list[tuple], layers, start: str, end: str) -> list
         cursor = start
         for a, b in spans:
             if _key(a) > _key(cursor):
-                gaps.append(_gap(layer, cursor, min(a, end, key=_key)))
+                gaps.append(_gap(layer, cursor, min(a, end, key=_key), metric, reason))
             if _key(b) > _key(cursor):
                 cursor = b
             if _key(cursor) >= _key(end):
                 break
         if _key(cursor) < _key(end):
-            gaps.append(_gap(layer, cursor, end))
+            gaps.append(_gap(layer, cursor, end, metric, reason))
     return gaps
 
 
@@ -430,12 +437,12 @@ def occurrence_rows(layers, start: str, end: str) -> list[dict]:
     ]
 
 
-def _gap(layer: str, start: str, end: str) -> dict:
+def _gap(layer: str, start: str, end: str, metric: str, reason: str) -> dict:
     return {
         "layer": layer,
         "interval": {"start": start, "end": end},
         "state": "unknown",
-        "reason": NO_SOURCE,
-        "metric": {"name": EVENT_VIEW_METRIC, "value": None},
+        "reason": reason,
+        "metric": {"name": metric, "value": None},
         "interval_kind": REPORTING_WINDOW,
     }

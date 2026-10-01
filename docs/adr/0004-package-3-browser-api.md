@@ -2,8 +2,9 @@
 
 Date: 2026-09-28. Status: accepted: merged to `main` in PR #4 (merge commit
 `01692ee`, 2026-09-29). The wire version in decisions 2 and 16 has since moved
-to `eye.wire/3` for event cases ([ADR 0005](0005-package-4c-event-ledger.md));
-the rest stands.
+to `eye.wire/3` for event cases ([ADR 0005](0005-package-4c-event-ledger.md))
+and to `eye.wire/4` for news and media items
+([ADR 0006](0006-package-4d-news-media-evidence.md)); the rest stands.
 
 ## Decisions
 

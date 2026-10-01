@@ -92,7 +92,7 @@ def test_desk_shows_evidence_ids_timestamps_and_source_labels(api_server, page):
 def test_unavailable_counts_show_unknown_not_zero(api_server, page):
     api = api_server()
     error = {
-        "schema_version": "eye.wire/3",
+        "schema_version": "eye.wire/4",
         "kind": "error",
         "status": 503,
         "error": "database unavailable; data unknown",
@@ -847,7 +847,7 @@ def test_resolved_middle_point_draws_one_normal_route(api_server, page, tmp_path
 # --- O53: another wire version halts instead of looping -----------------------------------------
 
 
-V1, V3 = '"schema_version":"eye.wire/1"', '"schema_version":"eye.wire/3"'
+V1, V4 = '"schema_version":"eye.wire/1"', '"schema_version":"eye.wire/4"'
 
 
 class VersionRelay:
@@ -871,7 +871,7 @@ class VersionRelay:
         def from_server(message):
             if number >= self.relabel_from and isinstance(message, str):
                 message = message.replace(
-                    '"schema_version":"eye.wire/3"', '"schema_version":"eye.wire/1"'
+                    '"schema_version":"eye.wire/4"', '"schema_version":"eye.wire/1"'
                 )
             client.send(message)
 
@@ -884,7 +884,7 @@ def test_reconnect_to_another_wire_version_halts_and_asks_for_a_reload(api_serve
     relay = VersionRelay(relabel_from=2)
     page.route_web_socket("**/api/v0/stream", relay)
     page.goto(f"{api.origin}/")
-    _banner_cleared(page)  # control: the first connection speaks eye.wire/3 and is live
+    _banner_cleared(page)  # control: the first connection speaks eye.wire/4 and is live
     status = page.locator("#live-status")
     for sub in api.server.hub.subscribers():
         sub.abort("test: connection lost")

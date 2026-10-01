@@ -838,6 +838,11 @@ def test_desk_refuses_an_occurrence_completeness_claim(api_server, page, tmp_pat
     page.route_web_socket("**/api/v0/stream", relay)
     open_events(page, api)
     set_window(page, DAY + "12:00:00Z", 1)
+    # Wait for the requested window's own rows (the control line) before
+    # reading: an earlier view's snapshot can still be on the page for a moment.
+    expect(page.locator("#event-coverage")).to_contain_text(
+        occurred_in("flight", "12:00", "13:00"), timeout=WAIT
+    )
     text = event_coverage_text(page)
     assert "refused: a completeness claim without an approved occurrence-time guarantee" in text
     assert occurred_in("road", "12:00", "13:00") not in text

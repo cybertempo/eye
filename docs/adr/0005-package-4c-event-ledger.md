@@ -1,6 +1,9 @@
 # ADR 0005: Package 4c event-claim ledger (source-independent part)
 
-Date: 2026-09-29. Status: proposed (awaiting owner review).
+Date: 2026-09-29. Status: accepted: merged to `main` in PR #5 (merge commit
+`8ced6c6`, 2026-09-29). The wire version in decision 7 has since moved to
+`eye.wire/4` for news and media items
+([ADR 0006](0006-package-4d-news-media-evidence.md)); the rest stands.
 
 Scope: the shared ledger, its API and browser presentation, and synthetic
 fixtures. No aviation, marine or road occurrence-report adapter is built or

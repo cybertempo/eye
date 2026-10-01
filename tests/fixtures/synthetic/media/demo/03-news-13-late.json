@@ -1,0 +1,58 @@
+{
+  "capture_format": "eye.synthetic-media-items/1",
+  "synthetic": true,
+  "source_id": "synthetic-news",
+  "adapter_version": "synthetic-news/1",
+  "note": "Invented news published 13:20 but delivered to EYE late, at 15:30.",
+  "layer": "news",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-02-01T13:00:00Z",
+    "end": "2026-02-01T14:00:00Z",
+    "expected_interval_s": 3600
+  },
+  "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every item",
+    "started_at": "2026-02-01T15:30:00Z",
+    "finished_at": "2026-02-01T15:30:00Z",
+    "provider_status": "ok",
+    "quota_cost": 0,
+    "observed_start": "2026-02-01T13:00:00Z",
+    "observed_end": "2026-02-01T14:00:00Z"
+  },
+  "provider_response": {
+    "items": [
+      {
+        "item_id": "SN-L1",
+        "kind": "article",
+        "status": "published",
+        "first_published_time": "2026-02-01T13:20:00Z",
+        "revision_time": "2026-02-01T13:20:00Z",
+        "url": "https://evening-post.invalid/late",
+        "syndicated_from": null,
+        "publisher": "Invented Evening Post",
+        "creator": null,
+        "headline": "Invented: bridge reopening expected",
+        "language": "en",
+        "rights": {
+          "status": "link_only"
+        },
+        "capture_time_claimed": null,
+        "place": {
+          "role": "event_place",
+          "method": "source_stated",
+          "coords": [
+            0.1,
+            0.1
+          ],
+          "precision_m": 5000
+        }
+      }
+    ]
+  }
+}

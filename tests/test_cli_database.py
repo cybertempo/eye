@@ -37,7 +37,7 @@ def test_db_commands_end_to_end(make_db):
     assert loaded.returncode == 0, loaded.stderr
     first = json.loads(loaded.stdout)
     # 8 Package 1 + 4 synthetic AIS demo + 6 synthetic event-report batches
-    assert first["created"] == first["batches"] == 18
+    assert first["created"] == first["batches"] == 23  # 5 of them news (Package 4d)
     again = json.loads(run_eye("db-load-fixtures", url=url).stdout)
     assert again["created"] == 0
     derived = run_eye("db-derive-transits", url=url)
@@ -65,7 +65,7 @@ def test_prepare_demo_is_one_repeatable_step(make_db):
     first = run_eye("db-prepare-demo", url=url)
     assert first.returncode == 0, first.stderr
     report = json.loads(first.stdout)
-    assert report["applied_now"] == EXISTING and report["batches"] == 18
+    assert report["applied_now"] == EXISTING and report["batches"] == 23
     assert len(report["runs"]) == 1
     again = json.loads(run_eye("db-prepare-demo", url=url).stdout)
     assert again["applied_now"] == [] and again["runs"] == report["runs"]  # no new run

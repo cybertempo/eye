@@ -1,0 +1,10 @@
+{
+  "entry": "ServerMessage",
+  "note": "gap forces a fresh snapshot",
+  "message": {
+    "schema_version": "eye.wire/3",
+    "kind": "resync_required",
+    "reason": "gap",
+    "last_cursor": "c-0001"
+  }
+}

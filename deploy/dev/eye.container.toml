@@ -23,6 +23,7 @@ private_adapter_module = ""
 capture_fixtures = "../../tests/fixtures/synthetic/captures"
 ais_capture_fixtures = "../../tests/fixtures/synthetic/ais/demo"
 event_capture_fixtures = "../../tests/fixtures/synthetic/events/demo"
+media_capture_fixtures = "../../tests/fixtures/synthetic/media/demo"
 count_lines = "../../reference/lines"
 
 [database]

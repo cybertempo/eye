@@ -131,6 +131,8 @@ def test_empty_result_is_still_marked_by_its_sources(api_server):
     # Nor is it known which events occurred (O62).
     assert [(c["state"], c["metric"]) for c in empty["coverage"]] == [
         ("unknown", {"name": "event_cases_in_view", "value": None}),
+        # No news source covers it either: items unknown, not absent (Package 4d).
+        ("unknown", {"name": "media_items_in_view", "value": None}),
         ("unknown", {"name": "event_occurrence_completeness", "value": None}),
     ]
     assert empty["synthetic"] is True  # every source in this database is invented
@@ -333,7 +335,7 @@ def test_reconnect_with_a_valid_cursor_gets_a_fresh_snapshot(api_server):
     resumed.send(subscribe(AREA, DAY, resume=cursor))
     notice = resumed.recv()
     assert notice == {
-        "schema_version": "eye.wire/3",
+        "schema_version": "eye.wire/4",
         "kind": "resync_required",
         "reason": "reconnect",
         "last_cursor": cursor,
@@ -349,20 +351,20 @@ def test_reconnect_in_another_wire_version_is_refused_by_name(api_server):
     """A page speaking eye.wire/1 that reconnects with its cursor is told which
     version this server speaks and closed with 1003 (unsupported data); a
     resubscribe or reconnect would meet the same answer, so no snapshot, no
-    subscription. Control: the same request in eye.wire/3 resumes normally."""
+    subscription. Control: the same request in eye.wire/4 resumes normally."""
     api = _partial_demo(api_server)
     first = ws(api)
     first.send(subscribe(AREA, DAY))
     cursor = first.recv()["cursor"]
     first.sock.close()
-    for version in ("eye.wire/1", "eye.wire/2", "eye.wire/4"):
+    for version in ("eye.wire/1", "eye.wire/2", "eye.wire/3", "eye.wire/5"):
         old = ws(api)
         old.send({**subscribe(AREA, DAY, resume=cursor), "schema_version": version})
         error = old.recv()
         assert reference_valid(error) and error["kind"] == "error" and error["status"] == 400
-        assert error["schema_version"] == "eye.wire/3"
+        assert error["schema_version"] == "eye.wire/4"
         assert error["error"] == (
-            f"unsupported wire version {version}; this server speaks eye.wire/3 only. "
+            f"unsupported wire version {version}; this server speaks eye.wire/4 only. "
             "Reload the page"
         )
         with pytest.raises(Closed) as closed:
@@ -495,7 +497,7 @@ def test_revoked_access_closes_open_sockets(api_server):
     auth.allowed = False
     api.server.hub.recheck_auth()
     assert client.recv() == {
-        "schema_version": "eye.wire/3",
+        "schema_version": "eye.wire/4",
         "kind": "error",
         "status": 403,
         "error": "not authorised",
