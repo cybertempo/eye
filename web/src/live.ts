@@ -7,6 +7,11 @@
 // is retried with capped backoff and the same resume cursor. Nothing is queued
 // on the client: each message is applied or refused as it arrives.
 //
+// A fresh subscription (a new view, or a rebuild of cleared client state) puts
+// the feed out of "live" at once: the data on the page belongs to the previous
+// view until a snapshot for the requested view is applied. A snapshot for any
+// other view (one already in flight for an earlier request) is not applied.
+//
 // A message in another wire version is not a gap: resubscribing or
 // reconnecting would get the same answer again. The feed halts, keeps the data
 // shown marked stale, and asks for a reload, which fetches a page that speaks
@@ -60,7 +65,14 @@ export class LiveFeed {
   subscribe(subscription: Subscription, fresh: boolean): void {
     this.subscription = subscription;
     if (this.halted) return; // only a reload can speak the server's version
-    if (fresh) this.cursor = null;
+    if (fresh) {
+      this.cursor = null;
+      this.awaitingSnapshot = true;
+      this.handlers.status(
+        "resyncing",
+        "Loading the requested view; the data shown is from the previous view until its snapshot arrives.",
+      );
+    }
     if (this.socket?.readyState === WebSocket.OPEN) this.sendSubscribe();
     else if (!this.socket) this.connect();
   }
@@ -146,6 +158,17 @@ export class LiveFeed {
     );
   }
 
+  /** Whether a snapshot is for the view last subscribed to. */
+  private requested(message: SnapshotMessage): boolean {
+    const wanted = this.subscription;
+    if (!wanted) return false;
+    return (
+      message.interval.start === wanted.interval.start &&
+      message.interval.end === wanted.interval.end &&
+      message.area.bbox.every((value, index) => value === wanted.bbox[index])
+    );
+  }
+
   private receive(text: string): void {
     const version = wireVersionOf(text);
     if (version !== null && version !== WIRE_SCHEMA_VERSION) {
@@ -161,6 +184,7 @@ export class LiveFeed {
     }
     switch (message.kind) {
       case "snapshot":
+        if (!this.requested(message)) return; // for an earlier request: the next one is coming
         this.cursor = message.cursor;
         this.sequence = 0;
         this.awaitingSnapshot = false;
@@ -183,6 +207,8 @@ export class LiveFeed {
         this.sequence = message.sequence;
         this.counters.deltas += 1;
         this.handlers.delta(message);
+        // Applying it can rebuild the client state from a fresh snapshot.
+        if (this.awaitingSnapshot) return;
         this.handlers.status("live", `Live. Update ${message.sequence} applied at cursor ${message.cursor}.`);
         return;
       case "resync_required":
