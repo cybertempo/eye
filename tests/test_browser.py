@@ -786,7 +786,11 @@ def test_show_interval_is_not_live_until_its_snapshot_is_applied(api_server, pag
     tracks = page.locator("#track-facts")
     expect(tracks).to_contain_text("SYNV-0020")
     old_summary = summary.inner_text()
-    old_transits = transits.inner_text()
+    old_window = re.search(r"\S+Z to \S+Z", old_summary).group(0)
+    expect(transits).to_contain_text(old_window)
+    # The counts, not the panel: the first live snapshot reloads the transits
+    # (a new "Response generated" time) at a moment this test does not control.
+    old_counts = page.locator("#transit-counts").inner_text()
     snapshots = status.get_attribute("data-snapshots")
     new_window = "2026-01-01T00:00:00Z to 2026-01-01T02:00:00Z"
     assert new_window not in old_summary
@@ -801,7 +805,8 @@ def test_show_interval_is_not_live_until_its_snapshot_is_applied(api_server, pag
     assert status.get_attribute("data-snapshots") == snapshots
     assert summary.inner_text() == old_summary
     assert new_window not in transits.inner_text()
-    assert transits.inner_text() == old_transits
+    assert old_window in transits.inner_text()
+    assert page.locator("#transit-counts").inner_text() == old_counts
     expect(tracks).to_contain_text("SYNV-0020")  # the old view's data, under the banner
     expect(tracks).not_to_contain_text("SYN-FLT-001")
     # Positive control: the snapshot arrives and the page is live with the new view.
