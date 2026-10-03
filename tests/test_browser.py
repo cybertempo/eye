@@ -255,7 +255,8 @@ def test_view_form_reports_errors_accessibly(api_server, page):
     start.fill("2026-01-01T00:00:00Z")
     page.get_by_label("Hours").fill("2")
     page.get_by_role("button", name="Show interval").click()
-    expect(page.get_by_role("alert")).to_have_text("")
+    # The stale banner is also an alert until the new view's snapshot arrives.
+    expect(page.locator("#view-error")).to_have_text("")
     expect(page.locator("#view-summary")).to_contain_text(
         "2026-01-01T00:00:00Z to 2026-01-01T02:00:00Z", timeout=WAIT
     )
@@ -696,6 +697,154 @@ def test_invalid_resync_snapshot_does_not_clear_the_banner(api_server, page):
     relay.release()  # control: the valid snapshot clears it
     _banner_cleared(page)
     expect(page.locator("#live-status")).to_have_attribute("data-snapshots", "2")
+
+
+# --- O63: a new view is not live until its own snapshot is applied ------------------------------
+
+
+class SnapshotGate:
+    """Relays the live socket; holds snapshots back while ``hold`` is set.
+
+    ``inject`` sends the page sequenced deltas the server never produced, so a
+    test can push the client's bounded state over its limit.
+    """
+
+    def __init__(self) -> None:
+        self.client = self.server = None
+        self.hold = False
+        self.held: list = []
+        self.last_snapshot: dict | None = None
+        self.injected = 0
+        self.cursor: str | None = None
+
+    def __call__(self, client) -> None:
+        self.client = client
+        self.server = client.connect_to_server()
+        self.server.on_message(self._from_server)
+        client.on_message(lambda message: self.server.send(message))
+
+    def _from_server(self, message) -> None:
+        if isinstance(message, str) and '"kind":"snapshot"' in message:
+            if self.hold:
+                self.held.append(message)
+                return
+            self.last_snapshot = json.loads(message)
+        self.client.send(message)
+
+    def release(self) -> None:
+        self.hold = False
+        for message in self.held:
+            self.client.send(message)
+        self.held.clear()
+
+    def inject(self, deltas: int, per_delta: int, prefix: str) -> None:
+        """Send ``deltas`` sequenced deltas following the last one sent."""
+        base = self.last_snapshot
+        assert base and base["tracks"], "inject needs a snapshot with a track to copy"
+        template = dict(base["tracks"][0], points=base["tracks"][0]["points"][:1])
+        for _ in range(deltas):
+            self.injected += 1
+            previous = self.cursor or base["cursor"]
+            self.cursor = f"{prefix}-cursor-{self.injected}"
+            tracks = [
+                dict(template, id=f"{prefix}-{self.injected}-{n}", source_record_id=f"{prefix}-{n}")
+                for n in range(per_delta)
+            ]
+            self.client.send(
+                json.dumps(
+                    {
+                        "schema_version": base["schema_version"],
+                        "kind": "delta",
+                        "sequence": self.injected,
+                        "cursor": self.cursor,
+                        "previous_cursor": previous,
+                        "tracks_upserted": tracks,
+                        "events_upserted": [],
+                        "coverage_upserted": [],
+                    }
+                )
+            )
+
+
+def _wait_until_held(page, gate: SnapshotGate) -> None:
+    for _ in range(100):
+        if gate.held:
+            return
+        page.wait_for_timeout(100)
+    raise AssertionError("the server never sent the snapshot for the new view")
+
+
+def test_show_interval_is_not_live_until_its_snapshot_is_applied(api_server, page):
+    api = api_server()
+    gate = SnapshotGate()
+    page.route_web_socket("**/api/v0/stream", gate)
+    open_app(page, api)
+    _banner_cleared(page)
+    status = page.locator("#live-status")
+    summary = page.locator("#view-summary")
+    transits = page.locator("#transit-summary")
+    tracks = page.locator("#track-facts")
+    expect(tracks).to_contain_text("SYNV-0020")
+    old_summary = summary.inner_text()
+    old_transits = transits.inner_text()
+    snapshots = status.get_attribute("data-snapshots")
+    new_window = "2026-01-01T00:00:00Z to 2026-01-01T02:00:00Z"
+    assert new_window not in old_summary
+    gate.hold = True  # the new view's snapshot waits in the relay
+    page.get_by_label("Start").fill("2026-01-01T00:00:00Z")
+    page.get_by_label("Hours").fill("2")
+    page.get_by_role("button", name="Show interval").click()
+    _wait_until_held(page, gate)
+    page.wait_for_timeout(1000)  # well past the transit reload timer
+    # Negative: not live, and nothing describes the new window over old data.
+    _banner_shown(page, "resyncing")
+    assert status.get_attribute("data-snapshots") == snapshots
+    assert summary.inner_text() == old_summary
+    assert new_window not in transits.inner_text()
+    assert transits.inner_text() == old_transits
+    expect(tracks).to_contain_text("SYNV-0020")  # the old view's data, under the banner
+    expect(tracks).not_to_contain_text("SYN-FLT-001")
+    # Positive control: the snapshot arrives and the page is live with the new view.
+    gate.release()
+    _banner_cleared(page)
+    assert int(status.get_attribute("data-snapshots")) == int(snapshots) + 1
+    expect(summary).to_contain_text(new_window)
+    expect(tracks).to_contain_text("SYN-FLT-001")
+    expect(tracks).not_to_contain_text("SYNV-0020")
+    expect(transits).to_contain_text(new_window, timeout=WAIT)
+
+
+def test_bounded_state_rebuild_is_not_live_until_its_snapshot_is_applied(api_server, page):
+    api = api_server()
+    gate = SnapshotGate()
+    page.route_web_socket("**/api/v0/stream", gate)
+    open_app(page, api)
+    _banner_cleared(page)
+    status = page.locator("#live-status")
+    tracks = page.locator("#track-facts")
+    summary = page.locator("#view-summary").inner_text()
+    snapshots = status.get_attribute("data-snapshots")
+    # Control below the limit: two deltas (800 tracks in all) apply and stay live.
+    gate.inject(2, 400, "BOUND")
+    expect(status).to_have_attribute("data-deltas", "2", timeout=WAIT)
+    _banner_cleared(page)
+    expect(tracks).to_contain_text("BOUND-2-399")
+    # Past the client's 1000-track bound: it clears its state and resubscribes.
+    gate.hold = True
+    gate.inject(1, 400, "BOUND")
+    _wait_until_held(page, gate)
+    page.wait_for_timeout(500)
+    # Negative: the cleared state is being rebuilt, so the page is not live.
+    _banner_shown(page, "resyncing")
+    assert status.get_attribute("data-snapshots") == snapshots
+    assert page.locator("#view-summary").inner_text() == summary
+    # Positive control: the rebuild snapshot arrives; live with only real tracks.
+    gate.release()
+    _banner_cleared(page)
+    assert int(status.get_attribute("data-snapshots")) == int(snapshots) + 1
+    expect(tracks).to_contain_text("SYNV-0020")
+    expect(tracks).not_to_contain_text("BOUND-")
+    assert page.locator("#view-summary").inner_text() == summary
 
 
 # --- O50 and O51: layered identity; contested positions -----------------------------------------
