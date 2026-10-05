@@ -284,6 +284,8 @@ def suggestions(media: list[dict]) -> list[dict]:
       the same story; nothing here says they do.
 
     Only items with one current version take part; headlines are never read.
+    More than ``MAX_SUGGESTIONS`` is refused by name, never cut short: a
+    shortened list would read as if the rest did not qualify.
     """
     current = []
     for m in media:
@@ -306,5 +308,11 @@ def suggestions(media: list[dict]) -> list[dict]:
                 <= SUGGESTION_WINDOW_S
             ):
                 out.append({"items": pair, "basis": "place_and_time", "status": "suggestion"})
+    if len(out) > MAX_SUGGESTIONS:
+        raise MediaRefused(
+            413,
+            f"more than {MAX_SUGGESTIONS} news and media suggestions "
+            f"({len(out)} qualify); narrow the request",
+        )
     out.sort(key=lambda s: (s["items"], s["basis"]))
-    return out[:MAX_SUGGESTIONS]
+    return out

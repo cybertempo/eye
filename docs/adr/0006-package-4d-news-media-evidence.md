@@ -113,6 +113,11 @@ Scope:
      Headlines are never compared.
    - **No merging:** suggestions never merge items and never confirm
      anything. DESK words each one as "Suggestion, not confirmed".
+   - **Limit:** a snapshot carries at most 500 suggestions. A view with more
+     is refused by name (413, with the qualifying count) over REST and the
+     WebSocket, never served with a shortened list that would read as if
+     the rest did not qualify. *Review repair O64:* the first version cut
+     the list to 500 without saying so.
 8. **Sources are approved or refused, by name.**
    - **Accepted:** only `synthetic-news` (invented, `.invalid` URLs).
    - **Candidates refused:** the shortlisted providers (`gdelt`,

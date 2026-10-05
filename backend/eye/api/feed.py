@@ -519,6 +519,13 @@ def _media(conn, query: Query, limits: Limits, keys: list[str] | None) -> list[d
         raise QueryRefused(exc.status, str(exc)) from exc
 
 
+def _suggestions(media: list[dict]) -> list[dict]:
+    try:
+        return media_ledger.suggestions(media)
+    except media_ledger.MediaRefused as exc:
+        raise QueryRefused(exc.status, str(exc)) from exc
+
+
 def _gaps(full: list[tuple], query: Query) -> list[dict]:
     """Unknown rows where no event-report or news source covered the whole view."""
     start, end = iso(query.start), iso(query.end)
@@ -541,6 +548,7 @@ def snapshot(conn: Connection, query: Query, limits: Limits, area_name: str) -> 
         tracks = _tracks(conn, query, limits, None)
         events = _events(conn, query, limits, None)
         media = _media(conn, query, limits, None)
+        suggestions = _suggestions(media)
         coverage, sources, full = _coverage(conn, query, limits, None, events, media)
         # Where no event-report or news source covered the whole view, reports
         # and items are unknown there.
@@ -564,7 +572,7 @@ def snapshot(conn: Connection, query: Query, limits: Limits, area_name: str) -> 
         "tracks": tracks,
         "events": events,
         "media": media,
-        "media_suggestions": media_ledger.suggestions(media),
+        "media_suggestions": suggestions,
         "coverage": coverage,
     }
     if synthetic:
@@ -736,9 +744,7 @@ def _check_media_unchanged(
     if others:
         raise QueryRefused(409, "a batch touched an item another batch delivered")
     ids = {m["id"] for m in media}
-    if ids and any(
-        ids & set(s["items"]) for s in media_ledger.suggestions(_media(conn, query, limits, None))
-    ):
+    if ids and any(ids & set(s["items"]) for s in _suggestions(_media(conn, query, limits, None))):
         raise QueryRefused(409, "new items changed the suggestions in view")
 
 

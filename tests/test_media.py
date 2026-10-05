@@ -794,6 +794,49 @@ def test_item_limit_is_refused_by_name(api_server, tmp_path):
     assert [m["item_id"] for m in narrow["media"]] == ["L-9"]
 
 
+def crowded(tmp_path, name: str, count: int):
+    """``count`` items from different publishers at one stated place within an
+    hour: every pair qualifies as a place-and-time suggestion."""
+    items = [
+        item(
+            f"C-{i:02d}",
+            DAY + f"12:{i:02d}:00Z",
+            publisher=f"Synthetic Publisher {i:02d}",
+            where=place(0.1, 0.1),
+        )
+        for i in range(count)
+    ]
+    return capture(tmp_path, name, items)
+
+
+def test_suggestion_limit_is_refused_by_name_never_cut_short(api_server, tmp_path):
+    """33 items give 528 qualifying pairs, over the wire limit of 500. The
+    view is refused with the count, rather than served with 500 and no sign
+    that 28 are missing."""
+    api = api_server()
+    api.ingest(crowded(tmp_path, "crowded", 33))
+    response, body = api.get(VIEW)
+    assert response.status == 413
+    error = validate_message(body, "ServerMessage")
+    assert "more than 500 news and media suggestions (528 qualify)" in error["error"]
+    # The WebSocket subscription is refused the same way, never sent 500.
+    client = WsClient(api.host, api.port)
+    client.send(subscribe(AREA, HOURS))
+    reply = client.recv()
+    client.close()
+    assert reply["kind"] == "error" and "(528 qualify)" in reply["error"]
+
+
+def test_suggestions_under_the_limit_are_served_in_full(api_server, tmp_path):
+    """Control: 32 items give 496 pairs, all served."""
+    api = api_server()
+    api.ingest(crowded(tmp_path, "crowded", 32))
+    view = snapshot(api)
+    assert len(view["media"]) == 32
+    assert len(view["media_suggestions"]) == 32 * 31 // 2 == 496
+    assert {s["status"] for s in view["media_suggestions"]} == {"suggestion"}
+
+
 # --- the API: live updates ------------------------------------------------------------------
 
 
