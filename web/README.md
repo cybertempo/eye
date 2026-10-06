@@ -6,7 +6,7 @@ no bundler, framework, map library, token or external service.
 | Module | Role |
 |---|---|
 | `src/app.ts` | page wiring: default view over REST, live feed, tabs, keyboard controls, view form |
-| `src/live.ts` | WebSocket client: subscribe, snapshot, sequenced deltas, gap detection, reconnect with a resume cursor |
+| `src/live.ts` | WebSocket client: one connection and one subscribe per request, snapshot, sequenced deltas, gap detection, reconnect with a resume cursor |
 | `src/globe.ts` | THEATRE: orthographic globe on a 2D canvas (graticule only, no basemap); rendering presets |
 | `src/desk.ts` | DESK: observed transits, cited crossings and coverage; fact tables |
 | `src/facts.ts` | measured facts as text; pure functions, independent of rendering |

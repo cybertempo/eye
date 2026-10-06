@@ -7,6 +7,19 @@
 // is retried with capped backoff and the same resume cursor. Nothing is queued
 // on the client: each message is applied or refused as it arrives.
 //
+// A fresh subscription (a new view, or a rebuild of cleared client state) puts
+// the feed out of "live" at once: the data on the page belongs to the previous
+// view until a snapshot for the requested view is applied.
+//
+// Each request (a new view, a rebuild, a resync or a reconnect) has its own
+// connection, which carries exactly one subscribe; the connection identifies
+// the request. A request made while that connection is still opening replaces
+// what it will send; a request after it has sent closes it and opens another.
+// Everything a replaced connection delivers afterwards (its open, a snapshot
+// or error answering an earlier request, a change-feed error, a delta) is
+// ignored, so only the latest request's answer and feed reach the page, even
+// for the same view asked twice (views A, B, then A again).
+//
 // A message in another wire version is not a gap: resubscribing or
 // reconnecting would get the same answer again. The feed halts, keeps the data
 // shown marked stale, and asks for a reload, which fetches a page that speaks
@@ -42,6 +55,7 @@ const MAX_BACKOFF_MS = 30_000;
 
 export class LiveFeed {
   private socket: WebSocket | null = null;
+  private sent = false; // this.socket has carried its one subscribe
   private subscription: Subscription | null = null;
   private cursor: string | null = null;
   private sequence = 0;
@@ -60,9 +74,14 @@ export class LiveFeed {
   subscribe(subscription: Subscription, fresh: boolean): void {
     this.subscription = subscription;
     if (this.halted) return; // only a reload can speak the server's version
-    if (fresh) this.cursor = null;
-    if (this.socket?.readyState === WebSocket.OPEN) this.sendSubscribe();
-    else if (!this.socket) this.connect();
+    if (fresh) {
+      this.cursor = null;
+      this.handlers.status(
+        "resyncing",
+        "Loading the requested view; the data shown is from the previous view until its snapshot arrives.",
+      );
+    }
+    this.request();
   }
 
   stop(): void {
@@ -73,15 +92,39 @@ export class LiveFeed {
     this.handlers.status("stopped", "Live updates stopped.");
   }
 
-  private connect(): void {
-    this.handlers.status(this.counters.reconnects > 0 ? "reconnecting" : "connecting", "Connecting to live updates…");
+  /**
+   * Ask for the current subscription on a connection that has carried no other
+   * request: the one still opening (it sends the latest subscription when it
+   * opens), or a new one in place of a connection that has already been used.
+   */
+  private request(): void {
+    if (!this.subscription) return;
+    this.awaitingSnapshot = true;
+    if (this.socket && !this.sent) {
+      this.sendSubscribe(); // waits for "open" if the connection is still opening
+      return;
+    }
+    window.clearTimeout(this.timer);
+    const used = this.socket;
+    this.socket = null; // its late events are ignored from here on
+    used?.close(1000, "replaced by a new request");
+    this.connect(used === null);
+  }
+
+  private connect(announce: boolean): void {
+    if (announce) {
+      this.handlers.status(this.counters.reconnects > 0 ? "reconnecting" : "connecting", "Connecting to live updates…");
+    }
     const socket = new WebSocket(this.url);
     this.socket = socket;
+    this.sent = false;
     socket.addEventListener("open", () => {
+      if (this.socket !== socket) return;
       this.backoff = 1000;
       this.sendSubscribe();
     });
     socket.addEventListener("message", (event: MessageEvent) => {
+      if (this.socket !== socket) return; // a replaced connection answers nothing current
       if (typeof event.data !== "string") {
         this.refuse("binary message");
         return;
@@ -101,12 +144,14 @@ export class LiveFeed {
         `Live updates disconnected. Reconnecting in ${Math.round(wait / 1000)} s; ` +
           `data shown is as of cursor ${this.cursor ?? "none"}.`,
       );
-      this.timer = window.setTimeout(() => this.connect(), wait);
+      this.timer = window.setTimeout(() => this.connect(true), wait);
     });
   }
 
+  /** The connection's one subscribe; nothing else is ever sent on it. */
   private sendSubscribe(): void {
-    if (!this.subscription || this.socket?.readyState !== WebSocket.OPEN) return;
+    if (!this.subscription || this.sent || this.socket?.readyState !== WebSocket.OPEN) return;
+    this.sent = true;
     this.awaitingSnapshot = true;
     const message: SubscribeMessage = {
       schema_version: WIRE_SCHEMA_VERSION,
@@ -126,7 +171,7 @@ export class LiveFeed {
 
   private resync(text: string): void {
     this.handlers.status("resyncing", text);
-    this.sendSubscribe();
+    this.request();
   }
 
   /** Another wire version: stop, without resubscribing or reconnecting. */
@@ -183,6 +228,8 @@ export class LiveFeed {
         this.sequence = message.sequence;
         this.counters.deltas += 1;
         this.handlers.delta(message);
+        // Applying it can rebuild the client state from a fresh snapshot.
+        if (this.awaitingSnapshot) return;
         this.handlers.status("live", `Live. Update ${message.sequence} applied at cursor ${message.cursor}.`);
         return;
       case "resync_required":
