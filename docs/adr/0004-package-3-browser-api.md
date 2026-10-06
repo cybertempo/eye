@@ -230,22 +230,29 @@ the rest stands.
     helper `set_window` waits for one more snapshot, the live state, the new
     summary and the end of the pending transit state.
 
-19. **Post-merge repair (O65): only the answer to the latest request counts.**
-    O63 matched a snapshot to the request by area and interval, so with views
-    A, B, then A again, the late answer to the first A matched the last one:
-    the page went `live` while the later requests were outstanding, and a
-    delta following that answer (one scoped to B, say) was applied to view A.
-    The server answers each subscribe with one snapshot or one error, in
-    order, so the client now keeps at most one subscribe in flight; a newer
-    request waits for that answer and is sent next, and an answer to a
-    superseded request is dropped, with the deltas after it. A browser test
-    holds the snapshots back through A, B, A, releases the answer to the first
-    A and a stray delta after it, and checks the page stays not live and never
-    shows the stray track; the positive control is live on view A once the
-    last answer arrives. Limitation: an unsolicited change-feed error that
-    lands just before an answer is taken as that answer; the real answer is
-    then applied only if it matches the current view, so at worst correct
-    data for the right view is shown slightly early.
+19. **Post-merge repair (O65): one connection per request.** O63 matched a
+    snapshot to the request by area and interval, so with views A, B, then A
+    again, the late answer to the first A matched the last one: the page went
+    `live` while the later requests were outstanding, and a delta following
+    that answer (one scoped to B, say) was applied to view A. Keeping one
+    subscribe in flight did not close it: wire v3 errors carry no request,
+    and the previous feed's 503 (change feed unreadable) could be taken for
+    the answer in flight, freeing the first A's late answer to pass as the
+    last one. Each request (new view, bounded-state rebuild, resync or
+    reconnect) now has its own WebSocket connection carrying exactly one
+    subscribe, so the connection identifies the request with no wire change.
+    A request made while that connection is still opening replaces what it
+    will send; after it has sent, a new request closes it and opens another.
+    Every event of a replaced connection (open, snapshot, error, delta) is
+    ignored. Browser tests: A–B–A with the first A's late answer and a stray
+    delta after it; A–B–A with the old feed's 503 before that answer; a
+    genuine 413 refusal on the new connection, which reads stale instead of
+    waiting, and a held refusal superseded by a newer request, which is then
+    sent and applied; the bounded-state rebuild on a new connection, with the
+    old connection's late delta ignored. Each has a positive control that is
+    live with the latest view's data. Cost: one connection handshake per view
+    change, within `api.max_websockets` because the replaced connection is
+    closed first.
 
 ## Consequences
 

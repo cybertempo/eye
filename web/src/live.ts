@@ -11,11 +11,14 @@
 // the feed out of "live" at once: the data on the page belongs to the previous
 // view until a snapshot for the requested view is applied.
 //
-// The server answers each subscribe with one snapshot or one error, in order.
-// At most one subscribe is in flight; a newer request waits for that answer
-// and is sent next. Only the answer to the latest request is applied: an answer
-// to a superseded request is dropped, even when it is for the same view as the
-// latest one (views A, B, then A again), and so are the deltas that follow it.
+// Each request (a new view, a rebuild, a resync or a reconnect) has its own
+// connection, which carries exactly one subscribe; the connection identifies
+// the request. A request made while that connection is still opening replaces
+// what it will send; a request after it has sent closes it and opens another.
+// Everything a replaced connection delivers afterwards (its open, a snapshot
+// or error answering an earlier request, a change-feed error, a delta) is
+// ignored, so only the latest request's answer and feed reach the page, even
+// for the same view asked twice (views A, B, then A again).
 //
 // A message in another wire version is not a gap: resubscribing or
 // reconnecting would get the same answer again. The feed halts, keeps the data
@@ -50,19 +53,10 @@ export interface Subscription {
 
 const MAX_BACKOFF_MS = 30_000;
 
-function sameView(message: SnapshotMessage, wanted: Subscription | null): boolean {
-  if (!wanted) return false;
-  return (
-    message.interval.start === wanted.interval.start &&
-    message.interval.end === wanted.interval.end &&
-    message.area.bbox.every((value, index) => value === wanted.bbox[index])
-  );
-}
-
 export class LiveFeed {
   private socket: WebSocket | null = null;
+  private sent = false; // this.socket has carried its one subscribe
   private subscription: Subscription | null = null;
-  private inFlight: Subscription | null = null; // the subscribe sent and not yet answered
   private cursor: string | null = null;
   private sequence = 0;
   private awaitingSnapshot = true;
@@ -82,34 +76,55 @@ export class LiveFeed {
     if (this.halted) return; // only a reload can speak the server's version
     if (fresh) {
       this.cursor = null;
-      this.awaitingSnapshot = true;
       this.handlers.status(
         "resyncing",
         "Loading the requested view; the data shown is from the previous view until its snapshot arrives.",
       );
     }
-    if (this.socket?.readyState === WebSocket.OPEN) this.sendSubscribe();
-    else if (!this.socket) this.connect();
+    this.request();
   }
 
   stop(): void {
     window.clearTimeout(this.timer);
     this.subscription = null;
-    this.inFlight = null;
     this.socket?.close(1000, "page closed");
     this.socket = null;
     this.handlers.status("stopped", "Live updates stopped.");
   }
 
-  private connect(): void {
-    this.handlers.status(this.counters.reconnects > 0 ? "reconnecting" : "connecting", "Connecting to live updates…");
+  /**
+   * Ask for the current subscription on a connection that has carried no other
+   * request: the one still opening (it sends the latest subscription when it
+   * opens), or a new one in place of a connection that has already been used.
+   */
+  private request(): void {
+    if (!this.subscription) return;
+    this.awaitingSnapshot = true;
+    if (this.socket && !this.sent) {
+      this.sendSubscribe(); // waits for "open" if the connection is still opening
+      return;
+    }
+    window.clearTimeout(this.timer);
+    const used = this.socket;
+    this.socket = null; // its late events are ignored from here on
+    used?.close(1000, "replaced by a new request");
+    this.connect(used === null);
+  }
+
+  private connect(announce: boolean): void {
+    if (announce) {
+      this.handlers.status(this.counters.reconnects > 0 ? "reconnecting" : "connecting", "Connecting to live updates…");
+    }
     const socket = new WebSocket(this.url);
     this.socket = socket;
+    this.sent = false;
     socket.addEventListener("open", () => {
+      if (this.socket !== socket) return;
       this.backoff = 1000;
       this.sendSubscribe();
     });
     socket.addEventListener("message", (event: MessageEvent) => {
+      if (this.socket !== socket) return; // a replaced connection answers nothing current
       if (typeof event.data !== "string") {
         this.refuse("binary message");
         return;
@@ -119,7 +134,6 @@ export class LiveFeed {
     socket.addEventListener("close", () => {
       if (this.socket !== socket) return;
       this.socket = null;
-      this.inFlight = null; // a new socket starts with a new subscribe
       if (!this.subscription || this.halted) return;
       this.counters.reconnects += 1;
       this.awaitingSnapshot = true;
@@ -130,15 +144,15 @@ export class LiveFeed {
         `Live updates disconnected. Reconnecting in ${Math.round(wait / 1000)} s; ` +
           `data shown is as of cursor ${this.cursor ?? "none"}.`,
       );
-      this.timer = window.setTimeout(() => this.connect(), wait);
+      this.timer = window.setTimeout(() => this.connect(true), wait);
     });
   }
 
+  /** The connection's one subscribe; nothing else is ever sent on it. */
   private sendSubscribe(): void {
-    if (!this.subscription || this.socket?.readyState !== WebSocket.OPEN) return;
+    if (!this.subscription || this.sent || this.socket?.readyState !== WebSocket.OPEN) return;
+    this.sent = true;
     this.awaitingSnapshot = true;
-    if (this.inFlight) return; // sent when the request in flight is answered
-    this.inFlight = this.subscription;
     const message: SubscribeMessage = {
       schema_version: WIRE_SCHEMA_VERSION,
       kind: "subscribe",
@@ -152,14 +166,12 @@ export class LiveFeed {
 
   private refuse(detail: string): void {
     this.counters.refused += 1;
-    // An invalid message may have been the answer in flight; ask again either way.
-    this.inFlight = null;
     this.resync(`Refused an invalid message (${detail}); requesting a fresh snapshot.`);
   }
 
   private resync(text: string): void {
     this.handlers.status("resyncing", text);
-    this.sendSubscribe();
+    this.request();
   }
 
   /** Another wire version: stop, without resubscribing or reconnecting. */
@@ -170,7 +182,6 @@ export class LiveFeed {
     window.clearTimeout(this.timer);
     const socket = this.socket;
     this.socket = null;
-    this.inFlight = null;
     socket?.close(1000, "wire version mismatch");
     this.handlers.status(
       "incompatible",
@@ -178,25 +189,6 @@ export class LiveFeed {
         `stopped and the data shown may be out of date as of cursor ${this.cursor ?? "none"}. ` +
         "Reload the page to continue.",
     );
-  }
-
-  /**
-   * Whether a snapshot is the answer to the latest request. An answer to a
-   * superseded request is dropped and the latest request is sent in its place.
-   */
-  private answersLatest(message: SnapshotMessage): boolean {
-    const asked = this.inFlight;
-    if (!asked) return sameView(message, this.subscription); // a resnapshot of the active subscription
-    if (!sameView(message, asked)) return false; // sent before the request in flight was answered
-    return this.answered(asked);
-  }
-
-  /** The request in flight has its answer: true if no newer request is waiting. */
-  private answered(asked: Subscription): boolean {
-    this.inFlight = null;
-    if (asked === this.subscription) return true;
-    this.sendSubscribe();
-    return false;
   }
 
   private receive(text: string): void {
@@ -214,7 +206,6 @@ export class LiveFeed {
     }
     switch (message.kind) {
       case "snapshot":
-        if (!this.answersLatest(message)) return; // the latest request's answer is still to come
         this.cursor = message.cursor;
         this.sequence = 0;
         this.awaitingSnapshot = false;
@@ -253,10 +244,8 @@ export class LiveFeed {
       case "error":
         // Either the live feed failed or the request was refused. Until a new
         // snapshot arrives nothing on the page is current: say so, and ignore
-        // any delta, which would have no baseline. A refusal of a superseded
-        // request only lets the latest one be sent.
+        // any delta, which would have no baseline.
         this.awaitingSnapshot = true;
-        if (this.inFlight && !this.answered(this.inFlight)) return;
         this.handlers.status(
           "stale",
           `Live updates stopped (${message.status}: ${message.error}). The data shown may be out of ` +

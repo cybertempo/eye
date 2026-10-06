@@ -7,6 +7,7 @@ an accepted control next to it.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 
@@ -389,9 +390,10 @@ def test_a_dropped_delta_is_detected_and_recovered(api_server, page):
 def test_an_invalid_live_message_is_refused(api_server, page):
     api = api_server()
 
+    sent = []  # once per test: every refusal opens a new connection
+
     def relay(client):
         server = client.connect_to_server()
-        sent = []
 
         def from_server(message):
             client.send(message)
@@ -702,46 +704,76 @@ def test_invalid_resync_snapshot_does_not_clear_the_banner(api_server, page):
 # --- O63: a new view is not live until its own snapshot is applied ------------------------------
 
 
-class SnapshotGate:
-    """Relays the live socket; holds snapshots back while ``hold`` is set.
+def _deliver(client, message) -> None:
+    """Send to the page on one connection. A connection the page has closed may
+    refuse it; the page must ignore such a message either way."""
+    with contextlib.suppress(Exception):  # delivery to a closed route
+        client.send(message)
 
-    ``inject`` sends the page sequenced deltas the server never produced, so a
-    test can push the client's bounded state over its limit.
+
+class SnapshotGate:
+    """Relays each live connection; holds snapshots (and errors) back on request.
+
+    Playwright calls the gate once per WebSocket connection. Every held message
+    stays bound to the connection it came from and is released to that one, so
+    a test can deliver an old connection's late answer after the page has moved
+    on. ``inject`` sends the current connection sequenced deltas the server
+    never produced, so a test can push the client's bounded state over its limit.
     """
 
     def __init__(self) -> None:
-        self.client = self.server = None
+        self.connections: list = []  # (client, server) per connection, oldest first
         self.hold = False
-        self.held: list = []
+        self.hold_errors = False
+        self.held: list = []  # (client, message)
         self.last_snapshot: dict | None = None
         self.injected = 0
         self.cursor: str | None = None
+        self.refuse_next = 0  # rewrite this many subscribes so the server refuses them
+        self.refused = 0
+
+    @property
+    def client(self):
+        return self.connections[-1][0]
 
     def __call__(self, client) -> None:
-        self.client = client
-        self.server = client.connect_to_server()
-        self.server.on_message(self._from_server)
-        client.on_message(lambda message: self.server.send(message))
+        server = client.connect_to_server()
+        self.connections.append((client, server))
+        server.on_message(lambda message: self._from_server(client, message))
+        client.on_message(lambda message: self._to_server(server, message))
 
-    def _from_server(self, message) -> None:
+    def _to_server(self, server, message) -> None:
+        if self.refuse_next and isinstance(message, str) and '"kind":"subscribe"' in message:
+            # A genuine refusal by the real server: an interval past its limit (413).
+            self.refuse_next -= 1
+            self.refused += 1
+            data = json.loads(message)
+            data["interval"] = {"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z"}
+            message = json.dumps(data)
+        server.send(message)
+
+    def _from_server(self, client, message) -> None:
         if isinstance(message, str) and '"kind":"snapshot"' in message:
             if self.hold:
-                self.held.append(message)
+                self.held.append((client, message))
                 return
             self.last_snapshot = json.loads(message)
-        self.client.send(message)
+        if isinstance(message, str) and '"kind":"error"' in message and self.hold_errors:
+            self.held.append((client, message))
+            return
+        _deliver(client, message)
 
     def release(self) -> None:
-        self.hold = False
-        for message in self.held:
-            self.client.send(message)
+        self.hold = self.hold_errors = False
+        for client, message in self.held:
+            _deliver(client, message)
         self.held.clear()
 
-    def release_one(self) -> dict:
-        """Pass on the oldest held snapshot; later ones stay held."""
-        message = self.held.pop(0)
-        self.client.send(message)
-        return json.loads(message)
+    def release_one(self) -> tuple:
+        """Pass on the oldest held message to its own connection; later ones stay held."""
+        client, message = self.held.pop(0)
+        _deliver(client, message)
+        return client, json.loads(message)
 
     def inject(self, deltas: int, per_delta: int, prefix: str) -> None:
         """Send ``deltas`` sequenced deltas following the last one sent."""
@@ -840,10 +872,31 @@ def test_bounded_state_rebuild_is_not_live_until_its_snapshot_is_applied(api_ser
     expect(status).to_have_attribute("data-deltas", "2", timeout=WAIT)
     _banner_cleared(page)
     expect(tracks).to_contain_text("BOUND-2-399")
-    # Past the client's 1000-track bound: it clears its state and resubscribes.
+    # Past the client's 1000-track bound: it clears its state and resubscribes,
+    # on a new connection.
+    connections = len(gate.connections)
+    old = gate.client
     gate.hold = True
     gate.inject(1, 400, "BOUND")
     _wait_until_held(page, gate)
+    assert len(gate.connections) == connections + 1
+    # The old connection's next delta, after the rebuild, reaches nothing.
+    template = dict(gate.last_snapshot["tracks"][0], id="LATE-1", source_record_id="LATE")
+    _deliver(
+        old,
+        json.dumps(
+            {
+                "schema_version": gate.last_snapshot["schema_version"],
+                "kind": "delta",
+                "sequence": gate.injected + 1,
+                "cursor": "LATE-cursor",
+                "previous_cursor": gate.cursor,
+                "tracks_upserted": [template],
+                "events_upserted": [],
+                "coverage_upserted": [],
+            }
+        ),
+    )
     page.wait_for_timeout(500)
     # Negative: the cleared state is being rebuilt, so the page is not live.
     _banner_shown(page, "resyncing")
@@ -855,6 +908,7 @@ def test_bounded_state_rebuild_is_not_live_until_its_snapshot_is_applied(api_ser
     assert int(status.get_attribute("data-snapshots")) == int(snapshots) + 1
     expect(tracks).to_contain_text("SYNV-0020")
     expect(tracks).not_to_contain_text("BOUND-")
+    expect(tracks).not_to_contain_text("LATE-")
     assert page.locator("#view-summary").inner_text() == summary
 
 
@@ -864,10 +918,29 @@ def _show(page, start: str, hours: int) -> None:
     page.get_by_role("button", name="Show interval").click()
 
 
+def _aba(page, gate: SnapshotGate, start: str, hours: int) -> None:
+    """Views A, B, then A again, with every snapshot held. Each request is
+    sent before the next click (the page merges requests made while a new
+    connection is still opening, which would never send the first A or B)."""
+    gate.hold = True
+    _show(page, start, hours)  # A (the view already shown)
+    _wait_until_held(page, gate)  # its answer exists: the first A was sent
+    _show(page, "2026-01-01T00:00:00Z", 2)  # B
+    page.wait_for_timeout(500)
+    _show(page, start, hours)  # A again: only this request's answer counts
+    page.wait_for_timeout(500)
+
+
+def _view_a(page):
+    view_a = page.locator("#view-summary").inner_text()
+    start, end = re.search(r"(\S+Z) to (\S+Z)", view_a).groups()
+    return view_a, start, end, int(end[11:13]) - int(start[11:13])
+
+
 def test_superseded_answer_for_the_same_view_is_not_live(api_server, page):
-    """O65: views A, B, then A again. The answer to the first A is not the answer
-    to the last one: the page stays not live, and a delta that follows it (here,
-    one scoped to B) is never applied to view A."""
+    """O65: views A, B, then A again. The late answer to the first A is not the
+    answer to the last one: the page stays not live, and a delta that follows it
+    (here, one scoped to B) is never applied to view A."""
     api = api_server()
     gate = SnapshotGate()
     page.route_web_socket("**/api/v0/stream", gate)
@@ -876,25 +949,14 @@ def test_superseded_answer_for_the_same_view_is_not_live(api_server, page):
     status = page.locator("#live-status")
     tracks = page.locator("#track-facts")
     summary = page.locator("#view-summary")
-    view_a = summary.inner_text()
-    start, end = re.search(r"(\S+Z) to (\S+Z)", view_a).groups()
-    hours = int(end[11:13]) - int(start[11:13])
+    view_a, start, end, hours = _view_a(page)
     snapshots = int(status.get_attribute("data-snapshots"))
-    gate.hold = True
-    _show(page, start, hours)  # A (the view already shown)
-    _show(page, "2026-01-01T00:00:00Z", 2)  # B
-    _show(page, start, hours)  # A again: only this request's answer counts
-    _wait_until_held(page, gate)
-    first = gate.release_one()  # the answer to the first A
+    _aba(page, gate, start, hours)
+    sender, first = gate.release_one()  # the late answer to the first A
     assert first["interval"] == {"start": start, "end": end}
-    page.wait_for_timeout(1000)
-    # Negative: an answer to a superseded request is not the requested view's snapshot.
-    _banner_shown(page, "resyncing")
-    assert int(status.get_attribute("data-snapshots")) == snapshots
-    # Nor is the feed following it: a delta after that snapshot's cursor, scoped
-    # to another view, must not be applied to view A.
     template = dict(first["tracks"][0], points=first["tracks"][0]["points"][:1])
-    gate.client.send(
+    _deliver(  # and a delta after its cursor, scoped to another view
+        sender,
         json.dumps(
             {
                 "schema_version": first["schema_version"],
@@ -906,19 +968,114 @@ def test_superseded_answer_for_the_same_view_is_not_live(api_server, page):
                 "events_upserted": [],
                 "coverage_upserted": [],
             }
-        )
+        ),
     )
-    page.wait_for_timeout(500)
-    _banner_shown(page, "resyncing")
-    expect(tracks).not_to_contain_text("STRAY-B")
+    page.wait_for_timeout(1000)
+    # Negative: neither is the requested view's snapshot or feed.
+    _not_live(page)
+    assert int(status.get_attribute("data-snapshots")) == snapshots
     assert status.get_attribute("data-deltas") == "0"
+    expect(tracks).not_to_contain_text("STRAY-B")
     # Positive control: the answer to the last request arrives; live, view A, no stray.
     gate.release()
     _banner_cleared(page)
+    assert int(status.get_attribute("data-snapshots")) == snapshots + 1
     assert summary.inner_text() == view_a
     expect(tracks).to_contain_text("SYNV-0020")
     expect(tracks).not_to_contain_text("STRAY-B")
     expect(tracks).not_to_contain_text("SYN-FLT-001")  # nothing of B either
+
+
+# The server's own wording when the change feed fails (stream.ChangeFeedHub._mark_stale).
+OLD_FEED_503 = {
+    "kind": "error",
+    "status": 503,
+    "error": "live updates unavailable: the change feed cannot be read; data shown may be stale",
+}
+
+
+def _not_live(page) -> None:
+    status = page.locator("#live-status")
+    expect(status).not_to_have_attribute("data-state", "live", timeout=WAIT)
+    expect(page.locator("#stale-banner")).to_be_visible()
+    assert status.get_attribute("data-state") != "live"
+
+
+def test_old_feed_error_does_not_free_a_superseded_request(api_server, page):
+    """O65: views A, B, then A again, and the previous feed reports a 503 before
+    the first A's answer. That error answers no request: the first A's answer
+    must not be taken for the last one, and the page stays not live until the
+    last A's own answer is applied."""
+    api = api_server()
+    gate = SnapshotGate()
+    page.route_web_socket("**/api/v0/stream", gate)
+    open_app(page, api)
+    _banner_cleared(page)
+    status = page.locator("#live-status")
+    summary = page.locator("#view-summary")
+    view_a, start, end, hours = _view_a(page)
+    snapshots = int(status.get_attribute("data-snapshots"))
+    version = gate.last_snapshot["schema_version"]
+    old_feed = gate.connections[0][0]  # the live feed when the first A was asked for
+    _aba(page, gate, start, hours)
+    # The previous feed fails before the first A's answer reaches the page.
+    _deliver(old_feed, json.dumps({"schema_version": version, **OLD_FEED_503}))
+    page.wait_for_timeout(500)
+    _sender, first = gate.release_one()  # the late answer to the first A
+    assert first["interval"] == {"start": start, "end": end}
+    page.wait_for_timeout(1000)
+    # Negative: still not live; the first A's answer was not applied.
+    _not_live(page)
+    assert int(status.get_attribute("data-snapshots")) == snapshots
+    # Positive control: the last A's answer arrives; live on view A.
+    gate.release()
+    _banner_cleared(page)
+    assert int(status.get_attribute("data-snapshots")) == snapshots + 1
+    assert summary.inner_text() == view_a
+    expect(page.locator("#track-facts")).to_contain_text("SYNV-0020")
+
+
+def test_a_refused_subscribe_is_shown_and_never_waits(api_server, page):
+    """Control for O65: a genuine refusal by the server is the answer to its
+    request. The page reads stale instead of waiting for a snapshot, and a
+    refused request that a newer one superseded lets the newer one through."""
+    api = api_server()
+    gate = SnapshotGate()
+    page.route_web_socket("**/api/v0/stream", gate)
+    open_app(page, api)
+    _banner_cleared(page)
+    status = page.locator("#live-status")
+    summary = page.locator("#view-summary")
+    tracks = page.locator("#track-facts")
+    view_a = summary.inner_text()
+    start, end = re.search(r"(\S+Z) to (\S+Z)", view_a).groups()
+    hours = int(end[11:13]) - int(start[11:13])
+    # The latest request refused: stale, not resyncing forever.
+    gate.refuse_next = 1
+    _show(page, "2026-01-01T00:00:00Z", 2)
+    _banner_shown(page, "stale")
+    expect(status).to_contain_text("413")
+    assert gate.refused == 1
+    assert summary.inner_text() == view_a  # the view shown is still the old one
+    # Positive control: the same request, not refused, is live with its data.
+    _show(page, "2026-01-01T00:00:00Z", 2)
+    _banner_cleared(page)
+    expect(tracks).to_contain_text("SYN-FLT-001")
+    # A refused request superseded by a newer one: the newer one is sent and applied.
+    snapshots = int(status.get_attribute("data-snapshots"))
+    gate.refuse_next = 1
+    gate.hold = gate.hold_errors = True
+    _show(page, start, hours)  # refused by the server; the refusal is held
+    _wait_until_held(page, gate)
+    assert gate.refused == 2
+    _show(page, "2026-01-01T00:00:00Z", 2)
+    page.wait_for_timeout(500)
+    _not_live(page)
+    gate.release()  # the refusal first, then the newer request's answer
+    _banner_cleared(page)
+    assert int(status.get_attribute("data-snapshots")) == snapshots + 1
+    expect(summary).to_contain_text("2026-01-01T00:00:00Z to 2026-01-01T02:00:00Z")
+    expect(tracks).to_contain_text("SYN-FLT-001")
 
 
 # --- O50 and O51: layered identity; contested positions -----------------------------------------
