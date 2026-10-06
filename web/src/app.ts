@@ -23,6 +23,7 @@ import {
   renderMedia,
   renderTracks,
   renderTransits,
+  renderTransitsPending,
   renderTransitsUnavailable,
 } from "./desk.js";
 import { transitsErrors } from "./facts.js";
@@ -105,6 +106,8 @@ function renderView(fit: boolean): void {
 }
 
 function applySnapshot(message: SnapshotMessage, fit: boolean): void {
+  const newWindow =
+    message.interval.start !== state.interval.start || message.interval.end !== state.interval.end;
   rendered = true;
   state.area = message.area.bbox;
   state.interval = message.interval;
@@ -118,6 +121,8 @@ function applySnapshot(message: SnapshotMessage, fit: boolean): void {
     ? `SYNTHETIC DATA. ${message.notice ?? "Invented records only."}`
     : "Data not marked synthetic.";
   byId("cursor", HTMLElement).textContent = message.cursor;
+  // The previous window's counts never sit beside this window's panels.
+  if (newWindow) renderTransitsPending(state.interval);
   renderView(fit);
 }
 
@@ -152,9 +157,12 @@ async function fetchMessage(url: string): Promise<ReturnType<typeof parseMessage
 }
 
 async function loadTransits(): Promise<void> {
-  const query = new URLSearchParams({ start: state.interval.start, end: state.interval.end });
+  const interval = state.interval;
+  const query = new URLSearchParams({ start: interval.start, end: interval.end });
   try {
     const message = await fetchMessage(`/api/v0/transits?${query.toString()}`);
+    // A newer snapshot moved the view on: its own request will render.
+    if (state.interval !== interval) return;
     if (message.kind === "error") {
       renderTransitsUnavailable(`server said ${message.status}: ${message.error}`);
       return;
@@ -174,6 +182,7 @@ async function loadTransits(): Promise<void> {
     renderTransits(message);
     renderView(false);
   } catch (error) {
+    if (state.interval !== interval) return;
     const detail = error instanceof WireValidationError ? `invalid response: ${error.errors[0] ?? ""}` : "request failed";
     renderTransitsUnavailable(detail);
   }
@@ -279,9 +288,9 @@ function setupViewForm(): void {
     hours.removeAttribute("aria-invalid");
     error.textContent = "";
     const end = new Date(Date.parse(start.value) + count * 3_600_000).toISOString().replace(".000Z", "Z");
-    state.interval = { start: start.value, end };
-    live.subscribe({ bbox: state.area, interval: state.interval, layers: state.layers }, true);
-    void loadTransits();
+    // The page keeps describing the view it shows until the requested view's
+    // snapshot is applied; that snapshot then reloads the transit counts.
+    live.subscribe({ bbox: state.area, interval: { start: start.value, end }, layers: state.layers }, true);
   });
 }
 

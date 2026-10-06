@@ -184,6 +184,21 @@ export function renderTransits(message: TransitsMessage): void {
   }
 }
 
+/** Counts for a new window are on their way: show none of the previous window's. */
+export function renderTransitsPending(interval: { start: string; end: string }): void {
+  const summary = document.getElementById("transit-summary");
+  if (summary) {
+    definitions(summary, [["Transit counts", `Pending: loading counts for ${intervalText(interval)} (UTC)`]]);
+  }
+  for (const id of ["transit-counts", "transit-crossings", "transit-coverage"]) {
+    const table = document.getElementById(id);
+    if (table instanceof HTMLTableElement) {
+      table.replaceChildren();
+      table.createCaption().textContent = "Pending: counts for this window are loading; not zero.";
+    }
+  }
+}
+
 /** Counts are unavailable: say so, and show no number that could be read as zero. */
 export function renderTransitsUnavailable(reason: string): void {
   const summary = document.getElementById("transit-summary");

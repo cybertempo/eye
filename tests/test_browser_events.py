@@ -313,12 +313,26 @@ def test_live_gap_fill_matches_a_fresh_rest_view(api_server, page, tmp_path):
 
 
 def set_window(page: Page, start: str, hours: int) -> None:
+    """Show an interval and wait until the page is live with that view's snapshot.
+
+    The summary text alone is not enough: a page that still holds the previous
+    view could show it early. Wait for one more snapshot than before the click,
+    the "live" state after it, and the transit counts for the new window.
+    """
+    status = page.locator("#live-status")
+    snapshots = int(status.get_attribute("data-snapshots"))
     page.locator("#view-start").fill(start)
     page.locator("#view-hours").fill(str(hours))
     page.get_by_role("button", name="Show interval").click()
     end = f"{start[:11]}{int(start[11:13]) + hours:02d}{start[13:]}"
+    page.wait_for_function(
+        "n => Number(document.getElementById('live-status').dataset.snapshots) > n",
+        arg=snapshots,
+        timeout=WAIT,
+    )
+    expect(status).to_have_attribute("data-state", "live", timeout=WAIT)
     expect(page.locator("#view-summary")).to_contain_text(f"{start} to {end}", timeout=WAIT)
-    expect(page.locator("#live-status")).to_have_attribute("data-state", "live", timeout=WAIT)
+    expect(page.locator("#transit-summary")).not_to_contain_text("Pending", timeout=WAIT)
 
 
 def cover_other_layers(api, tmp_path, end: str = DAY + "13:00:00Z") -> None:
