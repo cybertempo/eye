@@ -230,6 +230,23 @@ the rest stands.
     helper `set_window` waits for one more snapshot, the live state, the new
     summary and the end of the pending transit state.
 
+19. **Post-merge repair (O65): only the answer to the latest request counts.**
+    O63 matched a snapshot to the request by area and interval, so with views
+    A, B, then A again, the late answer to the first A matched the last one:
+    the page went `live` while the later requests were outstanding, and a
+    delta following that answer (one scoped to B, say) was applied to view A.
+    The server answers each subscribe with one snapshot or one error, in
+    order, so the client now keeps at most one subscribe in flight; a newer
+    request waits for that answer and is sent next, and an answer to a
+    superseded request is dropped, with the deltas after it. A browser test
+    holds the snapshots back through A, B, A, releases the answer to the first
+    A and a stray delta after it, and checks the page stays not live and never
+    shows the stray track; the positive control is live on view A once the
+    last answer arrives. Limitation: an unsolicited change-feed error that
+    lands just before an answer is taken as that answer; the real answer is
+    then applied only if it matches the current view, so at worst correct
+    data for the right view is shown slightly early.
+
 ## Consequences
 
 - Snapshots carry no events yet; the event-claim ledger is Package 4c.

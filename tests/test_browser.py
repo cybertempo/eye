@@ -737,6 +737,12 @@ class SnapshotGate:
             self.client.send(message)
         self.held.clear()
 
+    def release_one(self) -> dict:
+        """Pass on the oldest held snapshot; later ones stay held."""
+        message = self.held.pop(0)
+        self.client.send(message)
+        return json.loads(message)
+
     def inject(self, deltas: int, per_delta: int, prefix: str) -> None:
         """Send ``deltas`` sequenced deltas following the last one sent."""
         base = self.last_snapshot
@@ -850,6 +856,69 @@ def test_bounded_state_rebuild_is_not_live_until_its_snapshot_is_applied(api_ser
     expect(tracks).to_contain_text("SYNV-0020")
     expect(tracks).not_to_contain_text("BOUND-")
     assert page.locator("#view-summary").inner_text() == summary
+
+
+def _show(page, start: str, hours: int) -> None:
+    page.get_by_label("Start").fill(start)
+    page.get_by_label("Hours").fill(str(hours))
+    page.get_by_role("button", name="Show interval").click()
+
+
+def test_superseded_answer_for_the_same_view_is_not_live(api_server, page):
+    """O65: views A, B, then A again. The answer to the first A is not the answer
+    to the last one: the page stays not live, and a delta that follows it (here,
+    one scoped to B) is never applied to view A."""
+    api = api_server()
+    gate = SnapshotGate()
+    page.route_web_socket("**/api/v0/stream", gate)
+    open_app(page, api)
+    _banner_cleared(page)
+    status = page.locator("#live-status")
+    tracks = page.locator("#track-facts")
+    summary = page.locator("#view-summary")
+    view_a = summary.inner_text()
+    start, end = re.search(r"(\S+Z) to (\S+Z)", view_a).groups()
+    hours = int(end[11:13]) - int(start[11:13])
+    snapshots = int(status.get_attribute("data-snapshots"))
+    gate.hold = True
+    _show(page, start, hours)  # A (the view already shown)
+    _show(page, "2026-01-01T00:00:00Z", 2)  # B
+    _show(page, start, hours)  # A again: only this request's answer counts
+    _wait_until_held(page, gate)
+    first = gate.release_one()  # the answer to the first A
+    assert first["interval"] == {"start": start, "end": end}
+    page.wait_for_timeout(1000)
+    # Negative: an answer to a superseded request is not the requested view's snapshot.
+    _banner_shown(page, "resyncing")
+    assert int(status.get_attribute("data-snapshots")) == snapshots
+    # Nor is the feed following it: a delta after that snapshot's cursor, scoped
+    # to another view, must not be applied to view A.
+    template = dict(first["tracks"][0], points=first["tracks"][0]["points"][:1])
+    gate.client.send(
+        json.dumps(
+            {
+                "schema_version": first["schema_version"],
+                "kind": "delta",
+                "sequence": 1,
+                "cursor": "STRAY-cursor-1",
+                "previous_cursor": first["cursor"],
+                "tracks_upserted": [dict(template, id="STRAY-B-1", source_record_id="STRAY-B")],
+                "events_upserted": [],
+                "coverage_upserted": [],
+            }
+        )
+    )
+    page.wait_for_timeout(500)
+    _banner_shown(page, "resyncing")
+    expect(tracks).not_to_contain_text("STRAY-B")
+    assert status.get_attribute("data-deltas") == "0"
+    # Positive control: the answer to the last request arrives; live, view A, no stray.
+    gate.release()
+    _banner_cleared(page)
+    assert summary.inner_text() == view_a
+    expect(tracks).to_contain_text("SYNV-0020")
+    expect(tracks).not_to_contain_text("STRAY-B")
+    expect(tracks).not_to_contain_text("SYN-FLT-001")  # nothing of B either
 
 
 # --- O50 and O51: layered identity; contested positions -----------------------------------------

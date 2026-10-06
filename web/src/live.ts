@@ -9,8 +9,13 @@
 //
 // A fresh subscription (a new view, or a rebuild of cleared client state) puts
 // the feed out of "live" at once: the data on the page belongs to the previous
-// view until a snapshot for the requested view is applied. A snapshot for any
-// other view (one already in flight for an earlier request) is not applied.
+// view until a snapshot for the requested view is applied.
+//
+// The server answers each subscribe with one snapshot or one error, in order.
+// At most one subscribe is in flight; a newer request waits for that answer
+// and is sent next. Only the answer to the latest request is applied: an answer
+// to a superseded request is dropped, even when it is for the same view as the
+// latest one (views A, B, then A again), and so are the deltas that follow it.
 //
 // A message in another wire version is not a gap: resubscribing or
 // reconnecting would get the same answer again. The feed halts, keeps the data
@@ -45,9 +50,19 @@ export interface Subscription {
 
 const MAX_BACKOFF_MS = 30_000;
 
+function sameView(message: SnapshotMessage, wanted: Subscription | null): boolean {
+  if (!wanted) return false;
+  return (
+    message.interval.start === wanted.interval.start &&
+    message.interval.end === wanted.interval.end &&
+    message.area.bbox.every((value, index) => value === wanted.bbox[index])
+  );
+}
+
 export class LiveFeed {
   private socket: WebSocket | null = null;
   private subscription: Subscription | null = null;
+  private inFlight: Subscription | null = null; // the subscribe sent and not yet answered
   private cursor: string | null = null;
   private sequence = 0;
   private awaitingSnapshot = true;
@@ -80,6 +95,7 @@ export class LiveFeed {
   stop(): void {
     window.clearTimeout(this.timer);
     this.subscription = null;
+    this.inFlight = null;
     this.socket?.close(1000, "page closed");
     this.socket = null;
     this.handlers.status("stopped", "Live updates stopped.");
@@ -103,6 +119,7 @@ export class LiveFeed {
     socket.addEventListener("close", () => {
       if (this.socket !== socket) return;
       this.socket = null;
+      this.inFlight = null; // a new socket starts with a new subscribe
       if (!this.subscription || this.halted) return;
       this.counters.reconnects += 1;
       this.awaitingSnapshot = true;
@@ -120,6 +137,8 @@ export class LiveFeed {
   private sendSubscribe(): void {
     if (!this.subscription || this.socket?.readyState !== WebSocket.OPEN) return;
     this.awaitingSnapshot = true;
+    if (this.inFlight) return; // sent when the request in flight is answered
+    this.inFlight = this.subscription;
     const message: SubscribeMessage = {
       schema_version: WIRE_SCHEMA_VERSION,
       kind: "subscribe",
@@ -133,6 +152,8 @@ export class LiveFeed {
 
   private refuse(detail: string): void {
     this.counters.refused += 1;
+    // An invalid message may have been the answer in flight; ask again either way.
+    this.inFlight = null;
     this.resync(`Refused an invalid message (${detail}); requesting a fresh snapshot.`);
   }
 
@@ -149,6 +170,7 @@ export class LiveFeed {
     window.clearTimeout(this.timer);
     const socket = this.socket;
     this.socket = null;
+    this.inFlight = null;
     socket?.close(1000, "wire version mismatch");
     this.handlers.status(
       "incompatible",
@@ -158,15 +180,23 @@ export class LiveFeed {
     );
   }
 
-  /** Whether a snapshot is for the view last subscribed to. */
-  private requested(message: SnapshotMessage): boolean {
-    const wanted = this.subscription;
-    if (!wanted) return false;
-    return (
-      message.interval.start === wanted.interval.start &&
-      message.interval.end === wanted.interval.end &&
-      message.area.bbox.every((value, index) => value === wanted.bbox[index])
-    );
+  /**
+   * Whether a snapshot is the answer to the latest request. An answer to a
+   * superseded request is dropped and the latest request is sent in its place.
+   */
+  private answersLatest(message: SnapshotMessage): boolean {
+    const asked = this.inFlight;
+    if (!asked) return sameView(message, this.subscription); // a resnapshot of the active subscription
+    if (!sameView(message, asked)) return false; // sent before the request in flight was answered
+    return this.answered(asked);
+  }
+
+  /** The request in flight has its answer: true if no newer request is waiting. */
+  private answered(asked: Subscription): boolean {
+    this.inFlight = null;
+    if (asked === this.subscription) return true;
+    this.sendSubscribe();
+    return false;
   }
 
   private receive(text: string): void {
@@ -184,7 +214,7 @@ export class LiveFeed {
     }
     switch (message.kind) {
       case "snapshot":
-        if (!this.requested(message)) return; // for an earlier request: the next one is coming
+        if (!this.answersLatest(message)) return; // the latest request's answer is still to come
         this.cursor = message.cursor;
         this.sequence = 0;
         this.awaitingSnapshot = false;
@@ -223,8 +253,10 @@ export class LiveFeed {
       case "error":
         // Either the live feed failed or the request was refused. Until a new
         // snapshot arrives nothing on the page is current: say so, and ignore
-        // any delta, which would have no baseline.
+        // any delta, which would have no baseline. A refusal of a superseded
+        // request only lets the latest one be sent.
         this.awaitingSnapshot = true;
+        if (this.inFlight && !this.answered(this.inFlight)) return;
         this.handlers.status(
           "stale",
           `Live updates stopped (${message.status}: ${message.error}). The data shown may be out of ` +
