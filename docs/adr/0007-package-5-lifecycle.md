@@ -197,7 +197,7 @@ Scope:
 | A failed or uncaptured hour is unknown with no value, and the database refuses a zero for it | A covered hour with nothing seen is a genuine 0 |
 | Qualified west and failed east at the same time: 0 qualified and 3600 failed seconds, observations unknown | The same area fully qualified (one capture, or west and east both qualified): 3600 qualified seconds, an exact count |
 | A corrupted event claim, media item or observation fails `ledger-replay` and blocks pruning; bypassing that check would let it pass | Intact event, news and position ledgers are eligible |
-| A damaged, missing, truncated or altered generation, or a non-empty target, is never `verified` | A clean restore reproduces 340 named metrics and 17 manifests |
+| A damaged, missing, truncated or altered generation, or a non-empty target, is never `verified` | A clean restore reproduces 404 named metrics and 25 manifests (demo fixtures) |
 | Execution is refused when disabled, outside demo or for a non-synthetic source. A concurrent late write blocks it, and a late write after planning is caught by the recheck | An explicitly named disposable partition is pruned |
 | A direct DELETE or UPDATE, or a decision from another transaction, is refused by the database | The checked path prunes |
 | A direct same-transaction decision and pruning of an early partition, an unmanifested one, one with a late arrival, or one whose manifests were not checked valid, is refused by the database; a lateness below 48 hours is refused | The coordinator prunes an eligible partition; the same direct write succeeds once every recorded fact holds (the known limit above) |
