@@ -583,7 +583,12 @@ def test_migration_0006_leaves_earlier_history_unchanged(make_db, tmp_path):
         "event_claim_receipt",
     )
     prior = [table_digest(conn, name) for name in tables]
-    assert migrate(conn) == [6]
+    upto = tmp_path / "upto"
+    upto.mkdir()
+    for path in sorted(MIGRATIONS_DIR.glob("000[1-6]_*.sql")):
+        shutil.copy(path, upto / path.name)
+    # Exactly 0006: a later migration may add columns (0007 adds one to raw_evidence).
+    assert migrate(conn, upto) == [6]
     assert [table_digest(conn, name) for name in tables] == prior
     assert verify_replay(conn) == []
     conn.close()

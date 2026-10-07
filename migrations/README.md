@@ -17,8 +17,11 @@ Forward-only SQL files named `NNNN_lower_snake_name.sql`, applied in order by
   Each statement is sent unaltered in its own Parse message, which PostgreSQL
   refuses if it holds two commands, and PostgreSQL refuses `COMMIT` inside
   `DO`/`CALL` here. The transaction id is checked after every statement.
-- Raw evidence, observations and coverage are append-only (triggers). Deletion
-  arrives with the checked retention transition in Package 5.
+- Raw evidence, observations and coverage are append-only (triggers). Since
+  0007 the one exception is pruning a raw evidence row's **bytes** through the
+  checked retention transition: the database refuses it unless a `pruned`
+  decision in the same transaction names the batch and cites a verified
+  synthetic backup of those exact bytes. No row is ever deleted.
 
 ## Applied migrations
 
@@ -30,6 +33,7 @@ Forward-only SQL files named `NNNN_lower_snake_name.sql`, applied in order by
 | 0004 | record identity includes the layer: version history ranks within (source, layer, record, observed time); refuses a database that already holds observations, whose ids came from the earlier rule (rebuild it from raw evidence) |
 | 0005 | append-only event-claim ledger: claims (one per case version, content-derived id), receipts, and a version view ranked by publication time with conflicts left unresolved; constraints refuse motion inference as anything but a review candidate and a sourced report without evidence; new objects only, no existing row read or rewritten |
 | 0006 | append-only news and media evidence, separate from event claims: media items (one per item version, content-derived id; metadata and a link only), receipts, and a version view ranked by the source's revision time with conflicts left unresolved; constraints bound untrusted text, require a licence and attribution exactly when an item is licensed, and keep a place's role, method and precision together; new objects only, no existing row read or rewritten |
+| 0007 | derivation manifests (append-only; input batches, checksums, watermark, versions, outputs, coverage) with rollup rows that refuse a zero for unknown coverage and any coordinate; manifest validations; synthetic backup proofs; retention decisions; raw evidence may lose its bytes only through a `pruned` decision citing a verified backup (the trigger `raw_evidence_append_only` keeps its name, its function is replaced); adds a nullable column and replaces one CHECK on `eye.raw_evidence`, otherwise new objects only |
 
 Merged migrations are never edited; a change is a new file.
 
@@ -44,8 +48,10 @@ Merged migrations are never edited; a change is a new file.
 
 There is no down-migration. On the **private server**, take a verified backup
 before applying a release's migrations; if a migration must be undone, restore
-that backup and redeploy the previous release. The backup and restore drill is
-Package 5; until then this is a documented requirement, not a tested procedure.
+that backup and redeploy the previous release. Package 5 adds a **synthetic**
+backup and restore drill (`scripts/restore-drill.sh`, developer laptop or CI):
+it proves the code path on invented data, not the private backup, which is
+still a documented requirement proved on the server (Package 8).
 
 ## Commands
 

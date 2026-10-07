@@ -88,3 +88,18 @@ url_env = "EYE_DATABASE_URL"
 # Real provider adapters stay disabled until approved in
 # docs/source-policy-register.md. Package 0 has none, so this must stay empty.
 enabled = []
+
+[retention]
+# Package 5 lifecycle. Retention prunes raw evidence bytes of one partition
+# (source, layer, UTC day) only after every check passes; rows are never
+# deleted. Deletion stays disabled unless set to true, and is refused outside
+# demo mode. Nothing in setup, verify, the demo or CI enables it.
+allow_deletion = false
+# A partition stays open to late arrivals for this many hours after its day ends.
+lateness_hours = 48
+# Name of the environment variable holding the synthetic backup directory.
+# The path itself is never written in this file.
+backup_dir_env = "EYE_BACKUP_DIR"
+# Name of the environment variable holding the URL of an EMPTY loopback
+# database that `db-restore-drill` restores into (never the main database).
+restore_url_env = "EYE_RESTORE_DATABASE_URL"

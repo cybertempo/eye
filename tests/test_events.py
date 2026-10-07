@@ -594,9 +594,15 @@ def test_migration_0005_leaves_earlier_history_unchanged(make_db, tmp_path):
         "feed_change",
     )
     prior = [table_digest(conn, name) for name in tables]
-    assert migrate(conn)[0] == 5  # later migrations may follow
+    upto = tmp_path / "upto"
+    upto.mkdir()
+    for path in sorted(MIGRATIONS_DIR.glob("000[1-5]_*.sql")):
+        shutil.copy(path, upto / path.name)
+    # Exactly 0005: a later migration may add columns (0007 adds one to raw_evidence).
+    assert migrate(conn, upto) == [5]
     after = [table_digest(conn, name) for name in tables]
     assert after == prior
+    migrate(conn)  # replay verification reads every current table
     assert verify_replay(conn) == []
     conn.close()
 

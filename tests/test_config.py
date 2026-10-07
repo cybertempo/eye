@@ -154,3 +154,42 @@ def test_api_and_view_limits_are_checked(example_raw, section, key, value):
 def test_allowed_origin_accepts_an_exact_origin(example_raw):
     example_raw["api"]["allowed_origin"] = "https://eye.example.org"
     assert parse(example_raw).api.allowed_origin == "https://eye.example.org"
+
+
+# --- Package 5 retention settings ---------------------------------------------------
+
+
+def test_retention_deletion_is_off_by_default(example_raw):
+    config = parse(example_raw)
+    assert config.retention.allow_deletion is False
+    assert config.retention.lateness_hours == 48
+    assert config.retention.backup_dir_env == "EYE_BACKUP_DIR"
+    del example_raw["retention"]
+    assert parse(example_raw).retention.allow_deletion is False  # absent table: still off
+
+
+def test_retention_deletion_is_refused_outside_demo(example_raw):
+    example_raw["retention"]["allow_deletion"] = True
+    assert parse(example_raw).retention.allow_deletion is True  # control: demo may enable it
+    raw = production(example_raw, "eye_test_private_auth")
+    with pytest.raises(ConfigError, match="refused outside demo mode"):
+        parse(raw)
+    raw["retention"]["allow_deletion"] = False
+    assert parse(raw).retention.allow_deletion is False  # control: production, deletion off
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("allow_deletion", "yes", "true or false"),
+        ("lateness_hours", 0, "lateness_hours"),
+        ("backup_dir_env", "/srv/backup", "environment variable name"),
+        ("restore_url_env", "EYE_DATABASE_URL", "other than"),
+        ("unknown", 1, "unknown key"),
+    ],
+)
+def test_retention_settings_are_validated(example_raw, key, value, message):
+    assert parse(example_raw)  # control
+    example_raw["retention"][key] = value
+    with pytest.raises(ConfigError, match=message):
+        parse(example_raw)
