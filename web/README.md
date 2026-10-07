@@ -22,4 +22,9 @@ link a person may follow, never fetched, embedded or opened by the page.
 
 Build (developer laptop, CI): `scripts/setup.sh` runs `npm ci` and `npm run build`.
 The compiled `dist/` directory is not committed. Browser tests
-(`tests/test_browser.py`) drive it headless through Playwright; no window opens.
+(`tests/test_browser*.py`) drive it headless through Playwright; no window opens.
+`scripts/verify.sh` (developer laptop, CI) deletes `dist/` and rebuilds it from
+`src/` before the tests, then `scripts/check_web_dist.py` compares it file by
+file with a separate fresh build, so verify never tests JavaScript left from an
+older checkout. After changing `src/` outside verify (for example before
+`scripts/demo.sh`), rebuild with `npm run --prefix web build` (developer laptop).
