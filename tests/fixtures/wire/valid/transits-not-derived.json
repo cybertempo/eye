@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "no derivation run yet: null run and time, empty lists",
   "message": {
-    "schema_version": "eye.wire/3",
+    "schema_version": "eye.wire/4",
     "kind": "transits",
     "generated_at": "2026-02-01T16:00:00Z",
     "synthetic": true,

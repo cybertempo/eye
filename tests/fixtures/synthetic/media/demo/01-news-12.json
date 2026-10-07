@@ -1,0 +1,208 @@
+{
+  "capture_format": "eye.synthetic-media-items/1",
+  "synthetic": true,
+  "source_id": "synthetic-news",
+  "adapter_version": "synthetic-news/1",
+  "note": "Invented news and media items published 12:00-13:00: two publishers, a syndicated copy, a publisher-city location, an automated geocode, reposted old footage with unknown rights (its headline dropped by the adapter) and a licensed image.",
+  "layer": "news",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-02-01T12:00:00Z",
+    "end": "2026-02-01T13:00:00Z",
+    "expected_interval_s": 3600
+  },
+  "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every item",
+    "started_at": "2026-02-01T13:00:10Z",
+    "finished_at": "2026-02-01T13:00:10Z",
+    "provider_status": "ok",
+    "quota_cost": 0,
+    "observed_start": "2026-02-01T12:00:00Z",
+    "observed_end": "2026-02-01T13:00:00Z"
+  },
+  "provider_response": {
+    "items": [
+      {
+        "item_id": "SN-A1",
+        "kind": "article",
+        "status": "published",
+        "first_published_time": "2026-02-01T12:10:00Z",
+        "revision_time": "2026-02-01T12:10:00Z",
+        "url": "https://synthetic-daily.invalid/bridge-closure",
+        "syndicated_from": null,
+        "publisher": "Synthetic Daily",
+        "creator": "Invented Reporter",
+        "headline": "Invented: river bridge closed after invented incident",
+        "language": "en",
+        "rights": {
+          "status": "link_only"
+        },
+        "capture_time_claimed": null,
+        "place": {
+          "role": "event_place",
+          "method": "source_stated",
+          "coords": [
+            0.1,
+            0.1
+          ],
+          "precision_m": 2000
+        }
+      },
+      {
+        "item_id": "SN-B1",
+        "kind": "article",
+        "status": "published",
+        "first_published_time": "2026-02-01T12:25:00Z",
+        "revision_time": "2026-02-01T12:25:00Z",
+        "url": "https://invented-wire.invalid/bridge",
+        "syndicated_from": null,
+        "publisher": "Invented Wire",
+        "creator": null,
+        "headline": "Invented: bridge closure reported by officials",
+        "language": "en",
+        "rights": {
+          "status": "link_only"
+        },
+        "capture_time_claimed": null,
+        "place": {
+          "role": "event_place",
+          "method": "source_stated",
+          "coords": [
+            0.105,
+            0.1
+          ],
+          "precision_m": 3000
+        }
+      },
+      {
+        "item_id": "SN-C1",
+        "kind": "article",
+        "status": "published",
+        "first_published_time": "2026-02-01T12:30:00Z",
+        "revision_time": "2026-02-01T12:30:00Z",
+        "url": "https://invented-regional.invalid/wire/bridge",
+        "syndicated_from": "https://synthetic-daily.invalid/bridge-closure",
+        "publisher": "Invented Regional",
+        "creator": null,
+        "headline": "Invented: river bridge closed after invented incident",
+        "language": "en",
+        "rights": {
+          "status": "link_only"
+        },
+        "capture_time_claimed": null,
+        "place": null
+      },
+      {
+        "item_id": "SN-W1",
+        "kind": "article",
+        "status": "published",
+        "first_published_time": "2026-02-01T12:35:00Z",
+        "revision_time": "2026-02-01T12:35:00Z",
+        "url": "https://capital-times.invalid/far-away-storm",
+        "syndicated_from": null,
+        "publisher": "Invented Capital Times",
+        "creator": null,
+        "headline": "Invented: storm damage reported in another region",
+        "language": "en",
+        "rights": {
+          "status": "link_only"
+        },
+        "capture_time_claimed": null,
+        "place": {
+          "role": "publisher_location",
+          "method": "source_stated",
+          "coords": [
+            0.3,
+            0.3
+          ],
+          "precision_m": 5000
+        }
+      },
+      {
+        "item_id": "SN-G1",
+        "kind": "article",
+        "status": "published",
+        "first_published_time": "2026-02-01T12:40:00Z",
+        "revision_time": "2026-02-01T12:40:00Z",
+        "url": "https://aggregator.invalid/item/771",
+        "syndicated_from": null,
+        "publisher": "Invented Aggregator",
+        "creator": null,
+        "headline": "Invented: gathering reported near the old square",
+        "language": "en",
+        "rights": {
+          "status": "link_only"
+        },
+        "capture_time_claimed": null,
+        "place": {
+          "role": "event_place",
+          "method": "automated_geocode",
+          "coords": [
+            -0.2,
+            0.2
+          ],
+          "precision_m": 25000
+        }
+      },
+      {
+        "item_id": "SN-V1",
+        "kind": "video",
+        "status": "published",
+        "first_published_time": "2026-02-01T12:45:00Z",
+        "revision_time": "2026-02-01T12:45:00Z",
+        "url": "https://clips.invalid/watch/abc123",
+        "syndicated_from": null,
+        "publisher": "Invented Clips",
+        "creator": null,
+        "headline": null,
+        "language": "en",
+        "rights": {
+          "status": "unknown"
+        },
+        "capture_time_claimed": "2024-05-01T09:00:00Z",
+        "place": {
+          "role": "event_place",
+          "method": "source_stated",
+          "coords": [
+            0.2,
+            -0.1
+          ],
+          "precision_m": 1000
+        }
+      },
+      {
+        "item_id": "SN-P1",
+        "kind": "image",
+        "status": "published",
+        "first_published_time": "2026-02-01T12:50:00Z",
+        "revision_time": "2026-02-01T12:50:00Z",
+        "url": "https://commons.invalid/file/bridge.jpg",
+        "syndicated_from": null,
+        "publisher": "Invented Commons",
+        "creator": "Invented Photographer",
+        "headline": "Invented: closed bridge seen from the east bank",
+        "language": "en",
+        "rights": {
+          "status": "licensed",
+          "licence": "CC-BY-4.0",
+          "attribution": "Invented Photographer / Invented Commons, CC BY 4.0"
+        },
+        "capture_time_claimed": "2026-02-01T12:05:00Z",
+        "place": {
+          "role": "event_place",
+          "method": "source_stated",
+          "coords": [
+            0.1,
+            0.1
+          ],
+          "precision_m": 500
+        }
+      }
+    ]
+  }
+}

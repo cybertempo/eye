@@ -23,6 +23,7 @@ from eye.wire import (
     SCHEMA_VERSION,
     V1_SCHEMA_PATH,
     V2_SCHEMA_PATH,
+    V3_SCHEMA_PATH,
     WireValidationError,
     load_schema,
     validate_message,
@@ -40,10 +41,10 @@ SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 # is not asked about these; both EYE validators must refuse them.
 RAW_INVALID = {
     "not-json": "{not json",
-    "nan-number": '{"schema_version":"eye.wire/3","kind":"error","status":NaN,"error":"x"}',
+    "nan-number": '{"schema_version":"eye.wire/4","kind":"error","status":NaN,"error":"x"}',
     "trailing-newline-in-timestamp": json.dumps(
         {
-            "schema_version": "eye.wire/3",
+            "schema_version": "eye.wire/4",
             "kind": "resync_required",
             "reason": "gap",
             "last_cursor": "c-0001\n",
@@ -51,7 +52,7 @@ RAW_INVALID = {
     ),
 }
 RAW_VALID = {
-    "health": '{"schema_version":"eye.wire/3","kind":"health","status":"ok",'
+    "health": '{"schema_version":"eye.wire/4","kind":"health","status":"ok",'
     '"mode":"demo","synthetic":true}',
 }
 
@@ -236,6 +237,11 @@ FROZEN = {
         "63fa0917ef2fe5dc1fa57bc4bab8adf7c844bd5a3453be6b349a1aeaa1e5d149",
         REPO_ROOT / "tests" / "fixtures" / "wire-v2",
     ),
+    "eye.wire/3": (
+        V3_SCHEMA_PATH,
+        "6c3a3c89d294d7e0e7f42a5e334177c29bab94cf74869afe6077746fb6561c20",
+        REPO_ROOT / "tests" / "fixtures" / "wire-v3",
+    ),
 }
 
 
@@ -249,20 +255,46 @@ def frozen_valid(version: str, entry: str, message: object) -> bool:
     return python
 
 
+MEDIA_KEYS = ("media", "media_suggestions", "media_upserted")
+
+
 def relabel(message: dict, version: str) -> dict:
-    return {**copy.deepcopy(message), "schema_version": version}
+    """The message under another version label. For an earlier version the
+    empty media arrays eye.wire/4 added are dropped (they are the new shape,
+    tested separately); for the current version they are added."""
+    out = {**copy.deepcopy(message), "schema_version": version}
+    if version == SCHEMA_VERSION:
+        if out.get("kind") == "snapshot":
+            out = {**out, "media": out.get("media", []), "media_suggestions": []}
+        if out.get("kind") == "delta":
+            out = {**out, "media_upserted": out.get("media_upserted", [])}
+    else:
+        for key in MEDIA_KEYS:
+            if out.get(key) == []:
+                del out[key]
+    return out
 
 
 def has_events(message: dict) -> bool:
     return bool(message.get("events") or message.get("events_upserted"))
 
 
+def has_media(message: dict) -> bool:
+    return any(message.get(key) for key in MEDIA_KEYS)
+
+
 def new_since(version: str, message: dict) -> bool:
     """Shapes the given earlier version cannot carry.
 
     eye.wire/2 added conflict tracks and transit counts; eye.wire/3 replaced
-    the event shape with event-ledger cases.
+    the event shape with event-ledger cases; eye.wire/4 added news and media
+    items, their suggestions and news coverage rows.
     """
+    news = any(c.get("layer") == "news" for c in message.get("coverage", []))
+    if has_media(message) or news:
+        return True
+    if version == "eye.wire/3":
+        return False
     if has_events(message):
         return True
     if version == "eye.wire/2":
@@ -278,7 +310,7 @@ def test_earlier_schema_is_the_merged_file_unchanged(version):
     path, sha, _ = FROZEN[version]
     assert hashlib.sha256(path.read_bytes()).hexdigest() == sha
     assert json.loads(path.read_text())["$defs"]["SchemaVersion"]["const"] == version
-    assert SCHEMA["$defs"]["SchemaVersion"]["const"] == SCHEMA_VERSION == "eye.wire/3"
+    assert SCHEMA["$defs"]["SchemaVersion"]["const"] == SCHEMA_VERSION == "eye.wire/4"
     assert path != SCHEMA_PATH
 
 
@@ -309,12 +341,15 @@ def test_earlier_validator_refuses_every_current_message(version):
 def test_new_shapes_are_refused_by_earlier_versions_even_relabelled(version):
     """The new shapes, not only the label, are what an earlier version cannot carry."""
     new = [p for p in VALID if new_since(version, case(p)["message"])]
-    assert {p.stem for p in new} >= {
-        "event-review-candidate",
-        "event-unresolved-conflict",
-        "event-linked-with-last-observed",
-        "snapshot",
-    }
+    expected = {"media-snapshot", "media-delta"}
+    if version != "eye.wire/3":
+        expected |= {
+            "event-review-candidate",
+            "event-unresolved-conflict",
+            "event-linked-with-last-observed",
+            "snapshot",
+        }
+    assert {p.stem for p in new} >= expected
     for path in new:
         test = case(path)
         assert not frozen_valid(version, test["entry"], relabel(test["message"], version)), (
@@ -338,7 +373,7 @@ def test_current_validator_refuses_earlier_messages(version):
             validate_message(json.dumps(test["message"]), test["entry"])
         assert wire_version_of(json.dumps(test["message"])) == version
         relabelled = relabel(test["message"], SCHEMA_VERSION)
-        if has_events(test["message"]):
+        if has_events(test["message"]) and version != "eye.wire/3":
             # The old event shape is exactly what version 3 replaced.
             with pytest.raises(WireValidationError):
                 validate_message(json.dumps(relabelled), test["entry"])
@@ -373,3 +408,22 @@ def test_server_limits_match_the_schema():
         props = defs[shape]["properties"]
         assert props["conflicts"]["maxItems"] == feed.MAX_TRACK_CONFLICTS
     assert defs["TrackRouted"]["properties"]["points"]["maxItems"] == feed.MAX_TRACK_POINTS
+
+
+def test_media_limits_match_the_schema():
+    from eye.api import media
+    from eye.ingest import media_items
+
+    defs = SCHEMA["$defs"]
+    assert defs["MediaItem"]["properties"]["versions"]["maxItems"] == media.MAX_ITEM_VERSIONS
+    version = defs["MediaVersion"]["properties"]
+    assert version["evidence_batch_ids"]["maxItems"] == media.MAX_EVIDENCE
+    assert version["headline"]["maxLength"] == media_items.MAX_HEADLINE
+    assert defs["MediaName"]["maxLength"] == media_items.MAX_NAME
+    assert defs["HttpsUrl"]["maxLength"] == media_items.MAX_URL
+    snapshot = defs["SnapshotMessage"]["properties"]
+    assert snapshot["media_suggestions"]["maxItems"] == media.MAX_SUGGESTIONS
+    assert set(defs["MediaPlace"]["properties"]["role"]["enum"]) == media_items.PLACE_ROLES
+    assert set(defs["MediaPlace"]["properties"]["method"]["enum"]) == media_items.PLACE_METHODS
+    kinds = defs["MediaItem"]["properties"]["kind"]["enum"]
+    assert set(kinds) == media_items.KINDS

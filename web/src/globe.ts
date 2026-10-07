@@ -6,8 +6,16 @@
 // they never change a stored position, a count or any text in the fact tables.
 // This is an illustrative view, not a measurement surface.
 
-import { eventErrors, routeRuns } from "./facts.js";
-import type { BBox, EventCase, EventClaim, Position, Track, TrackPoint } from "./generated/wire-types.js";
+import { eventErrors, mediaDrawable, mediaErrors, shownVersion, routeRuns } from "./facts.js";
+import type {
+  BBox,
+  EventCase,
+  EventClaim,
+  MediaItem,
+  Position,
+  Track,
+  TrackPoint,
+} from "./generated/wire-types.js";
 
 export type Preset = "low" | "balanced" | "high";
 
@@ -32,6 +40,8 @@ const RAD = Math.PI / 180;
 export interface GlobeData {
   tracks: readonly Track[];
   events: readonly EventCase[];
+  media: readonly MediaItem[];
+  interval: { start: string; end: string };
   area: BBox | null;
   line: readonly [Position, Position] | null;
 }
@@ -54,7 +64,14 @@ export class Globe {
   private lat = 0;
   private zoom = 1;
   private preset: Preset = "balanced";
-  private data: GlobeData = { tracks: [], events: [], area: null, line: null };
+  private data: GlobeData = {
+    tracks: [],
+    events: [],
+    media: [],
+    interval: { start: "1970-01-01T00:00:00Z", end: "1970-01-01T00:00:00Z" },
+    area: null,
+    line: null,
+  };
   private home: { lon: number; lat: number; zoom: number } = { lon: 0, lat: 0, zoom: 1 };
 
   constructor(private readonly canvas: HTMLCanvasElement, private readonly onChange: (text: string) => void) {}
@@ -166,6 +183,38 @@ export class Globe {
       };
     }
     this.canvas.dataset.eventMarks = JSON.stringify(marks);
+  }
+
+  /**
+   * News and media: only a place the source itself states as the event's
+   * place is drawn, as a dotted circle at its stated precision, never as a
+   * point, a live marker or a crowd. A publisher's location, a place merely
+   * mentioned, an automated geocode, a retracted item and an image or video
+   * captured (by its creator's claim) outside the view are not drawn.
+   */
+  private paintMedia(
+    ctx: CanvasRenderingContext2D, radius: number, colour: (name: string, fallback: string) => string,
+  ): void {
+    const marks: Record<string, { style: string; precision_m: number }> = {};
+    ctx.strokeStyle = colour("--globe-media", "#6a3d9a");
+    ctx.setLineDash([1, 3]);
+    ctx.lineWidth = 1.5;
+    for (const item of this.data.media) {
+      if (mediaErrors(item).length > 0) continue; // refused items are not drawn
+      const version = shownVersion(item);
+      if (!version || version.place === null || !mediaDrawable(item.kind, version, this.data.interval)) continue;
+      const [lon, lat] = version.place.coords;
+      const p = this.project(lon, lat, radius);
+      if (!p) continue;
+      const edge = this.project(lon, Math.min(90, lat + version.place.precision_m / 111_320), radius);
+      const size = edge ? Math.max(6, Math.hypot(edge[0] - p[0], edge[1] - p[1])) : 6;
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], size, 0, Math.PI * 2);
+      ctx.stroke();
+      marks[item.id] = { style: "approximate_area", precision_m: version.place.precision_m };
+    }
+    ctx.setLineDash([]);
+    this.canvas.dataset.mediaMarks = JSON.stringify(marks);
   }
 
   private drawLocation(ctx: CanvasRenderingContext2D, claim: EventClaim, radius: number): void {
@@ -311,6 +360,7 @@ export class Globe {
     this.canvas.dataset.routePoints = String(routePoints);
     this.canvas.dataset.claimMarkers = String(claimMarkers);
     this.paintEvents(ctx, radius, colour);
+    this.paintMedia(ctx, radius, colour);
     // What was stroked, by track id: the observed times of each drawn run.
     this.canvas.dataset.routeRuns = JSON.stringify(drawnRuns);
   }

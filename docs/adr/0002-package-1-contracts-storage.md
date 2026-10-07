@@ -1,6 +1,7 @@
 # ADR 0002: Package 1 contracts and storage
 
-Date: 2026-09-28. Status: proposed (awaiting owner review).
+Date: 2026-09-28. Status: accepted: merged to `main` in merge commit `b7ecfe9`
+(2026-09-28).
 
 ## Decisions
 

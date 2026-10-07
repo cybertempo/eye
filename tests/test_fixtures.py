@@ -64,3 +64,15 @@ def test_motion_candidate_is_never_an_accident(snapshot):
         for c in event["claims"]:
             assert c["basis"] == "motion_inference" and c["status"] == "candidate"
             assert c["kind"] not in {"aviation_accident", "marine_casualty", "road_collision"}
+
+
+def test_media_items_are_separate_synthetic_evidence(snapshot):
+    assert snapshot["media"], "fixture must contain a media item"
+    for item in snapshot["media"]:
+        assert item["source"] == "synthetic-news"
+        assert not set(item) & {"claims", "current_claim_id", "link"}  # not an event case
+        for version in item["versions"]:
+            assert version["url"].startswith("https://") and ".invalid/" in version["url"]
+            assert version["revision_time"] <= version["received_time"]
+    # A suggestion is never a merge: the fixture has none to merge.
+    assert snapshot["media_suggestions"] == []

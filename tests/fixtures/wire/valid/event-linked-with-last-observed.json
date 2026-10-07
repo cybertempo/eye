@@ -2,7 +2,7 @@
   "entry": "ServerMessage",
   "note": "a linked case: reported area and, separately, the track's last observed position",
   "message": {
-    "schema_version": "eye.wire/3",
+    "schema_version": "eye.wire/4",
     "kind": "snapshot",
     "cursor": "c-0001",
     "generated_at": "2026-01-01T01:00:00Z",
@@ -171,6 +171,8 @@
         }
       }
     ],
+    "media": [],
+    "media_suggestions": [],
     "coverage": [
       {
         "layer": "flight",

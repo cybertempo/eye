@@ -2,7 +2,14 @@
 // uncertainty, timestamps, evidence IDs and source labels behind each count.
 // Values are inserted with textContent only, never as HTML.
 
-import type { Coverage, EventCase, Track, TransitsMessage } from "./generated/wire-types.js";
+import type {
+  Coverage,
+  EventCase,
+  MediaItem,
+  MediaSuggestion,
+  Track,
+  TransitsMessage,
+} from "./generated/wire-types.js";
 import {
   claimHistory,
   compareTime,
@@ -15,6 +22,17 @@ import {
   kindLabel,
   lastObservedText,
   locationText,
+  mediaAssessment,
+  mediaCoverageText,
+  mediaErrors,
+  mediaHeadlineText,
+  mediaHistory,
+  mediaMeasured,
+  mediaPlaceText,
+  mediaRightsText,
+  mediaTimeText,
+  shownVersion,
+  suggestionText,
   countFigures,
   coverageMetric,
   crossingTime,
@@ -297,5 +315,86 @@ export function renderEvents(events: readonly EventCase[], coverage: readonly Co
         "Whether any event occurred is Unknown: a report published later can still add one."
       : "No event cases shown. Reports are unknown for part of this view (see event-report coverage above), " +
         "and whether any event occurred is Unknown.",
+  );
+}
+
+/**
+ * A link to the original, for a person to follow. Only an https address is
+ * linked; nothing is fetched, embedded or opened by the page itself.
+ */
+function originalLink(url: string, syndicatedFrom: string | null): Node {
+  const out = element("div");
+  if (url.startsWith("https://")) {
+    const link = element("a", url);
+    link.href = url;
+    link.rel = "noopener noreferrer nofollow";
+    link.referrerPolicy = "no-referrer";
+    out.append(link);
+  } else {
+    out.append(document.createTextNode(`${url} (not linked: not https)`));
+  }
+  if (syndicatedFrom !== null) {
+    out.append(element("div", `Syndicated from ${syndicatedFrom}: a copy, not an independent report.`));
+  }
+  return out;
+}
+
+/**
+ * News and media evidence: one row per item, kept apart from event cases.
+ * Headlines, publishers and creators are untrusted text, inserted with
+ * textContent only. Suggestions are listed as suggestions, never merged.
+ */
+export function renderMedia(
+  items: readonly MediaItem[], suggestions: readonly MediaSuggestion[], coverage: readonly Coverage[],
+  interval: { start: string; end: string },
+): void {
+  const target = document.getElementById("media-coverage");
+  if (target) target.replaceChildren(list(mediaCoverageText(coverage)));
+  const names = new Map(items.map((m) => [m.id, `${m.source_label}: ${m.item_id}`]));
+  const suggested = document.getElementById("media-suggestions");
+  if (suggested) {
+    suggested.replaceChildren(suggestions.length === 0
+      ? element("p", "No suggested relations between items in this view.")
+      : list(suggestions.map((s) => suggestionText(s, names))));
+  }
+  const table = document.getElementById("media-facts");
+  if (!(table instanceof HTMLTableElement)) return;
+  const rows = [...items]
+    .sort((a, b) => a.source.localeCompare(b.source) || a.item_id.localeCompare(b.item_id))
+    .map((item) => {
+      const name = `${item.source_label}: ${item.item_id}`;
+      const errors = mediaErrors(item);
+      const shown = shownVersion(item);
+      if (errors.length > 0 || !shown) {
+        return {
+          cells: [name, `Refused an inconsistent item (${errors[0] ?? "no version to show"})`, "", "", "", "", "", "", ""],
+          className: "media refused",
+        };
+      }
+      return {
+        cells: [
+          name,
+          mediaAssessment(item),
+          shown.creator === null ? shown.publisher : `${shown.publisher}; by ${shown.creator}`,
+          mediaHeadlineText(shown),
+          list(mediaTimeText(shown, interval.end)),
+          mediaPlaceText(item.kind, shown, interval),
+          mediaRightsText(shown),
+          originalLink(shown.url, shown.syndicated_from),
+          list(mediaHistory(item)),
+        ],
+        className: `media standing-${item.standing} rights-${shown.rights.status}`,
+      };
+    });
+  fillTable(
+    table,
+    "News and media evidence: what each source published, with its rights and history",
+    ["Item", "What it shows", "Publisher", "Headline (untrusted text)", "Times", "Place", "Reuse rights",
+      "Original", "History (every version)"],
+    rows,
+    mediaMeasured(coverage)
+      ? "No news or media items: the covered sources published none in their reporting windows. " +
+        "That does not mean nothing happened."
+      : "No news or media items shown. News is unknown for part of this view: see news coverage above.",
   );
 }

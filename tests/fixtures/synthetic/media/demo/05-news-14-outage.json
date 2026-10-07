@@ -1,0 +1,29 @@
+{
+  "capture_format": "eye.synthetic-media-items/1",
+  "synthetic": true,
+  "source_id": "synthetic-news",
+  "adapter_version": "synthetic-news/1",
+  "note": "The news source timed out for 14:00-15:00: coverage failed, not 'no news'.",
+  "layer": "news",
+  "request": {
+    "bbox": [
+      -0.5,
+      -0.5,
+      0.5,
+      0.5
+    ],
+    "start": "2026-02-01T14:00:00Z",
+    "end": "2026-02-01T15:00:00Z",
+    "expected_interval_s": 3600
+  },
+  "attempt": {
+    "written_by": "EYE capture adapter; finished_at is the EYE receipt time for every item",
+    "started_at": "2026-02-01T15:00:10Z",
+    "finished_at": "2026-02-01T15:00:10Z",
+    "provider_status": "timeout",
+    "quota_cost": 0
+  },
+  "provider_response": {
+    "items": []
+  }
+}

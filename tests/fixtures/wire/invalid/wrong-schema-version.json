@@ -127,6 +127,8 @@
         "last_observed_position": null
       }
     ],
+    "media": [],
+    "media_suggestions": [],
     "coverage": [
       {
         "layer": "flight",

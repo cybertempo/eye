@@ -9,6 +9,8 @@ import type {
   Coverage,
   DeltaMessage,
   EventCase,
+  MediaItem,
+  MediaSuggestion,
   Interval,
   Position,
   SnapshotMessage,
@@ -18,6 +20,7 @@ import type {
 import {
   renderCoverage,
   renderEvents,
+  renderMedia,
   renderTracks,
   renderTransits,
   renderTransitsPending,
@@ -32,6 +35,7 @@ import { parseMessage, WireValidationError, wireVersionOf } from "./wire-validat
 const MAX_TRACKS = 1000; // client-side bound, equal to the server's wire limit
 const MAX_COVERAGE = 1000;
 const MAX_EVENTS = 1000; // client-side bound, equal to the server's wire limit
+const MAX_MEDIA = 500; // client-side bound, equal to the server's wire limit
 const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 
 interface ViewState {
@@ -40,6 +44,8 @@ interface ViewState {
   layers: SubscribeMessage["layers"];
   tracks: Map<string, Track>;
   events: Map<string, EventCase>;
+  media: Map<string, MediaItem>;
+  suggestions: MediaSuggestion[];
   coverage: Map<string, Coverage>;
   line: readonly [Position, Position] | null;
 }
@@ -50,6 +56,8 @@ const state: ViewState = {
   layers: ["flight", "vessel", "road"],
   tracks: new Map(),
   events: new Map(),
+  media: new Map(),
+  suggestions: [],
   coverage: new Map(),
   line: null,
 };
@@ -85,10 +93,12 @@ let transitsTimer: number | undefined;
 function renderView(fit: boolean): void {
   const tracks = [...state.tracks.values()];
   const events = [...state.events.values()];
-  globe.setData({ tracks, events, area: state.area, line: state.line }, fit);
+  const media = [...state.media.values()];
+  globe.setData({ tracks, events, media, interval: state.interval, area: state.area, line: state.line }, fit);
   renderTracks(tracks);
   renderCoverage([...state.coverage.values()]);
   renderEvents(events, [...state.coverage.values()], state.layers);
+  renderMedia(media, state.suggestions, [...state.coverage.values()], state.interval);
   const view = byId("view-summary", HTMLElement);
   view.textContent =
     `Area [${state.area.join(", ")}], ${state.interval.start} to ${state.interval.end} (UTC), ` +
@@ -103,6 +113,8 @@ function applySnapshot(message: SnapshotMessage, fit: boolean): void {
   state.interval = message.interval;
   state.tracks = new Map(message.tracks.map((t) => [t.id, t]));
   state.events = new Map(message.events.map((e) => [e.id, e]));
+  state.media = new Map(message.media.map((m) => [m.id, m]));
+  state.suggestions = [...message.media_suggestions];
   state.coverage = new Map(message.coverage.map((c) => [coverageKey(c), c]));
   const notice = byId("notice", HTMLElement);
   notice.textContent = message.synthetic
@@ -118,12 +130,16 @@ function applyDelta(message: DeltaMessage): void {
   for (const track of message.tracks_upserted) state.tracks.set(track.id, track);
   for (const c of message.coverage_upserted) state.coverage.set(coverageKey(c), c);
   for (const event of message.events_upserted) state.events.set(event.id, event);
+  // A delta adds items only; the server resnapshots whenever suggestions change.
+  for (const item of message.media_upserted) state.media.set(item.id, item);
   byId("cursor", HTMLElement).textContent = message.cursor;
-  if (state.tracks.size > MAX_TRACKS || state.coverage.size > MAX_COVERAGE || state.events.size > MAX_EVENTS) {
+  if (state.tracks.size > MAX_TRACKS || state.coverage.size > MAX_COVERAGE || state.events.size > MAX_EVENTS ||
+      state.media.size > MAX_MEDIA) {
     // Bounded client state: past the limit, rebuild from a fresh snapshot.
     state.tracks.clear();
     state.coverage.clear();
     state.events.clear();
+    state.media.clear();
     live.subscribe({ bbox: state.area, interval: state.interval, layers: state.layers }, true);
     return;
   }
