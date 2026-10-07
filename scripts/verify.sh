@@ -27,8 +27,14 @@ step "generated wire types are current"
 step "generated synthetic AIS fixtures are current"
 "$PY" scripts/gen_ais_fixtures.py --check
 
-step "web typecheck"
-npm run --prefix web typecheck
+step "web build (typechecks, then compiles web/src into a clean web/dist)"
+# The browser tests load web/dist, so it is rebuilt from the current source
+# every run; leftovers from deleted source are removed first.
+rm -rf web/dist
+npm run --prefix web build
+
+step "web bundle matches its source"
+"$PY" scripts/check_web_dist.py
 
 step "configuration: example accepted"
 PYTHONPATH=backend "$PY" -m eye check-config --config config/eye.example.toml

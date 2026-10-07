@@ -21,5 +21,8 @@ metadata are untrusted text; a link to an original is an ordinary `https`
 link a person may follow, never fetched, embedded or opened by the page.
 
 Build (developer laptop, CI): `scripts/setup.sh` runs `npm ci` and `npm run build`.
+`scripts/verify.sh` deletes and rebuilds `dist/` on every run, then
+`scripts/check_web_dist.py` compiles `src/` afresh and refuses a `dist/` that
+differs, so the browser tests always run the current source (O66).
 The compiled `dist/` directory is not committed. Browser tests
 (`tests/test_browser.py`) drive it headless through Playwright; no window opens.
