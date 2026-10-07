@@ -1057,6 +1057,10 @@ def validate(
         needed = [n for n in required(partition, lines) if ledger or n[0] != LEDGER]
     except RollupRefused as exc:
         return [ManifestCheck(partition, "-", "", None, "failed", str(exc))]
+    if partition.source_id == transits.SOURCE_ID and partition.layer == "vessel" and not lines:
+        # Transit counts are this source's purpose; never prune without them.
+        reason = "no count line is configured, so no transit count can be checked"
+        return [ManifestCheck(partition, TRANSIT, "", None, "failed", reason)]
     if not own_snapshot:
         return [check(conn, partition, d, s, lines) for d, s in needed]
     with snapshot(conn):

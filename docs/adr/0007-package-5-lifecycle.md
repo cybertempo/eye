@@ -138,21 +138,32 @@ Scope:
        its partition, which holds no pending batch;
      - the partition's lateness window has closed by the database clock: day end plus
        the decision's `lateness_hours`, which cannot be below 48;
+     - the batch's ledger rows (outcome, observations, event claims, media items,
+       receipts, coverage) still match the digest the database sealed when the batch
+       settled (`eye.batch_seal`). Only the settling trigger writes a seal; a direct
+       insert is refused and seals are append-only;
      - a verified synthetic proof listing the batch with these exact bytes and every
        cited manifest, with no later failed verification;
      - for every day the batch's request overlaps, a current coverage manifest (and
-       observation and cell manifests for position captures), and for its own day a
-       current `ledger-replay` manifest; every current manifest of those days cited;
+       observation and cell manifests for position captures, and for `synthetic-ais`
+       vessels a transit manifest per registered count line, at its latest version),
+       and for its own day a current `ledger-replay` manifest; every current manifest
+       of those days cited;
      - every cited manifest current, including every settled batch it should (so a
        late arrival leaves it incomplete), and checked `valid`, and never otherwise, in
        the same transaction (`eye.manifest_validation.txid`).
-   - **What it cannot do:** it does not re-derive. A writer with direct SQL access that
-     records `valid` checks for complete, current manifests of a closed, backed-up
-     partition meets it; re-derivation is the coordinator's job. Role separation for
-     such a writer belongs to the private installation.
+   - **What it cannot do:** it does not parse evidence bytes. A `valid` check recorded
+     by a direct writer no longer suffices once a ledger row changes after its batch
+     settled, because the seal no longer matches. Rows that were already wrong when
+     the batch settled (an ingest defect, or a batch settled by direct SQL) match
+     their seal; only the coordinator's `ledger-replay` catches those. A role with
+     table-owner rights can disable any trigger, the guard included; keeping the
+     application role from owning the schema belongs to the private installation.
    - **Tested alone:** tests bypass the Python checks and show the database refuses on
      its own: an early partition, an unmanifested one, a late arrival, an unchecked
-     manifest, a decision from another transaction and a failed proof. With the trigger
+     manifest, a corrupted ledger falsely checked `valid`, an AIS partition without
+     its transit manifest, a forged or rewritten seal, a decision from another
+     transaction and a failed proof. With the trigger
      also disabled, the same negative control fails, which shows it tests the guard.
 
 8. **Synthetic backup target only** (`backend/eye/worker/backup.py`).
@@ -201,6 +212,8 @@ Scope:
 | Execution is refused when disabled, outside demo or for a non-synthetic source. A concurrent late write blocks it, and a late write after planning is caught by the recheck | An explicitly named disposable partition is pruned |
 | A direct DELETE or UPDATE, or a decision from another transaction, is refused by the database | The checked path prunes |
 | A direct same-transaction decision and pruning of an early partition, an unmanifested one, one with a late arrival, or one whose manifests were not checked valid, is refused by the database; a lateness below 48 hours is refused | The coordinator prunes an eligible partition; the same direct write succeeds once every recorded fact holds (the known limit above) |
+| A direct pruning of a corrupted ledger whose manifests the writer marked `valid` is refused (seal mismatch); a direct seal insert or rewrite is refused | The coordinator prunes an intact partition of the same database |
+| A direct AIS pruning without a transit manifest per count line is refused; the coordinator also blocks it, and blocks AIS with no count line configured | With the transit manifests recorded and backed up, the coordinator prunes the AIS partition |
 
 **No old-code comparison.** Main has no retention, manifest or backup path, so running
 these tests against it would show only import errors. That is not evidence. Instead:
@@ -222,6 +235,11 @@ these tests against it would show only import errors. That is not evidence. Inst
 - **O69, database guard bypass:** the trigger accepted any same-transaction `pruned`
   decision with a verified proof, so a direct writer could skip the lateness and
   manifest checks. The guard now checks them itself (decision 7).
+
+- **O69, second round:** a same-transaction `valid` check needed no re-derivation, and
+  an absent AIS transit manifest was not required. The database now seals each batch's
+  ledger rows when it settles and refuses pruning when they no longer match, and it
+  requires a transit manifest per count line for `synthetic-ais` vessels.
 
 These revise migration 0007 in place: it has never been merged or applied outside a
 disposable test database.

@@ -965,11 +965,83 @@ def test_direct_pruning_with_a_late_arrival_is_refused(make_db, tmp_path):
         direct_prune(conn, FLIGHT, proof.proof_id, batches=held)
     assert unpruned(conn, FLIGHT) == 5
     # Control: once rolled up and backed up again, the same direct write meets
-    # every recorded fact the database can check. It cannot re-derive; that
-    # is the coordinator's job (a known limit of a database-only guard).
+    # every fact the database checks, its sealed ledger included. It cannot
+    # re-derive rows that were already wrong when the batch settled; that is
+    # the coordinator's ledger replay (a known limit of a database-only guard).
     rollups.refresh(conn, FLIGHT, LINES)
     again = back_up(conn, store)
     assert direct_prune(conn, FLIGHT, again.proof_id) == 5
+    conn.close()
+
+
+def test_direct_pruning_of_a_corrupted_ledger_falsely_marked_valid_is_refused(make_db, tmp_path):
+    conn = connect(make_db())
+    prepare(conn, ("captures",))
+    store = tmp_path / "store"
+    proof = back_up(conn, store)
+    unsealed = conn.run(
+        "SELECT count(*) FROM eye.capture_batch b LEFT JOIN eye.batch_seal s USING (batch_id) "
+        "WHERE b.status <> 'pending' AND s.batch_id IS NULL"
+    )[0][0]
+    assert unsealed == 0  # control: the database sealed every settled batch itself
+    corrupt(conn, "observation", "confidence = 0.01", "source_id = 'synthetic-fixture'")
+    # The direct writer records 'valid' for every current manifest, including
+    # the ledger replay, without re-deriving anything: the seal refuses it.
+    before = unpruned(conn, FLIGHT)
+    with pytest.raises(DatabaseError, match="differ from those sealed when it settled"):
+        direct_prune(conn, FLIGHT, proof.proof_id)
+    assert unpruned(conn, FLIGHT) == before > 0
+    # A seal cannot be forged or rewritten by a writer either.
+    with pytest.raises(DatabaseError, match="written only when a batch settles"):
+        conn.run(
+            "INSERT INTO eye.batch_seal (batch_id, ledger_sha256) SELECT batch_id, "
+            "eye.batch_ledger_digest(batch_id) FROM eye.capture_batch LIMIT 1"
+        )
+    with pytest.raises(DatabaseError, match="not permitted"):
+        conn.run("UPDATE eye.batch_seal SET ledger_sha256 = repeat('0', 64)")
+    # The coordinator refuses the corrupted partition too (its ledger replay fails).
+    assert execute(conn, FLIGHT, backup_dir=store).pruned == 0
+    # Control: an intact partition of the same database is pruned by the checked
+    # coordinator.
+    vessel = Partition.parse("synthetic-fixture:vessel:2026-01-01")
+    outcome = execute(conn, vessel, backup_dir=store)
+    assert outcome.verdict.verdict == "eligible" and outcome.pruned > 0
+    assert unpruned(conn, vessel) == 0
+    conn.close()
+
+
+def test_ais_pruning_without_a_transit_manifest_is_refused(make_db, tmp_path):
+    conn = connect(make_db())
+    migrate(conn)
+    load_fixtures(conn, FIXTURES / "ais/demo")
+    no_transit = [("ledger-replay", ""), ("coverage-hourly", ""), ("observations-hourly", "")]
+    no_transit.append(("cells-daily", ""))
+
+    def roll_up_without_transits() -> None:
+        for day in rollups.days_touched(conn, AIS):
+            part = Partition(AIS.source_id, AIS.layer, day)
+            assert not [r for r in rollups.refresh(conn, part, LINES, only=no_transit) if r.error]
+
+    store = tmp_path / "store"
+    derive_transits(conn)  # registers the count lines and records their runs
+    roll_up_without_transits()
+    proof = back_up(conn, store)
+    before = unpruned(conn, AIS)
+    with pytest.raises(DatabaseError, match="no current transit-daily manifest for line:"):
+        direct_prune(conn, AIS, proof.proof_id)
+    assert unpruned(conn, AIS) == before > 0
+    # The coordinator refuses as well: without the manifest, and without lines.
+    assert evaluate(conn, AIS, backup_dir=store).verdict == "blocked"
+    no_lines = retention.evaluate(conn, AIS, now=NOW, lateness_hours=48, lines=[], backup_dir=store)
+    assert any("no count line is configured" in r for r in no_lines.reasons)
+    # Control: with the transit manifests recorded and backed up, the checked
+    # coordinator prunes the AIS partition.
+    assert not [r for r in rollups.refresh_all(conn, LINES) if r.error]
+    back_up(conn, store)
+    outcome = execute(conn, AIS, backup_dir=store)
+    assert outcome.verdict.verdict == "eligible", outcome.verdict.reasons
+    assert outcome.pruned == before and unpruned(conn, AIS) == 0
+    assert any(m.startswith("transit-daily") for m in [c.label for c in outcome.verdict.checks])
     conn.close()
 
 

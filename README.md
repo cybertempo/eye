@@ -214,8 +214,9 @@ above.)
   produced (`ledger-replay`), and a verified backup holds the same bytes and
   is re-read just before pruning. A check that cannot run is UNVERIFIED and
   blocks. The database independently refuses pruning before the lateness
-  window closes by its own clock, or without current, complete manifests
-  checked valid in the same transaction. Observation, event-claim and media
+  window closes by its own clock, without current, complete manifests checked
+  valid in the same transaction, or when a batch's ledger rows no longer match
+  the seal it recorded when the batch settled. Observation, event-claim and media
   history is never deleted. After pruning, `db-manifest-check` reports that
   partition's `ledger-replay` as UNVERIFIED: only the restore drill can
   replay those bytes.

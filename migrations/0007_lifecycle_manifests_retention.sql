@@ -197,6 +197,77 @@ ALTER TABLE eye.raw_evidence ADD CONSTRAINT raw_evidence_pruned_has_decision
 COMMENT ON COLUMN eye.raw_evidence.pruned_by_decision IS
     'Set only when retention pruned the bytes; the decision cites the verified backup holding them.';
 
+-- Ledger seals. When a batch settles (pending -> committed or failed), the
+-- database itself records a digest of every ledger row that batch produced:
+-- its outcome, observations, event claims, media items, their receipts and its
+-- coverage. Only that trigger can write a seal (a direct INSERT is refused) and
+-- seals are append-only. The pruning guard recomputes the digest and refuses
+-- when it differs, so a ledger row corrupted after commit cannot be pruned past
+-- by a writer who merely records a 'valid' check. Batches that settled before
+-- this migration are sealed from their rows as they stand.
+CREATE FUNCTION eye.batch_ledger_digest(batch uuid) RETURNS text
+LANGUAGE sql STABLE AS $$
+    SELECT encode(sha256(convert_to(concat_ws(E'\n',
+        (SELECT concat_ws('|', b.status, b.accepted_count, b.rejected_count, b.failure_reason,
+                          b.evidence_sha256)
+         FROM eye.capture_batch b WHERE b.batch_id = batch),
+        (SELECT string_agg(o::text, E'\n' ORDER BY o.observation_id) FROM eye.observation o
+         WHERE o.observation_id IN (SELECT r.observation_id FROM eye.observation_receipt r
+                                    WHERE r.batch_id = batch)),
+        (SELECT string_agg(r::text, E'\n' ORDER BY r.observation_id)
+         FROM eye.observation_receipt r WHERE r.batch_id = batch),
+        (SELECT string_agg(c::text, E'\n' ORDER BY c.coverage_id) FROM eye.coverage c
+         WHERE c.batch_id = batch),
+        (SELECT string_agg(c::text, E'\n' ORDER BY c.claim_id) FROM eye.event_claim c
+         WHERE c.claim_id IN (SELECT r.claim_id FROM eye.event_claim_receipt r
+                              WHERE r.batch_id = batch)),
+        (SELECT string_agg(r::text, E'\n' ORDER BY r.claim_id)
+         FROM eye.event_claim_receipt r WHERE r.batch_id = batch),
+        (SELECT string_agg(m::text, E'\n' ORDER BY m.media_item_id) FROM eye.media_item m
+         WHERE m.media_item_id IN (SELECT r.media_item_id FROM eye.media_item_receipt r
+                                   WHERE r.batch_id = batch)),
+        (SELECT string_agg(r::text, E'\n' ORDER BY r.media_item_id)
+         FROM eye.media_item_receipt r WHERE r.batch_id = batch)
+    ), 'UTF8')), 'hex')
+$$;
+
+CREATE TABLE eye.batch_seal (
+    batch_id      uuid PRIMARY KEY REFERENCES eye.capture_batch (batch_id),
+    ledger_sha256 eye.sha256_hex NOT NULL,
+    sealed_at     timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO eye.batch_seal (batch_id, ledger_sha256)
+SELECT batch_id, eye.batch_ledger_digest(batch_id) FROM eye.capture_batch
+WHERE status <> 'pending';
+CREATE TRIGGER batch_seal_append_only BEFORE UPDATE OR DELETE ON eye.batch_seal
+    FOR EACH ROW EXECUTE FUNCTION eye.refuse_change();
+
+CREATE FUNCTION eye.refuse_direct_seal() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    -- Depth 1 is this trigger on a direct INSERT; the sealing trigger's own
+    -- INSERT arrives at depth 2.
+    IF pg_trigger_depth() < 2 THEN
+        RAISE EXCEPTION 'eye.batch_seal: seals are written only when a batch settles'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER batch_seal_from_commit_only BEFORE INSERT ON eye.batch_seal
+    FOR EACH ROW EXECUTE FUNCTION eye.refuse_direct_seal();
+
+CREATE FUNCTION eye.seal_batch() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    -- The ingest path writes every row first and settles the batch last.
+    INSERT INTO eye.batch_seal (batch_id, ledger_sha256)
+    VALUES (NEW.batch_id, eye.batch_ledger_digest(NEW.batch_id));
+    RETURN NULL;
+END;
+$$;
+CREATE TRIGGER capture_batch_seal AFTER UPDATE OF status ON eye.capture_batch
+    FOR EACH ROW WHEN (OLD.status = 'pending' AND NEW.status <> 'pending')
+    EXECUTE FUNCTION eye.seal_batch();
+
 -- Why pruning one batch's bytes under one decision is refused, or NULL when
 -- every condition the database can check independently holds. It does not
 -- re-derive anything (the coordinator does); it checks recorded facts with
@@ -205,10 +276,14 @@ COMMENT ON COLUMN eye.raw_evidence.pruned_by_decision IS
 --   partition, which holds no pending batch;
 -- * the partition's lateness window (day end + the decision's lateness, at
 --   least 48 hours) has closed by now();
+-- * the batch's ledger rows still match the seal the database recorded when
+--   the batch settled;
 -- * a verified synthetic proof holding these exact bytes and every cited
 --   manifest, and no later failed backup verification;
 -- * for every day the batch's request overlaps: a current coverage manifest,
---   and for position captures current observation and cell manifests; for the
+--   and for position captures current observation and cell manifests; for
+--   synthetic-ais vessels a current transit manifest per count line (latest
+--   version of each registered line; at least one must be registered); for the
 --   batch's own day a current ledger-replay manifest; every current manifest
 --   of those days cited by the decision;
 -- * every cited manifest is current, includes every settled batch it should
@@ -248,6 +323,14 @@ BEGIN
     IF now() < deadline THEN
         RETURN format('the lateness window is open until %s', deadline);
     END IF;
+    SELECT ledger_sha256 INTO want FROM eye.batch_seal WHERE batch_id = batch;
+    IF want IS NULL THEN
+        RETURN 'no ledger seal was recorded when the batch settled';
+    END IF;
+    IF want <> eye.batch_ledger_digest(batch) THEN
+        RETURN 'the batch''s ledger rows differ from those sealed when it settled';
+    END IF;
+    want := NULL;
     SELECT * INTO p FROM eye.backup_proof WHERE proof_id = d.backup_proof_id;
     IF NOT FOUND OR p.state <> 'verified' OR NOT p.synthetic
        OR NOT EXISTS (SELECT 1 FROM unnest(p.batch_ids, p.evidence_sha256s) AS h (bid, sha)
@@ -278,6 +361,24 @@ BEGIN
             RETURN format('no current %s manifest of %s is cited', m.derivation, m.day);
         END IF;
     END LOOP;
+    IF d.source_id = 'synthetic-ais' AND d.layer = 'vessel' THEN
+        IF NOT EXISTS (SELECT 1 FROM eye.count_line) THEN
+            RETURN 'no count line is registered, so no transit count can be required';
+        END IF;
+        FOR m IN
+            SELECT t.day, format('line:%s/v%s', l.line_id, max(l.version)) AS scope
+            FROM unnest(days) t (day) CROSS JOIN eye.count_line l
+            GROUP BY t.day, l.line_id
+        LOOP
+            IF NOT EXISTS (SELECT 1 FROM eye.current_manifest c
+                           WHERE c.source_id = d.source_id AND c.layer = d.layer
+                             AND c.day = m.day AND c.derivation = 'transit-daily'
+                             AND c.scope = m.scope AND c.manifest_id = ANY (d.manifest_ids)) THEN
+                RETURN format('no current transit-daily manifest for %s of %s is cited',
+                              m.scope, m.day);
+            END IF;
+        END LOOP;
+    END IF;
     SELECT format('current %s manifest of %s is not cited', c.derivation, c.day) INTO want
     FROM eye.current_manifest c
     WHERE c.source_id = d.source_id AND c.layer = d.layer AND c.day = ANY (days)
