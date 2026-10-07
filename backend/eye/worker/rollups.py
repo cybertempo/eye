@@ -53,11 +53,13 @@ COVERAGE = "coverage-hourly"
 OBSERVATIONS = "observations-hourly"
 CELLS = "cells-daily"
 TRANSIT = "transit-daily"
+LEDGER = "ledger-replay"
 VERSIONS = {
-    COVERAGE: "coverage-hourly/1",
-    OBSERVATIONS: "observations-hourly/1",
-    CELLS: "cells-daily/1",
+    COVERAGE: "coverage-hourly/2",
+    OBSERVATIONS: "observations-hourly/2",
+    CELLS: "cells-daily/2",
     TRANSIT: "transit-daily/1",
+    LEDGER: "ledger-replay/1",
 }
 CELL_DEG = Decimal("0.1")
 MAX_CELLS = 5_000
@@ -206,10 +208,14 @@ def is_position_source(source_id: str) -> bool:
 
 
 def required(partition: Partition, lines: list[transits.CountLine]) -> list[tuple[str, str]]:
-    """The derivations a partition needs before its raw evidence may be pruned."""
+    """The derivations a partition day needs before its raw evidence may be pruned.
+
+    ``ledger-replay`` concerns the batches that start on the day; the others
+    concern every batch whose request overlaps it.
+    """
     if partition.source_id not in capture.SOURCE_FORMATS:
         raise RollupRefused(f"no derivations are defined for source {partition.source_id}")
-    out = [(COVERAGE, "")]
+    out = [(LEDGER, ""), (COVERAGE, "")]
     if is_position_source(partition.source_id):
         out += [(OBSERVATIONS, ""), (CELLS, "")]
         if partition.source_id == transits.SOURCE_ID and partition.layer == "vessel":
@@ -247,8 +253,59 @@ class CoverageRow:
     area: tuple[float, float, float, float]
 
 
-def accounting(rows: list[CoverageRow], start: datetime, end: datetime) -> dict:
-    """Seconds of [start, end) by the best coverage state at each instant."""
+Area = tuple[float, float, float, float]  # west, south, east, north (a requested rectangle)
+AREA_RANK = {"uncaptured": -1, **STATE_RANK}
+
+
+def area_state(footprint: tuple[Area, ...], active: tuple[tuple[Area, str], ...]) -> str:
+    """The weakest state anywhere in the footprint, given the captures active at one instant.
+
+    Every point of the footprint takes the best state of the captures whose
+    requested rectangle contains it, or ``uncaptured`` when none does; the
+    footprint's state is the worst of those. A qualified capture of one area
+    therefore never vouches for a simultaneous failed or missing capture of
+    another. Requested areas are rectangles (``ST_MakeEnvelope``), so the
+    elementary cells between all rectangle edges decide this exactly.
+    """
+    if not footprint:
+        return "uncaptured"
+    xs = sorted({a[i] for a in (*footprint, *(r for r, _ in active)) for i in (0, 2)})
+    ys = sorted({a[i] for a in (*footprint, *(r for r, _ in active)) for i in (1, 3)})
+    worst = "qualified"
+    for x0, x1 in zip(xs, xs[1:], strict=False):
+        mx = (x0 + x1) / 2
+        for y0, y1 in zip(ys, ys[1:], strict=False):
+            my = (y0 + y1) / 2
+
+            def inside(a: Area, mx=mx, my=my) -> bool:
+                return a[0] <= mx <= a[2] and a[1] <= my <= a[3]
+
+            if not any(inside(a) for a in footprint):
+                continue
+            states = [s for a, s in active if inside(a)]
+            here = max(states, key=AREA_RANK.__getitem__) if states else "uncaptured"
+            if AREA_RANK[here] < AREA_RANK[worst]:
+                worst = here
+                if worst == "uncaptured":
+                    return worst
+    return worst
+
+
+def accounting(
+    rows: list[CoverageRow],
+    start: datetime,
+    end: datetime,
+    footprint: tuple[Area, ...] | None = None,
+) -> dict:
+    """Seconds of [start, end) by the weakest coverage state over the footprint.
+
+    The footprint is every area requested in ``rows`` (the partition's whole
+    requested area for the day) unless given. At each instant the state is
+    the weakest over the footprint (see ``area_state``), so a capture that
+    covers only part of it cannot report the whole as qualified.
+    """
+    if footprint is None:
+        footprint = tuple(sorted({c.area for c in rows}))
     relevant = [c for c in rows if c.start < end and c.end > start]
     cuts = sorted(
         {start, end}
@@ -256,10 +313,14 @@ def accounting(rows: list[CoverageRow], start: datetime, end: datetime) -> dict:
         | {c.end for c in relevant if start < c.end < end}
     )
     totals = {state: Decimal(0) for state in (*COVERAGE_STATES, "uncaptured")}
+    memo: dict[tuple, str] = {}
     for lo, hi in zip(cuts, cuts[1:], strict=False):
-        states = [c.state for c in relevant if c.start <= lo and c.end >= hi]
-        best = max(states, key=STATE_RANK.__getitem__) if states else "uncaptured"
-        totals[best] += _seconds(hi - lo)
+        active = tuple(
+            sorted({(c.area, c.state) for c in relevant if c.start <= lo and c.end >= hi})
+        )
+        if active not in memo:
+            memo[active] = area_state(footprint, active)
+        totals[memo[active]] += _seconds(hi - lo)
     return {
         **{f"{state}_s": num(value) for state, value in totals.items()},
         "coverage_ids": sorted(c.coverage_id for c in relevant),
@@ -383,6 +444,8 @@ def compute(
     lines: list[transits.CountLine],
 ) -> Rollup:
     """Compute one derivation from stored evidence. Reads only; never writes."""
+    if derivation == LEDGER:
+        return _ledger(conn, partition)
     batches = _batches(conn, partition)
     batch_ids = [b for b, _, _ in batches]
     committed = [b for b, _, status in batches if status == "committed"]
@@ -434,6 +497,67 @@ def compute(
             conn, partition, scope, lines, batch_ids, committed, head, watermark, summary
         )
     raise RollupRefused(f"unknown derivation {derivation}")
+
+
+def _ledger(conn: Connection, partition: Partition) -> Rollup:
+    """Re-derive every ledger row the partition's own batches produced from their bytes.
+
+    The partition's own batches are those whose requested start falls on its
+    day (the batches retention would prune). Their outcomes, observations,
+    event claims, media items, receipts, coverage and capture facts must be
+    reproduced exactly from the stored bytes; any difference refuses the
+    derivation, so a corrupted derived row blocks pruning. Once the bytes are
+    pruned this derivation cannot run (EvidencePruned); only the restore drill,
+    from the backup, can re-derive it.
+    """
+    own = [
+        (str(b), _utc(archived), sha)
+        for b, archived, sha in conn.run(
+            "SELECT batch_id::text, archived_at, evidence_sha256 FROM eye.capture_batch "
+            "WHERE source_id = :s AND layer = :l AND status <> 'pending' "
+            "AND (requested_start AT TIME ZONE 'UTC')::date = :d ORDER BY batch_id",
+            s=partition.source_id,
+            l=partition.layer,
+            d=partition.day,
+        )
+    ]
+    batch_ids = [b for b, _, _ in own]
+    stored, problems = capture.replay_batches(conn, batch_ids)
+    if problems:
+        detail = f"{len(problems)} ledger row(s) differ from their evidence bytes"
+        raise RollupRefused(f"{detail}, e.g. {problems[0]}"[:480])
+    head = [f"derivation:{LEDGER}:{VERSIONS[LEDGER]}:"]
+    head += [f"evidence:{b}:{sha}" for b, _, sha in own]
+    rows: dict[str, tuple] = {}
+    n_rows = 0
+    for kind in capture.LEDGER_KINDS:
+        values = stored[kind]
+        n_rows += len(values)
+        text = json.dumps(
+            sorted([list(k) if isinstance(k, tuple) else k, v] for k, v in values.items()),
+            default=str,
+            separators=(",", ":"),
+        )
+        rows[f"rows:{kind.replace(' ', '-')}"] = (
+            iso(partition.start),
+            iso(partition.end),
+            "ledger_rows",
+            "qualified",
+            len(values),
+            None,
+            {"sha256": hashlib.sha256(text.encode()).hexdigest()},
+        )
+    return Rollup(
+        partition,
+        LEDGER,
+        "",
+        tuple(batch_ids),
+        n_rows,
+        _digest(head),
+        max((a for _, a, _ in own), default=None),
+        rows,
+        {"batches": len(batch_ids)},
+    )
 
 
 def _coverage_rows(partition: Partition, coverage: list[CoverageRow]) -> dict[str, tuple]:
@@ -541,22 +665,22 @@ def _cell_rows(partition, coverage, states: list[State]) -> dict[str, tuple]:
     for (iy, ix), members in sorted(cells.items()):
         west, south = ix * CELL_DEG, iy * CELL_DEG
         bounds = [num(west), num(south), num(west + CELL_DEG), num(south + CELL_DEG)]
+        cell = (float(bounds[0]), float(bounds[1]), float(bounds[2]), float(bounds[3]))
         covering = [
             c
             for c in coverage
-            if c.area[0] <= bounds[0]
-            and c.area[1] <= bounds[1]
-            and c.area[2] >= bounds[2]
-            and c.area[3] >= bounds[3]
+            if c.area[0] < cell[2]
+            and c.area[2] > cell[0]
+            and c.area[1] < cell[3]
+            and c.area[3] > cell[1]
         ]
-        acc = accounting(covering, partition.start, partition.end)
+        acc = accounting(covering, partition.start, partition.end, footprint=(cell,))
         if Decimal(str(acc["qualified_s"])) == _seconds(DAY):
             state, reason = "qualified", None
         else:
             state = "partial"
             reason = (
-                f"lower bound: captures covering the whole cell were qualified for "
-                f"{acc['qualified_s']} of 86400 s"
+                f"lower bound: the whole cell was qualified for {acc['qualified_s']} of 86400 s"
             )
         detail = {
             "cell_deg": num(CELL_DEG),
@@ -690,7 +814,7 @@ def store(conn: Connection, rollup: Rollup, lateness_hours: int) -> tuple[str, b
     required_versions = {rollup.derivation: rollup.version}
     if rollup.derivation == TRANSIT:
         required_versions["transit-counter"] = transits.ALGORITHM_VERSION
-    if rollup.derivation in (COVERAGE, OBSERVATIONS, CELLS):
+    if rollup.derivation in (COVERAGE, OBSERVATIONS, CELLS, LEDGER):
         required_versions["coverage"] = capture.DERIVATION_VERSION
     manifest_id = rollup.manifest_id
     with transaction(conn):
@@ -813,6 +937,13 @@ def refresh(
         except RollupRefused as exc:
             out.append(RefreshResult(partition, derivation, scope, None, False, str(exc)))
             continue
+        except capture.EvidencePruned as exc:
+            # Pruned bytes cannot be replayed; the manifest recorded before
+            # pruning (and cited by its decision) stays current.
+            kept = current_manifest(conn, partition, derivation, scope)
+            error = None if kept else str(exc)
+            out.append(RefreshResult(partition, derivation, scope, kept and kept[0], False, error))
+            continue
         manifest_id, created = store(conn, rollup, lateness_hours)
         out.append(RefreshResult(partition, derivation, scope, manifest_id, created, None))
     return out
@@ -881,6 +1012,12 @@ def check(conn, partition: Partition, derivation: str, scope: str, lines) -> Man
             fresh = compute(conn, partition, derivation, scope, lines)
         except RollupStale as exc:
             return result(manifest_id, "stale", str(exc))
+        except capture.EvidencePruned as exc:
+            return result(
+                manifest_id,
+                "unverified",
+                f"{exc}; only the restore drill can re-derive it from the backup",
+            )
         except RollupRefused as exc:
             return result(manifest_id, "failed", f"re-derivation refused: {exc}")
         if fresh.input_sha256 != input_sha:
@@ -907,15 +1044,17 @@ def check(conn, partition: Partition, derivation: str, scope: str, lines) -> Man
 
 
 def validate(
-    conn, partition: Partition, lines, *, own_snapshot: bool = True
+    conn, partition: Partition, lines, *, own_snapshot: bool = True, ledger: bool = True
 ) -> list[ManifestCheck]:
     """Check every required derivation of one partition day. Reads only.
 
     With ``own_snapshot`` false the caller's transaction is used (the retention
-    coordinator rechecks inside its locked transaction).
+    coordinator rechecks inside its locked transaction). With ``ledger`` false
+    the ledger replay is skipped (a neighbouring day whose own batches are not
+    being pruned).
     """
     try:
-        needed = required(partition, lines)
+        needed = [n for n in required(partition, lines) if ledger or n[0] != LEDGER]
     except RollupRefused as exc:
         return [ManifestCheck(partition, "-", "", None, "failed", str(exc))]
     if not own_snapshot:

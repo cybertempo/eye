@@ -96,6 +96,7 @@ enabled = []
 # demo mode. Nothing in setup, verify, the demo or CI enables it.
 allow_deletion = false
 # A partition stays open to late arrivals for this many hours after its day ends.
+# At least 48: the database refuses pruning sooner, by its own clock.
 lateness_hours = 48
 # Name of the environment variable holding the synthetic backup directory.
 # The path itself is never written in this file.

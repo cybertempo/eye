@@ -32,6 +32,7 @@ LINES_DIR = REPO_ROOT / "reference" / "lines"
 LINES = [transits.load_line(p) for p in sorted(LINES_DIR.glob("*.json"))]
 NOW = datetime(2026, 9, 1, tzinfo=UTC)  # long after every fixture's lateness window
 FLIGHT = Partition.parse("synthetic-fixture:flight:2026-01-01")
+FIXTURE_AREA = (-0.5, -0.5, 0.5, 0.5)  # the area every demo capture fixture requests
 AIS = Partition.parse("synthetic-ais:vessel:2026-02-01")
 
 
@@ -186,6 +187,96 @@ def test_covered_hour_with_nothing_observed_is_a_genuine_zero(make_db, tmp_path)
     conn.close()
 
 
+WEST = (-1.0, -0.5, 0.0, 0.5)
+EAST = (0.0, -0.5, 1.0, 0.5)
+WHOLE = (-1.0, -0.5, 1.0, 0.5)
+
+
+def _cov(name: str, area, state: str, start: str = "00:00", end: str = "01:00"):
+    day = "2026-01-06T"
+    return rollups.CoverageRow(
+        name,
+        name,
+        datetime.fromisoformat(f"{day}{start}:00+00:00"),
+        datetime.fromisoformat(f"{day}{end}:00+00:00"),
+        state,
+        area,
+    )
+
+
+def _hour_account(rows) -> dict:
+    start = datetime(2026, 1, 6, tzinfo=UTC)
+    acc = rollups.accounting(rows, start, start + timedelta(hours=1))
+    return {k: v for k, v in acc.items() if k.endswith("_s") and v}
+
+
+def test_a_qualified_area_never_masks_a_simultaneous_failed_area():
+    # Positive controls: the footprint is fully covered and qualified.
+    assert _hour_account([_cov("a", WHOLE, "qualified")]) == {"qualified_s": 3600}
+    both = [_cov("w", WEST, "qualified"), _cov("e", EAST, "qualified")]
+    assert _hour_account(both) == {"qualified_s": 3600}
+    # A failed capture of an area that a qualified capture fully covers adds nothing missing.
+    inner = [_cov("a", WHOLE, "qualified"), _cov("e", EAST, "failed")]
+    assert _hour_account(inner) == {"qualified_s": 3600}
+    # Qualified west, failed east at the same time: the footprint is not qualified.
+    split = [_cov("w", WEST, "qualified"), _cov("e", EAST, "failed")]
+    assert _hour_account(split) == {"failed_s": 3600}
+    # West only for the first half hour while the footprint includes east:
+    # the uncaptured east is missing, never qualified.
+    half = [_cov("w", WEST, "qualified"), _cov("e", EAST, "qualified", "00:30", "01:00")]
+    assert _hour_account(half) == {"uncaptured_s": 1800, "qualified_s": 1800}
+    # Partial in one area makes the footprint partial at best.
+    mixed = [_cov("w", WEST, "qualified"), _cov("e", EAST, "partial")]
+    assert _hour_account(mixed) == {"partial_s": 3600}
+
+
+def test_failed_east_beside_qualified_west_is_unknown_in_the_stored_rollups(make_db, tmp_path):
+    conn = connect(make_db())
+    migrate(conn)
+    days = {"2026-01-06": "qualified", "2026-01-07": "failed"}  # control, then the fault
+    for day, east in days.items():
+        seen = [record("SYNF-0201", f"{day}T00:10:00Z", f"{day}T00:11:00Z", -0.5)]
+        for name, area, status, records in (
+            ("west", WEST, "ok", seen),
+            ("east", EAST, "ok" if east == "qualified" else "error", []),
+        ):
+            ingest(
+                conn,
+                capture(
+                    tmp_path,
+                    f"{day}-{name}",
+                    "flight",
+                    records,
+                    start=f"{day}T00:00:00Z",
+                    end=f"{day}T01:00:00Z",
+                    received=f"{day}T01:00:05Z",
+                    bbox=area,
+                    status=status,
+                ).read_bytes(),
+            )
+    assert not [r for r in rollups.refresh_all(conn, LINES) if r.error]
+
+    def coverage_detail(part):
+        (detail,) = conn.run(
+            "SELECT detail FROM eye.current_rollup WHERE source_id = :s AND layer = :l "
+            "AND day = :d AND derivation = 'coverage-hourly' AND row_key = 'hour:00'",
+            s=part.source_id,
+            l=part.layer,
+            d=part.day,
+        )[0]
+        return detail["qualified_s"], detail["failed_s"]
+
+    good = Partition.parse("synthetic-fixture:flight:2026-01-06")
+    bad = Partition.parse("synthetic-fixture:flight:2026-01-07")
+    assert coverage_detail(good) == (3600, 0)  # control: both areas qualified
+    assert rollup(conn, good, "observations-hourly", "hour:00") == ("qualified", 1, None)
+    assert coverage_detail(bad) == (0, 3600)
+    assert rollup(conn, bad, "coverage-hourly", "hour:00")[:2] == ("qualified", 0)
+    state, value, reason = rollup(conn, bad, "observations-hourly", "hour:00")
+    assert (state, value) == ("unknown", None) and "failed 3600 s" in reason
+    conn.close()
+
+
 def test_database_refuses_a_zero_for_unknown_and_a_position_in_a_rollup(demo):
     (manifest_id,) = demo.run(
         "SELECT manifest_id::text FROM eye.current_manifest WHERE derivation = 'cells-daily' "
@@ -265,10 +356,11 @@ def test_late_arrival_makes_the_old_manifest_stale_and_keeps_history(make_db, tm
             start="2026-01-01T00:30:00Z",
             end="2026-01-01T01:00:00Z",
             received="2026-01-03T00:00:00Z",
+            bbox=FIXTURE_AREA,
         ).read_bytes(),
     )
     after = checks_by_derivation(conn, FLIGHT)
-    for name in ("coverage-hourly", "observations-hourly", "cells-daily"):
+    for name in ("ledger-replay", "coverage-hourly", "observations-hourly", "cells-daily"):
         assert after[name].state == "stale" and "late arrival" in after[name].reason
     assert evaluate(conn).verdict == "blocked"
     # The outdated metric is not kept silently: the current value is the old
@@ -365,6 +457,68 @@ def test_open_lateness_window_blocks_retention(demo, tmp_path):
     early = evaluate(demo, backup_dir=tmp_path, now=end + timedelta(hours=47, minutes=59))
     assert early.verdict == "blocked" and "lateness window open" in early.reasons[0]
     assert evaluate(demo, backup_dir=tmp_path, now=end + timedelta(hours=48)).verdict == "eligible"
+
+
+LEDGER_FAULTS = {
+    "event claim": (
+        "synthetic-events:vessel:2026-02-01",
+        "event_claim",
+        "summary = summary || ' (altered)'",
+        "claim_id IN (SELECT claim_id FROM eye.event_claim_receipt r JOIN eye.capture_batch b "
+        "USING (batch_id) WHERE b.source_id = 'synthetic-events' AND b.layer = 'vessel')",
+    ),
+    "media item": (
+        "synthetic-news:news:2026-02-01",
+        "media_item",
+        "url = url || '#altered'",
+        "true",
+    ),
+    "observation": (
+        "synthetic-fixture:flight:2026-01-01",
+        "observation",
+        "confidence = 0.01",
+        "source_id = 'synthetic-fixture' AND layer = 'flight'",
+    ),
+}
+
+
+def corrupt(conn, table: str, change: str, where: str) -> None:
+    """Alter one derived row in a disposable database, bypassing its append-only trigger."""
+    conn.run(f"ALTER TABLE eye.{table} DISABLE TRIGGER {table}_append_only")
+    key = {"event_claim": "claim_id", "media_item": "media_item_id"}.get(table, "observation_id")
+    conn.run(
+        f"UPDATE eye.{table} SET {change} WHERE {key} = "  # noqa: S608
+        f"(SELECT min({key}::text)::uuid FROM eye.{table} WHERE {where})"
+    )
+    conn.run(f"ALTER TABLE eye.{table} ENABLE TRIGGER {table}_append_only")
+
+
+@pytest.mark.parametrize("fault", sorted(LEDGER_FAULTS))
+def test_a_corrupted_ledger_row_blocks_pruning_beside_an_intact_ledger(
+    demo, tmp_path, monkeypatch, fault
+):
+    key, table, change, where = LEDGER_FAULTS[fault]
+    part = Partition.parse(key)
+    back_up(demo, tmp_path)
+    intact = evaluate(demo, part, backup_dir=tmp_path)
+    assert intact.verdict == "eligible", intact.reasons  # control: intact ledgers pass
+    assert "ledger-replay" in {c.derivation for c in intact.checks}
+    corrupt(demo, table, change, where)
+    verdict = evaluate(demo, part, backup_dir=tmp_path)
+    assert verdict.verdict == "blocked"
+    (ledger,) = [c for c in verdict.checks if c.derivation == "ledger-replay"]
+    assert ledger.state == "failed" and "differ from their evidence bytes" in ledger.reason
+    assert fault in ledger.reason
+    before = unpruned(demo, part)
+    assert execute(demo, part, backup_dir=tmp_path).pruned == 0
+    assert unpruned(demo, part) == before  # the last good copy stays
+    # Guard bypass in this disposable copy: without the ledger replay the
+    # corrupted partition would pass, so the negative control above is real.
+    real = rollups.required
+    monkeypatch.setattr(
+        rollups, "required", lambda p, lines: [n for n in real(p, lines) if n[0] != "ledger-replay"]
+    )
+    assert evaluate(demo, part, backup_dir=tmp_path).verdict == "eligible"
 
 
 # --- backups --------------------------------------------------------------------------
@@ -476,13 +630,18 @@ def test_eligible_partition_is_pruned_and_history_survives(demo, tmp_path):
         "SELECT verdict, backup_proof_id IS NOT NULL, cardinality(batch_ids), "
         "cardinality(manifest_ids) FROM eye.retention_decision"
     )
-    assert decision == [["pruned", True, batches, 3]]
-    assert demo.run("SELECT count(*) FROM eye.manifest_retention_proof")[0][0] == 3
+    # ledger replay, coverage, observations and cells of the one day
+    assert decision == [["pruned", True, batches, 4]]
+    assert demo.run("SELECT count(*) FROM eye.manifest_retention_proof")[0][0] == 4
     assert verify_replay(demo) == []
     again = execute(demo, backup_dir=tmp_path)
     assert again.pruned == 0 and "already pruned" in again.verdict.reasons[0]
-    # Derivations still work after pruning (they read records, not raw bytes).
-    assert {c.state for c in rollups.validate(demo, FLIGHT, LINES)} == {"valid"}
+    # Derivations still work after pruning (they read records, not raw bytes);
+    # the ledger replay needs the bytes, so it is UNVERIFIED, never valid.
+    checks = checks_by_derivation(demo, FLIGHT)
+    assert checks.pop("ledger-replay").state == "unverified"
+    assert {c.state for c in checks.values()} == {"valid"}
+    assert not [r for r in rollups.refresh(demo, FLIGHT, LINES) if r.error or r.created]
 
 
 def test_blocked_execution_is_recorded_and_preserves_the_last_good_copy(demo, tmp_path):
@@ -583,18 +742,18 @@ def test_database_guard_refuses_pruning_without_a_checked_decision(demo, tmp_pat
         "UPDATE eye.raw_evidence SET content = NULL WHERE batch_id = CAST(:b AS uuid)",
         "UPDATE eye.raw_evidence SET sha256 = repeat('0', 64) WHERE batch_id = CAST(:b AS uuid)",
     ):
-        with pytest.raises(DatabaseError, match="not permitted|needs a pruned"):
+        with pytest.raises(DatabaseError, match="not permitted"):
             demo.run(statement, b=one)
     # A decision recorded in another transaction does not authorise this one.
     decision = demo.run(
         "INSERT INTO eye.retention_decision (source_id, layer, partition_day, verdict, reasons, "
-        "batch_ids, manifest_ids, backup_proof_id, evaluated_at) VALUES ('synthetic-fixture', "
-        "'flight', '2026-01-01', 'pruned', '[]', ARRAY[CAST(:b AS uuid)], '{}', "
-        "CAST(:p AS uuid), now()) RETURNING decision_id::text",
+        "batch_ids, manifest_ids, backup_proof_id, evaluated_at, lateness_hours) VALUES "
+        "('synthetic-fixture', 'flight', '2026-01-01', 'pruned', '[]', ARRAY[CAST(:b AS uuid)], "
+        "'{}', CAST(:p AS uuid), now(), 48) RETURNING decision_id::text",
         p=proof.proof_id,
         b=one,
     )[0][0]
-    with pytest.raises(DatabaseError, match="needs a pruned decision in this transaction"):
+    with pytest.raises(DatabaseError, match="not written in this transaction"):
         demo.run(
             "UPDATE eye.raw_evidence SET content = NULL, pruned_by_decision = :d "
             "WHERE batch_id = CAST(:b AS uuid)",
@@ -629,7 +788,7 @@ def test_bypassing_the_coordinator_still_meets_the_database_guard(demo, tmp_path
 
     monkeypatch.setattr(retention, "evaluate", bypass)
     batches = unpruned(demo)
-    with pytest.raises(DatabaseError, match="needs a pruned decision"):
+    with pytest.raises(DatabaseError, match="refused: no verified backup proof"):
         execute(demo, backup_dir=tmp_path)
     assert unpruned(demo) == batches  # rolled back whole, decision included
     assert demo.run("SELECT count(*) FROM eye.retention_decision")[0][0] == 0
@@ -640,6 +799,178 @@ def test_bypassing_the_coordinator_still_meets_the_database_guard(demo, tmp_path
     assert execute(demo, backup_dir=tmp_path).pruned == batches
     assert unpruned(demo) == 0
     assert good.state == "verified"
+
+
+def direct_prune(
+    conn, partition: Partition, proof_id: str, *, validate=True, lateness=48, batches=None
+):
+    """Write a pruned decision and clear the bytes in one transaction, skipping the coordinator."""
+    conn.run("BEGIN")
+    try:
+        manifests = [
+            m
+            for (m,) in conn.run(
+                "SELECT manifest_id::text FROM eye.current_manifest WHERE source_id = :s "
+                "AND layer = :l AND day = :d",
+                s=partition.source_id,
+                l=partition.layer,
+                d=partition.day,
+            )
+        ]
+        if validate:
+            for m in manifests:
+                conn.run(
+                    "INSERT INTO eye.manifest_validation (manifest_id, state) VALUES (:m, 'valid')",
+                    m=m,
+                )
+        batches = batches or [
+            b
+            for (b,) in conn.run(
+                "SELECT b.batch_id::text FROM eye.capture_batch b JOIN eye.raw_evidence e "
+                "USING (batch_id) WHERE b.source_id = :s AND b.layer = :l AND e.content IS NOT "
+                "NULL AND (b.requested_start AT TIME ZONE 'UTC')::date = :d",
+                s=partition.source_id,
+                l=partition.layer,
+                d=partition.day,
+            )
+        ]
+        decision = conn.run(
+            "INSERT INTO eye.retention_decision (source_id, layer, partition_day, verdict, "
+            "reasons, batch_ids, manifest_ids, backup_proof_id, evaluated_at, lateness_hours) "
+            "VALUES (:s, :l, :d, 'pruned', '[]', CAST(:b AS uuid[]), CAST(:m AS uuid[]), "
+            "CAST(:p AS uuid), now(), :late) RETURNING decision_id::text",
+            s=partition.source_id,
+            l=partition.layer,
+            d=partition.day,
+            b=batches,
+            m=manifests,
+            p=proof_id,
+            late=lateness,
+        )[0][0]
+        conn.run(
+            "UPDATE eye.raw_evidence SET content = NULL, pruned_by_decision = :d "
+            "WHERE batch_id = ANY(CAST(:b AS uuid[]))",
+            d=decision,
+            b=batches,
+        )
+        conn.run("COMMIT")
+    except Exception:
+        conn.run("ROLLBACK")
+        raise
+    return len(batches)
+
+
+def test_direct_pruning_of_an_early_unmanifested_or_unchecked_partition_is_refused(
+    make_db, tmp_path
+):
+    conn = connect(make_db())
+    prepare(conn, ("captures",))
+    # An early partition: captured an hour or so ago (database clock), fully
+    # manifested and backed up, so only its lateness window is open.
+    (now,) = conn.run("SELECT now()")[0]
+    start = now.astimezone(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(hours=2)
+    stamp = lambda t: t.strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+    early_dir = tmp_path / "early"
+    early_dir.mkdir()
+    observed, published = start + timedelta(minutes=5), start + timedelta(minutes=6)
+    seen = [record("SYNF-0301", stamp(observed), stamp(published), 0.1)]
+    ingest(
+        conn,
+        capture(
+            early_dir,
+            "early",
+            "flight",
+            seen,
+            start=stamp(start),
+            end=stamp(start + timedelta(hours=1)),
+            received=stamp(start + timedelta(hours=1, seconds=5)),
+            bbox=FIXTURE_AREA,
+        ).read_bytes(),
+    )
+    early = Partition("synthetic-fixture", "flight", start.date())
+    assert not [r for r in rollups.refresh(conn, early, LINES) if r.error]
+    # An unmanifested partition: archived, committed and backed up, never rolled up.
+    ingest(
+        conn,
+        capture(
+            early_dir,
+            "unmanifested",
+            "flight",
+            [],
+            start="2026-01-09T00:00:00Z",
+            end="2026-01-09T01:00:00Z",
+            received="2026-01-09T01:00:05Z",
+            bbox=FIXTURE_AREA,
+        ).read_bytes(),
+    )
+    unmanifested = Partition.parse("synthetic-fixture:flight:2026-01-09")
+    store = tmp_path / "store"
+    proof = back_up(conn, store)
+    assert proof.state == "verified"
+    for partition, why in (
+        (early, "lateness window is open"),
+        (unmanifested, "no current [a-z-]+ manifest of 2026-01-09 is cited"),
+    ):
+        before = unpruned(conn, partition)
+        with pytest.raises(DatabaseError, match=why):
+            direct_prune(conn, partition, proof.proof_id)
+        assert unpruned(conn, partition) == before > 0
+    with pytest.raises(DatabaseError, match="lateness_hours"):  # the 48 hour floor
+        direct_prune(conn, early, proof.proof_id, lateness=1)
+    with pytest.raises(DatabaseError, match="not checked valid in this transaction"):
+        direct_prune(conn, FLIGHT, proof.proof_id, validate=False)
+    assert evaluate(conn, early, backup_dir=store, now=now).verdict == "blocked"
+    # Control: the legitimate coordinator path prunes an eligible partition.
+    outcome = execute(conn, FLIGHT, backup_dir=store)
+    assert outcome.verdict.verdict == "eligible" and outcome.pruned == 4
+    assert unpruned(conn, FLIGHT) == 0
+    conn.close()
+
+
+def _flight_batches(conn) -> list[str]:
+    return [
+        b
+        for (b,) in conn.run(
+            "SELECT batch_id::text FROM eye.capture_batch WHERE source_id = 'synthetic-fixture' "
+            "AND layer = 'flight' AND (requested_start AT TIME ZONE 'UTC')::date = '2026-01-01'"
+        )
+    ]
+
+
+def test_direct_pruning_with_a_late_arrival_is_refused(make_db, tmp_path):
+    conn = connect(make_db())
+    prepare(conn, ("captures",))
+    store = tmp_path / "store"
+    proof = back_up(conn, store)
+    held = _flight_batches(conn)  # every batch the backup holds
+    late_dir = tmp_path / "late"
+    late_dir.mkdir()
+    ingest(
+        conn,
+        capture(
+            late_dir,
+            "late",
+            "flight",
+            [record("SYNF-0904", "2026-01-01T00:57:00Z", "2026-01-01T00:57:01Z", 0.2)],
+            start="2026-01-01T00:45:00Z",
+            end="2026-01-01T01:00:00Z",
+            received="2026-01-04T00:00:00Z",
+            bbox=FIXTURE_AREA,
+        ).read_bytes(),
+    )
+    # The cited manifests are current but miss the late batch: refused, even
+    # for the batches the backup does hold.
+    assert len(held) == 4 and len(_flight_batches(conn)) == 5
+    with pytest.raises(DatabaseError, match="misses a settled batch"):
+        direct_prune(conn, FLIGHT, proof.proof_id, batches=held)
+    assert unpruned(conn, FLIGHT) == 5
+    # Control: once rolled up and backed up again, the same direct write meets
+    # every recorded fact the database can check. It cannot re-derive; that
+    # is the coordinator's job (a known limit of a database-only guard).
+    rollups.refresh(conn, FLIGHT, LINES)
+    again = back_up(conn, store)
+    assert direct_prune(conn, FLIGHT, again.proof_id) == 5
+    conn.close()
 
 
 def test_bypassing_the_lateness_check_shows_its_control_is_real(demo, tmp_path, monkeypatch):
@@ -655,8 +986,9 @@ def test_replay_reports_missing_bytes_without_a_checked_decision(demo, tmp_path)
     one = one_flight_batch(demo)
     decision = demo.run(
         "INSERT INTO eye.retention_decision (source_id, layer, partition_day, verdict, reasons, "
-        "batch_ids, manifest_ids, evaluated_at) VALUES ('synthetic-fixture', 'flight', "
-        "'2026-01-01', 'blocked', '[\"test\"]', '{}', '{}', now()) RETURNING decision_id::text"
+        "batch_ids, manifest_ids, evaluated_at, lateness_hours) VALUES ('synthetic-fixture', "
+        "'flight', '2026-01-01', 'blocked', '[\"test\"]', '{}', '{}', now(), 48) "
+        "RETURNING decision_id::text"
     )[0][0]
     demo.run("ALTER TABLE eye.raw_evidence DISABLE TRIGGER raw_evidence_append_only")
     demo.run(

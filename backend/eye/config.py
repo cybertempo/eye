@@ -345,7 +345,7 @@ def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None)
         )
     retention = RetentionConfig(
         allow_deletion=allow_deletion,
-        lateness_hours=_int(ret, "lateness_hours", 48, 1, 8760),
+        lateness_hours=_int(ret, "lateness_hours", 48, 48, 8760),
         backup_dir_env=backup_dir_env,
         restore_url_env=restore_url_env,
     )

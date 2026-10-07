@@ -28,6 +28,8 @@ def capture(
     start: str,
     end: str,
     received: str,
+    bbox: tuple[float, float, float, float] = (-1.0, -1.0, 1.0, 1.0),
+    status: str = "ok",
 ) -> Path:
     """Write one committed-looking capture: every record is invented."""
     doc = {
@@ -38,7 +40,7 @@ def capture(
         "note": f"Test capture {name} ({layer}).",
         "layer": layer,
         "request": {
-            "bbox": [-1.0, -1.0, 1.0, 1.0],
+            "bbox": list(bbox),
             "start": start,
             "end": end,
             "expected_interval_s": 600,
@@ -47,7 +49,7 @@ def capture(
             "written_by": "EYE capture adapter; finished_at is the EYE receipt time",
             "started_at": received,
             "finished_at": received,
-            "provider_status": "ok",
+            "provider_status": status,
             "quota_cost": 0,
             "observed_start": start,
             "observed_end": end,

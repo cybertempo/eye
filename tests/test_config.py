@@ -178,11 +178,17 @@ def test_retention_deletion_is_refused_outside_demo(example_raw):
     assert parse(raw).retention.allow_deletion is False  # control: production, deletion off
 
 
+def test_retention_lateness_floor_is_48_hours(example_raw):
+    example_raw["retention"]["lateness_hours"] = 48
+    assert parse(example_raw).retention.lateness_hours == 48  # control: the floor itself
+
+
 @pytest.mark.parametrize(
     ("key", "value", "message"),
     [
         ("allow_deletion", "yes", "true or false"),
         ("lateness_hours", 0, "lateness_hours"),
+        ("lateness_hours", 47, "lateness_hours"),  # below the database's 48 hour floor
         ("backup_dir_env", "/srv/backup", "environment variable name"),
         ("restore_url_env", "EYE_DATABASE_URL", "other than"),
         ("unknown", 1, "unknown key"),

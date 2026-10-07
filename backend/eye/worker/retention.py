@@ -172,7 +172,9 @@ def evaluate(
                 blocked.append(f"batch {b.batch_id}: stored bytes do not match their checksum")
         for day in rollups.days_touched(conn, partition):
             part = Partition(partition.source_id, partition.layer, day)
-            verdict.checks += rollups.validate(conn, part, lines, own_snapshot=not in_transaction)
+            verdict.checks += rollups.validate(
+                conn, part, lines, own_snapshot=not in_transaction, ledger=day == partition.day
+            )
         for c in verdict.checks:
             if c.state == "unverified":
                 unverified.append(f"{c.label}: UNVERIFIED: {c.reason}")
@@ -267,9 +269,9 @@ def execute(
         eligible = verdict.verdict == "eligible"
         decision_id = conn.run(
             "INSERT INTO eye.retention_decision (source_id, layer, partition_day, verdict, "
-            "reasons, batch_ids, manifest_ids, backup_proof_id, evaluated_at) VALUES "
-            "(:s, :l, :d, :v, CAST(:r AS jsonb), CAST(:b AS uuid[]), CAST(:m AS uuid[]), "
-            "CAST(:p AS uuid), :at) RETURNING decision_id::text",
+            "reasons, batch_ids, manifest_ids, backup_proof_id, evaluated_at, lateness_hours) "
+            "VALUES (:s, :l, :d, :v, CAST(:r AS jsonb), CAST(:b AS uuid[]), CAST(:m AS uuid[]), "
+            "CAST(:p AS uuid), :at, :late) RETURNING decision_id::text",
             s=partition.source_id,
             l=partition.layer,
             d=partition.day,
@@ -279,6 +281,7 @@ def execute(
             m=verdict.manifest_ids,
             p=verdict.proof_id,
             at=verdict.evaluated_at,
+            late=lateness_hours,
         )[0][0]
         pruned = 0
         if eligible:

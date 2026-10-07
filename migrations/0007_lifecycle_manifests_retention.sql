@@ -18,9 +18,12 @@
 --   id, checksum, size and media type and gains the id of the retention
 --   decision that pruned it. The append-only trigger on eye.raw_evidence is
 --   replaced by a guard that refuses DELETE and every UPDATE except one:
---   setting content to NULL, in the same transaction as an 'execute' decision
---   with verdict 'pruned' that names the batch and cites a verified synthetic
---   backup proof holding exactly these bytes. Observations, receipts, event
+--   setting content to NULL, in the same transaction as a decision with
+--   verdict 'pruned' that names the batch, after the partition's lateness
+--   window by the database clock, citing every required current manifest
+--   (each complete and checked valid in that transaction) and a verified
+--   synthetic backup proof holding exactly these bytes and manifests
+--   (eye.pruning_refusal). Observations, receipts, event
 --   claims, media items, coverage and derivation history keep their
 --   append-only triggers; there is no deletion path for them.
 -- * Expected lock impact: ALTER TABLE eye.raw_evidence takes an ACCESS
@@ -40,7 +43,7 @@ CREATE TABLE eye.derivation_manifest (
     interval_end       timestamptz NOT NULL,
     derivation         text NOT NULL CHECK (derivation IN (
                            'coverage-hourly', 'observations-hourly', 'cells-daily',
-                           'transit-daily')),
+                           'transit-daily', 'ledger-replay')),
     derivation_version text NOT NULL CHECK (length(derivation_version) BETWEEN 1 AND 64),
     -- '' for a whole source and layer; 'line:<line_id>/v<version>' for transits.
     scope              text NOT NULL CHECK (length(scope) <= 200),
@@ -119,6 +122,9 @@ CREATE TABLE eye.manifest_validation (
     state         eye.manifest_state NOT NULL,
     reason        text CHECK (reason IS NULL OR length(reason) BETWEEN 1 AND 500),
     checked_at    timestamptz NOT NULL DEFAULT now(),
+    -- The transaction that recorded the check; the pruning guard requires a
+    -- valid check of every cited manifest in the pruning transaction itself.
+    txid          bigint NOT NULL DEFAULT txid_current(),
     CHECK ((state = 'valid') = (reason IS NULL))
 );
 CREATE INDEX manifest_validation_manifest_idx ON eye.manifest_validation (manifest_id, checked_at);
@@ -159,6 +165,9 @@ CREATE TABLE eye.retention_decision (
     manifest_ids    uuid[] NOT NULL,
     backup_proof_id uuid REFERENCES eye.backup_proof (proof_id),
     evaluated_at    timestamptz NOT NULL,
+    -- The lateness window the decision applied; never below the 48 hour floor
+    -- the pruning guard enforces with the database clock.
+    lateness_hours  integer NOT NULL CHECK (lateness_hours BETWEEN 48 AND 8760),
     decided_at      timestamptz NOT NULL DEFAULT now(),
     txid            bigint NOT NULL DEFAULT txid_current(),
     CHECK ((verdict = 'pruned') = (jsonb_array_length(reasons) = 0)),
@@ -188,9 +197,131 @@ ALTER TABLE eye.raw_evidence ADD CONSTRAINT raw_evidence_pruned_has_decision
 COMMENT ON COLUMN eye.raw_evidence.pruned_by_decision IS
     'Set only when retention pruned the bytes; the decision cites the verified backup holding them.';
 
+-- Why pruning one batch's bytes under one decision is refused, or NULL when
+-- every condition the database can check independently holds. It does not
+-- re-derive anything (the coordinator does); it checks recorded facts with
+-- the database clock:
+-- * a 'pruned' decision written in this transaction naming the batch and its
+--   partition, which holds no pending batch;
+-- * the partition's lateness window (day end + the decision's lateness, at
+--   least 48 hours) has closed by now();
+-- * a verified synthetic proof holding these exact bytes and every cited
+--   manifest, and no later failed backup verification;
+-- * for every day the batch's request overlaps: a current coverage manifest,
+--   and for position captures current observation and cell manifests; for the
+--   batch's own day a current ledger-replay manifest; every current manifest
+--   of those days cited by the decision;
+-- * every cited manifest is current, includes every settled batch it should
+--   (so a late arrival leaves it incomplete), and was checked 'valid', and
+--   never otherwise, in this transaction.
+CREATE FUNCTION eye.pruning_refusal(decision uuid, batch uuid, bytes_sha256 text)
+RETURNS text LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    d eye.retention_decision;
+    b eye.capture_batch;
+    p eye.backup_proof;
+    deadline timestamptz;
+    m record;
+    want text;
+    days date[];
+BEGIN
+    SELECT * INTO d FROM eye.retention_decision WHERE decision_id = decision;
+    IF NOT FOUND OR d.verdict <> 'pruned' THEN
+        RETURN 'no pruned decision';
+    END IF;
+    IF d.txid <> txid_current() THEN
+        RETURN 'the decision was not written in this transaction';
+    END IF;
+    SELECT * INTO b FROM eye.capture_batch WHERE batch_id = batch;
+    IF NOT (batch = ANY (d.batch_ids)) OR b.status = 'pending'
+       OR b.source_id <> d.source_id OR b.layer <> d.layer
+       OR (b.requested_start AT TIME ZONE 'UTC')::date <> d.partition_day THEN
+        RETURN 'the decision does not name this settled batch and its partition';
+    END IF;
+    IF EXISTS (SELECT 1 FROM eye.capture_batch x WHERE x.source_id = d.source_id
+               AND x.layer = d.layer AND x.status = 'pending'
+               AND (x.requested_start AT TIME ZONE 'UTC')::date = d.partition_day) THEN
+        RETURN 'the partition holds a pending batch';
+    END IF;
+    deadline := ((d.partition_day + 1)::timestamp AT TIME ZONE 'UTC')
+                + make_interval(hours => d.lateness_hours);
+    IF now() < deadline THEN
+        RETURN format('the lateness window is open until %s', deadline);
+    END IF;
+    SELECT * INTO p FROM eye.backup_proof WHERE proof_id = d.backup_proof_id;
+    IF NOT FOUND OR p.state <> 'verified' OR NOT p.synthetic
+       OR NOT EXISTS (SELECT 1 FROM unnest(p.batch_ids, p.evidence_sha256s) AS h (bid, sha)
+                      WHERE h.bid = batch AND h.sha = bytes_sha256)
+       OR NOT (d.manifest_ids <@ p.manifest_ids) THEN
+        RETURN 'no verified backup proof holds these bytes and every cited manifest';
+    END IF;
+    IF EXISTS (SELECT 1 FROM eye.backup_proof f WHERE f.state = 'failed'
+               AND f.verified_at > p.verified_at) THEN
+        RETURN 'a later backup verification failed';
+    END IF;
+    SELECT array_agg(g::date) INTO days
+    FROM generate_series((b.requested_start AT TIME ZONE 'UTC')::date,
+                         ((b.requested_end - interval '1 microsecond') AT TIME ZONE 'UTC')::date,
+                         interval '1 day') g;
+    FOR m IN
+        SELECT t.day, w.derivation FROM unnest(days) t (day)
+        CROSS JOIN LATERAL (VALUES ('coverage-hourly'), ('observations-hourly'),
+                                   ('cells-daily'), ('ledger-replay')) w (derivation)
+        WHERE (w.derivation <> 'ledger-replay' OR t.day = d.partition_day)
+          AND (w.derivation NOT IN ('observations-hourly', 'cells-daily')
+               OR b.capture_format = 'eye.synthetic-capture/2')
+    LOOP
+        IF NOT EXISTS (SELECT 1 FROM eye.current_manifest c WHERE c.source_id = d.source_id
+                       AND c.layer = d.layer AND c.day = m.day
+                       AND c.derivation = m.derivation
+                       AND c.manifest_id = ANY (d.manifest_ids)) THEN
+            RETURN format('no current %s manifest of %s is cited', m.derivation, m.day);
+        END IF;
+    END LOOP;
+    SELECT format('current %s manifest of %s is not cited', c.derivation, c.day) INTO want
+    FROM eye.current_manifest c
+    WHERE c.source_id = d.source_id AND c.layer = d.layer AND c.day = ANY (days)
+      AND (c.derivation <> 'ledger-replay' OR c.day = d.partition_day)
+      AND NOT (c.manifest_id = ANY (d.manifest_ids))
+    LIMIT 1;
+    IF want IS NOT NULL THEN
+        RETURN want;
+    END IF;
+    FOR m IN
+        SELECT c.* FROM eye.derivation_manifest c WHERE c.manifest_id = ANY (d.manifest_ids)
+    LOOP
+        IF NOT EXISTS (SELECT 1 FROM eye.current_manifest c WHERE c.manifest_id = m.manifest_id) THEN
+            RETURN format('cited manifest %s is no longer current', m.manifest_id);
+        END IF;
+        IF EXISTS (
+            SELECT 1 FROM eye.capture_batch x
+            WHERE x.source_id = m.source_id AND x.layer = m.layer AND x.status <> 'pending'
+              AND CASE WHEN m.derivation = 'ledger-replay'
+                       THEN (x.requested_start AT TIME ZONE 'UTC')::date = m.day
+                       ELSE x.requested_start < m.interval_end
+                            AND x.requested_end > m.interval_start END
+              AND NOT (x.batch_id = ANY (m.input_batch_ids))
+        ) THEN
+            RETURN format('cited %s manifest of %s misses a settled batch (a late arrival)',
+                          m.derivation, m.day);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM eye.manifest_validation v
+                       WHERE v.manifest_id = m.manifest_id AND v.txid = txid_current()
+                         AND v.state = 'valid')
+           OR EXISTS (SELECT 1 FROM eye.manifest_validation v
+                      WHERE v.manifest_id = m.manifest_id AND v.txid = txid_current()
+                        AND v.state <> 'valid') THEN
+            RETURN format('cited %s manifest of %s was not checked valid in this transaction',
+                          m.derivation, m.day);
+        END IF;
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
 CREATE FUNCTION eye.guard_raw_evidence() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
-    authorised boolean;
+    refusal text;
 BEGIN
     IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION 'eye.raw_evidence: DELETE is not permitted; history is append-only'
@@ -207,25 +338,9 @@ BEGIN
         RAISE EXCEPTION 'eye.raw_evidence: UPDATE is not permitted except pruning the bytes'
             USING ERRCODE = 'insufficient_privilege';
     END IF;
-    SELECT true INTO authorised
-    FROM eye.retention_decision d
-    JOIN eye.backup_proof p ON p.proof_id = d.backup_proof_id
-    JOIN eye.capture_batch b ON b.batch_id = OLD.batch_id
-    WHERE d.decision_id = NEW.pruned_by_decision
-      AND d.verdict = 'pruned'
-      AND d.txid = txid_current()
-      AND OLD.batch_id = ANY (d.batch_ids)
-      AND b.status <> 'pending'
-      AND b.source_id = d.source_id AND b.layer = d.layer
-      AND (b.requested_start AT TIME ZONE 'UTC')::date = d.partition_day
-      AND p.state = 'verified' AND p.synthetic
-      AND EXISTS (
-          SELECT 1 FROM unnest(p.batch_ids, p.evidence_sha256s) AS held (batch_id, sha256)
-          WHERE held.batch_id = OLD.batch_id AND held.sha256 = OLD.sha256
-      );
-    IF authorised IS NULL THEN
-        RAISE EXCEPTION 'eye.raw_evidence: pruning % needs a pruned decision in this transaction '
-            'citing a verified backup of these bytes', OLD.evidence_id
+    refusal := eye.pruning_refusal(NEW.pruned_by_decision, OLD.batch_id, OLD.sha256);
+    IF refusal IS NOT NULL THEN
+        RAISE EXCEPTION 'eye.raw_evidence: pruning % refused: %', OLD.evidence_id, refusal
             USING ERRCODE = 'insufficient_privilege';
     END IF;
     RETURN NEW;

@@ -200,16 +200,25 @@ above.)
 
 - **Rollups never turn unknown into zero.** An hour lacking usable coverage
   has no value, a partial one is a lower bound, and only a fully covered hour
-  is exact; a covered hour with nothing seen is a real 0. Activity per grid
+  is exact; a covered hour with nothing seen is a real 0. Coverage is judged
+  over the whole area requested that day: a qualified capture of one area
+  never vouches for a failed or missing capture of another at the same time. Activity per grid
   cell names the cell and its bounds, never a mean or centre position.
 - **Manifests** record each rollup's inputs (batches, checksum, watermark),
   versions, outputs and coverage. A late arrival or correction makes a
   manifest stale; the next `db-rollup` adds a new one and keeps the old.
 - **Retention prunes raw evidence bytes only, and only after every check
-  passes**: the lateness window has closed, every manifest re-derives exactly,
-  and a verified backup holds the same bytes and is re-read just before
-  pruning. A check that cannot run is UNVERIFIED and blocks. Observation,
-  event-claim and media history is never deleted.
+  passes**: the lateness window (at least 48 hours) has closed, every
+  manifest re-derives exactly, the partition's own bytes still reproduce
+  every observation, event claim, media item, receipt and coverage row they
+  produced (`ledger-replay`), and a verified backup holds the same bytes and
+  is re-read just before pruning. A check that cannot run is UNVERIFIED and
+  blocks. The database independently refuses pruning before the lateness
+  window closes by its own clock, or without current, complete manifests
+  checked valid in the same transaction. Observation, event-claim and media
+  history is never deleted. After pruning, `db-manifest-check` reports that
+  partition's `ledger-replay` as UNVERIFIED: only the restore drill can
+  replay those bytes.
 - **The backup and drill are a synthetic code test.** They prove nothing
   about an off-site Google Drive backup, the private installation or any
   recovery objective.
