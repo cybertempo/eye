@@ -141,7 +141,10 @@ Scope:
      - the batch's ledger rows (outcome, observations, event claims, media items,
        receipts, coverage) still match the digest the database sealed when the batch
        settled (`eye.batch_seal`). Only the settling trigger writes a seal; a direct
-       insert is refused and seals are append-only;
+       insert is refused and seals are append-only. Once a batch settles its ledger is
+       closed: no receipt or coverage row may be added for it, so a later row cannot
+       change what was sealed, in a separate statement or in the pruning statement
+       itself;
      - a verified synthetic proof listing the batch with these exact bytes and every
        cited manifest, with no later failed verification;
      - for every day the batch's request overlaps, a current coverage manifest (and
@@ -162,8 +165,10 @@ Scope:
    - **Tested alone:** tests bypass the Python checks and show the database refuses on
      its own: an early partition, an unmanifested one, a late arrival, an unchecked
      manifest, a corrupted ledger falsely checked `valid`, an AIS partition without
-     its transit manifest, a forged or rewritten seal, a decision from another
-     transaction and a failed proof. With the trigger
+     its transit manifest, a forged or rewritten seal, an extra coverage row added in
+     the pruning statement's own data-changing CTE (refused by the closed ledger, and
+     with that trigger off still by the seal), a decision from another transaction
+     and a failed proof. With the trigger
      also disabled, the same negative control fails, which shows it tests the guard.
 
 8. **Synthetic backup target only** (`backend/eye/worker/backup.py`).
@@ -240,6 +245,11 @@ these tests against it would show only import errors. That is not evidence. Inst
   an absent AIS transit manifest was not required. The database now seals each batch's
   ledger rows when it settles and refuses pruning when they no longer match, and it
   requires a transit manifest per count line for `synthetic-ais` vessels.
+
+- **O69, third check:** a coverage row added in a data-changing CTE of the pruning
+  statement was refused by the seal on 2282bbe (the guard's digest sees it). A lone
+  coverage or receipt row added after settling was accepted, though, which changed the
+  sealed ledger. Settled batches now have a closed ledger.
 
 These revise migration 0007 in place: it has never been merged or applied outside a
 disposable test database.

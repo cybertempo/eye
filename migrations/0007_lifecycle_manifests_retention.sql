@@ -268,6 +268,32 @@ CREATE TRIGGER capture_batch_seal AFTER UPDATE OF status ON eye.capture_batch
     FOR EACH ROW WHEN (OLD.status = 'pending' AND NEW.status <> 'pending')
     EXECUTE FUNCTION eye.seal_batch();
 
+-- A batch's ledger is closed once it settles. Its receipts and coverage are
+-- written by the ingest path while the batch is pending, and the batch is
+-- settled last; afterwards no receipt or coverage row may be added for it.
+-- Without this, one statement could add a row in a data-changing CTE and prune
+-- in the same statement, before the guard's digest sees the new row.
+CREATE FUNCTION eye.refuse_ledger_after_settle() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    settled text;
+BEGIN
+    SELECT status::text INTO settled FROM eye.capture_batch WHERE batch_id = NEW.batch_id;
+    IF settled IS DISTINCT FROM 'pending' THEN
+        RAISE EXCEPTION 'eye.%: batch % is already settled; its ledger is closed',
+            TG_TABLE_NAME, NEW.batch_id USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER coverage_ledger_closed BEFORE INSERT ON eye.coverage
+    FOR EACH ROW EXECUTE FUNCTION eye.refuse_ledger_after_settle();
+CREATE TRIGGER observation_receipt_ledger_closed BEFORE INSERT ON eye.observation_receipt
+    FOR EACH ROW EXECUTE FUNCTION eye.refuse_ledger_after_settle();
+CREATE TRIGGER event_claim_receipt_ledger_closed BEFORE INSERT ON eye.event_claim_receipt
+    FOR EACH ROW EXECUTE FUNCTION eye.refuse_ledger_after_settle();
+CREATE TRIGGER media_item_receipt_ledger_closed BEFORE INSERT ON eye.media_item_receipt
+    FOR EACH ROW EXECUTE FUNCTION eye.refuse_ledger_after_settle();
+
 -- Why pruning one batch's bytes under one decision is refused, or NULL when
 -- every condition the database can check independently holds. It does not
 -- re-derive anything (the coordinator does); it checks recorded facts with

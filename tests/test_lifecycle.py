@@ -1045,6 +1045,104 @@ def test_ais_pruning_without_a_transit_manifest_is_refused(make_db, tmp_path):
     conn.close()
 
 
+EXTRA_COVERAGE_PRUNE = """
+    WITH extra AS (
+        INSERT INTO eye.coverage (coverage_id, batch_id, source_id, layer, interval_start,
+            interval_end, state, reason, metric_name, metric_value, derivation_version)
+        SELECT gen_random_uuid(), batch_id, source_id, layer, interval_start, interval_end,
+            'qualified', NULL, 'extra_metric', 1, derivation_version
+        FROM eye.coverage WHERE batch_id = CAST(:b AS uuid)
+        RETURNING batch_id
+    )
+    UPDATE eye.raw_evidence SET content = NULL, pruned_by_decision = CAST(:d AS uuid)
+    WHERE batch_id IN (SELECT batch_id FROM extra)
+"""
+
+
+def open_decision(conn, partition: Partition, proof_id: str) -> str:
+    """Open a transaction holding valid checks and a pruned decision (no pruning yet)."""
+    conn.run("BEGIN")
+    manifests = [
+        m
+        for (m,) in conn.run(
+            "SELECT manifest_id::text FROM eye.current_manifest WHERE source_id = :s "
+            "AND layer = :l AND day = :d",
+            s=partition.source_id,
+            l=partition.layer,
+            d=partition.day,
+        )
+    ]
+    for m in manifests:
+        conn.run(
+            "INSERT INTO eye.manifest_validation (manifest_id, state) VALUES (:m, 'valid')", m=m
+        )
+    return conn.run(
+        "INSERT INTO eye.retention_decision (source_id, layer, partition_day, verdict, reasons, "
+        "batch_ids, manifest_ids, backup_proof_id, evaluated_at, lateness_hours) "
+        "SELECT CAST(:s AS text), CAST(:l AS text), CAST(:d AS date), 'pruned', '[]', "
+        "array_agg(batch_id), CAST(:m AS uuid[]), CAST(:p AS uuid), now(), 48 "
+        "FROM eye.capture_batch WHERE source_id = CAST(:s AS text) AND layer = CAST(:l AS text) "
+        "AND (requested_start AT TIME ZONE 'UTC')::date = CAST(:d AS date) "
+        "RETURNING decision_id::text",
+        s=partition.source_id,
+        l=partition.layer,
+        d=partition.day,
+        m=manifests,
+        p=proof_id,
+    )[0][0]
+
+
+EXTRA_COVERAGE = """
+    INSERT INTO eye.coverage (coverage_id, batch_id, source_id, layer, interval_start,
+        interval_end, state, reason, metric_name, metric_value, derivation_version)
+    SELECT gen_random_uuid(), batch_id, source_id, layer, interval_start, interval_end,
+        'qualified', NULL, 'extra_metric', 1, derivation_version
+    FROM eye.coverage WHERE batch_id = CAST(:b AS uuid)
+"""
+
+
+def test_same_statement_insert_and_prune_of_a_settled_batch_is_refused(make_db, tmp_path):
+    conn = connect(make_db())
+    prepare(conn, ("captures",))
+    store = tmp_path / "store"
+    proof = back_up(conn, store)
+    one = one_flight_batch(conn)
+    coverage_rows = conn.run("SELECT count(*) FROM eye.coverage")[0][0]
+
+    def combined(match: str) -> None:
+        # One statement: a data-changing CTE adds a well-formed coverage row to
+        # the settled batch, and its RETURNING batch_id drives the pruning UPDATE.
+        decision = open_decision(conn, FLIGHT, proof.proof_id)
+        with pytest.raises(DatabaseError, match=match):
+            conn.run(EXTRA_COVERAGE_PRUNE, b=one, d=decision)
+        conn.run("ROLLBACK")
+        assert unpruned(conn, FLIGHT) == 4  # the bytes remain
+        assert conn.run("SELECT count(*) FROM eye.coverage")[0][0] == coverage_rows
+
+    # The closed ledger refuses the extra row, in the statement or on its own.
+    combined("batch .* is already settled; its ledger is closed")
+    with pytest.raises(DatabaseError, match="its ledger is closed"):
+        conn.run(EXTRA_COVERAGE, b=one)
+    # Second layer, tested alone: with the closed-ledger trigger off (the
+    # schema of 2282bbe), the pruning guard's digest sees the row the CTE
+    # added in the same statement, so the seal still refuses.
+    conn.run("ALTER TABLE eye.coverage DISABLE TRIGGER coverage_ledger_closed")
+    combined("differ from those sealed when it settled")
+    # Without the closed ledger, a lone extra row was accepted and changed the
+    # batch's ledger after it settled; that is what the trigger now prevents.
+    conn.run(EXTRA_COVERAGE, b=one)
+    conn.run("ALTER TABLE eye.coverage ENABLE TRIGGER coverage_ledger_closed")
+    assert conn.run("SELECT count(*) FROM eye.coverage")[0][0] == coverage_rows + 1
+    with pytest.raises(DatabaseError, match="sealed when it settled"):
+        direct_prune(conn, FLIGHT, proof.proof_id)
+    # Control: the checked coordinator prunes an intact partition.
+    vessel = Partition.parse("synthetic-fixture:vessel:2026-01-01")
+    outcome = execute(conn, vessel, backup_dir=store)
+    assert outcome.verdict.verdict == "eligible" and outcome.pruned > 0
+    assert unpruned(conn, vessel) == 0
+    conn.close()
+
+
 def test_bypassing_the_lateness_check_shows_its_control_is_real(demo, tmp_path, monkeypatch):
     back_up(demo, tmp_path)
     early = FLIGHT.end + timedelta(hours=1)
