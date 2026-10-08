@@ -5,7 +5,10 @@ db-derive-transits, db-prepare-demo (migrate, load fixtures and derive, demo onl
 db-replay, and the Package 5 lifecycle commands: db-rollup, db-manifest-check,
 db-backup, db-restore-drill (synthetic code test), db-retention-plan (read-only)
 and db-retention-execute (refused unless retention.allow_deletion is true, in
-demo mode, for one explicitly named synthetic partition). Exit codes: 0 success,
+demo mode, for one explicitly named synthetic partition); and the research
+commands db-backtest (records a backtest of coverage-weighted baselines over
+current, valid rollup manifests) and db-backtest-replay (recomputes a recorded
+run from the manifests it cites). Exit codes: 0 success,
 2 configuration refused, 3 authentication adapter refused, 4 other startup
 refusal, 5 database operation failed.
 Nothing here opens a browser.
@@ -36,8 +39,11 @@ DB_COMMANDS = (
     "db-restore-drill",
     "db-retention-plan",
     "db-retention-execute",
+    "db-backtest",
+    "db-backtest-replay",
 )
-LIFECYCLE_COMMANDS = DB_COMMANDS[6:]
+LIFECYCLE_COMMANDS = DB_COMMANDS[6:12]
+RESEARCH_COMMANDS = DB_COMMANDS[12:]
 
 
 def _prepare(path: str) -> tuple[EyeConfig, object]:
@@ -51,6 +57,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", required=True, help="path to an EYE TOML configuration")
     parser.add_argument("--partition", help="db-retention-execute: SOURCE:LAYER:YYYY-MM-DD")
     parser.add_argument("--generation", help="db-restore-drill: backup generation id")
+    parser.add_argument("--series", help="db-backtest: SOURCE:LAYER:DERIVATION[:SCOPE]")
+    parser.add_argument("--start", help="db-backtest: first target day, YYYY-MM-DD")
+    parser.add_argument("--end", help="db-backtest: last target day, YYYY-MM-DD")
+    parser.add_argument("--run", help="db-backtest-replay: backtest run id")
     args = parser.parse_args(argv)
 
     try:
@@ -68,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command in LIFECYCLE_COMMANDS:
         return _lifecycle_command(args, config)
+    if args.command in RESEARCH_COMMANDS:
+        return _research_command(args, config)
     if args.command in DB_COMMANDS:
         return _database_command(args.command, config)
 
@@ -396,6 +408,75 @@ def _lifecycle_command(args, config: EyeConfig) -> int:
     finally:
         conn.close()
     print(json.dumps(result, sort_keys=True, default=str))
+    return EXIT_DATABASE if failed else 0
+
+
+def _research_command(args, config: EyeConfig) -> int:
+    """Package 5 research: record a backtest, or replay a recorded one."""
+    import json
+    import os
+    from datetime import date
+
+    from pg8000.exceptions import DatabaseError, InterfaceError
+
+    from eye.storage.db import DatabaseConfigError, connect
+    from eye.worker import backtest, baselines, transits
+
+    res = config.research
+    url = os.environ.get(config.database_url_env)
+    if not url:
+        print(
+            f"eye: REFUSED (configuration): environment variable {config.database_url_env} "
+            "is not set",
+            file=sys.stderr,
+        )
+        return EXIT_CONFIG
+    try:
+        if args.command == "db-backtest":
+            if not (args.series and args.start and args.end):
+                raise baselines.BaselineRefused("--series, --start and --end are required")
+            series = backtest.Series.parse(args.series)
+            first, last = date.fromisoformat(args.start), date.fromisoformat(args.end)
+            params = baselines.Params(
+                bin_hours=res.bin_hours,
+                history_days=res.history_days,
+                min_history_bins=res.min_history_bins,
+                threshold_sigma=res.threshold_sigma,
+                min_excess=res.min_excess,
+                min_target_coverage_pct=res.min_target_coverage_pct,
+            )
+            limits = backtest.Limits(res.max_days, res.max_output_rows)
+            backtest.check_bounds(first, last, params, limits)
+        elif not args.run:
+            raise baselines.BaselineRefused("--run ID is required")
+    except (baselines.BaselineRefused, ValueError) as exc:
+        print(f"eye: REFUSED (configuration): {exc}", file=sys.stderr)
+        return EXIT_CONFIG
+    lines = _lines(transits, config.count_lines) if config.count_lines else []
+    try:
+        conn = connect(url, require_loopback=config.mode == "demo")
+    except DatabaseConfigError as exc:
+        print(f"eye: REFUSED (configuration): {exc}", file=sys.stderr)
+        return EXIT_CONFIG
+    except Exception as exc:  # connection failures are reported, never treated as empty
+        print(f"eye: UNVERIFIED (database unreachable): {type(exc).__name__}", file=sys.stderr)
+        return EXIT_DATABASE
+    try:
+        if args.command == "db-backtest":
+            run = backtest.run_backtest(conn, series, first, last, params, limits, lines)
+            result, failed = run.as_dict(), False
+        else:
+            report = backtest.replay(conn, args.run)
+            result, failed = report.as_dict(), not report.identical
+    except backtest.BacktestRefused as exc:
+        print(f"eye: REFUSED (backtest): {exc}", file=sys.stderr)
+        return EXIT_DATABASE
+    except (DatabaseError, InterfaceError) as exc:
+        print(f"eye: FAILED ({args.command}): database error {type(exc).__name__}", file=sys.stderr)
+        return EXIT_DATABASE
+    finally:
+        conn.close()
+    print(json.dumps(result, sort_keys=True))
     return EXIT_DATABASE if failed else 0
 
 

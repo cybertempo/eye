@@ -3,8 +3,9 @@
 EYE is a planned self-hosted geospatial and solar-system observation and research
 application. This repository holds its public source. **Status: Packages 0
 to 3, the source-independent parts of 4c (world-event ledger) and 4d (news and
-media evidence), and the lifecycle slice of Package 5 (rollups, manifests,
-checked retention and a synthetic backup and restore drill).**
+media evidence), and Package 5: the lifecycle slice (rollups, manifests,
+checked retention and a synthetic backup and restore drill) and the research
+slice (coverage-weighted baselines and a backtester).**
 It contains the layout, tooling, CI, the
 versioned wire schema with validation on both sides, PostgreSQL/PostGIS storage
 for captures, evidence, observations and coverage, a synthetic vessel adapter
@@ -226,6 +227,39 @@ above.)
 
 See [ADR 0007](docs/adr/0007-package-5-lifecycle.md).
 
+## Research: coverage-weighted baselines and a backtester (Package 5)
+
+Every command below runs on the **developer laptop** (or in CI, through the
+tests) against a loopback database with synthetic data, after `db-rollup`.
+Nothing here calls a model, a provider or the network.
+
+| Where it runs | Command | What it does |
+|---|---|---|
+| Developer laptop | `… -m eye db-backtest --series SOURCE:LAYER:DERIVATION[:SCOPE] --start YYYY-MM-DD --end YYYY-MM-DD --config …` | Checks every rollup manifest it will cite, backtests each target bin against the same bin on earlier days, and records the run; exits 5 if a manifest is stale |
+| Developer laptop | `… -m eye db-backtest-replay --run ID --config …` | Recomputes a recorded run from the manifests it cites and compares every result; exits 5 on any difference |
+
+(`…` is `PYTHONPATH=backend .venv/bin/python`, with `EYE_DATABASE_URL` set as
+above. Series are `observations-hourly` for a position source, or
+`transit-daily:line:<id>/v<n>` for `synthetic-ais` vessels. Parameters and
+bounds are in the `[research]` table.)
+
+- **A gap is never a zero.** Only hours that are exactly covered count. An
+  uncovered, failed, partial or missing hour adds nothing to the baseline, and
+  a target bin without enough coverage, or without enough covered history,
+  *abstains* with a reason code and no value.
+- **Results are facts.** Each bin is `detected`, `not_detected` or
+  `abstained`, with numbers and a fixed reason code; nothing writes prose
+  about a result. A detection means "unusually high against its own recent
+  history", not a cause or a forecast.
+- **Replayable.** A run records the exact manifests it read. A late arrival
+  changes nothing already recorded: it makes those manifests stale, the next
+  `db-rollup` adds new ones, and the next backtest is a new run. Replaying an
+  old run gives identical results.
+- **Bounded.** At most `max_days` target days and `max_output_rows` results;
+  larger requests are refused, never cut short.
+
+See [ADR 0008](docs/adr/0008-package-5-baselines-backtester.md).
+
 ## Layout
 
 ```text
@@ -233,7 +267,7 @@ backend/eye/api/      HTTP and WebSocket API, feed queries, auth port
 backend/eye/ingest/   capture pipeline and synthetic AIS adapter
 backend/eye/storage/  database connection and migration runner
 backend/eye/wire/     wire-schema runtime validator
-backend/eye/worker/   tracks, line crossings, transit counts, rollups, retention, synthetic backup
+backend/eye/worker/   tracks, line crossings, transit counts, rollups, retention, synthetic backup, baselines, backtester
 backend/eye/raster/   optional imagery pipeline (Package 6)
 config/               example configuration
 deploy/dev/           loopback synthetic demo container
@@ -262,7 +296,10 @@ web/                  browser client: THEATRE globe and DESK panel
 - A passing CI run shows the public code builds and its synthetic tests pass. It
   is **not** evidence that EYE is installed or secure on the owner's private
   server; that is proved separately (brief §8).
-- Package 5 is partial: coverage-weighted baselines and the backtester are not
-  built, rollups are not shown in the browser, and the only backup target is a
-  synthetic local directory. Production refuses `retention.allow_deletion`.
+- Package 5 runs on synthetic data only: rollups and backtest results are not
+  shown in the browser, the detector's false detection rate is measured only on
+  invented series, and the only backup target is a synthetic local directory.
+  Production refuses `retention.allow_deletion`; deleting real data still needs
+  database role separation and a proven real backup and restore on the private
+  server.
 - Dependency and image pins are listed in [`docs/dependencies.md`](docs/dependencies.md).

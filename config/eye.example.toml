@@ -104,3 +104,23 @@ backup_dir_env = "EYE_BACKUP_DIR"
 # Name of the environment variable holding the URL of an EMPTY loopback
 # database that `db-restore-drill` restores into (never the main database).
 restore_url_env = "EYE_RESTORE_DATABASE_URL"
+
+[research]
+# Package 5 coverage-weighted baselines and backtester (`db-backtest`). A target
+# bin is compared with the same bin on each of the previous history_days days.
+# Only exactly covered hours count; a gap is never a zero. Results are facts
+# (verdict, reason code, numbers), never prose, and no model is involved.
+# Bin length in hours, aligned to the UTC day: 1, 2, 3, 4, 6, 8, 12 or 24.
+bin_hours = 1
+history_days = 14
+# Abstain unless the history holds at least this many bins' worth of exact coverage.
+min_history_bins = 3
+# A bin is detected only when it exceeds the baseline by at least min_excess and
+# by at least threshold_sigma standard deviations (one-sided: more than expected).
+threshold_sigma = 5
+min_excess = 4
+# Abstain unless this percentage of the target bin is exactly covered.
+min_target_coverage_pct = 100
+# Hard bounds: a larger request is refused, never cut short.
+max_days = 92
+max_output_rows = 10000
