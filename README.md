@@ -99,12 +99,18 @@ observed transits of the synthetic count line per hour: an outage shows
 count shows its coverage, crossings, evidence batches, bracketing observations,
 timestamps and source label. Rendering presets change only what the globe draws.
 
+After **Show interval**, a bounded-state rebuild or any resynchronisation, the
+page reads *not current* (status and stale banner) until the requested view's
+own snapshot has been applied; until then it keeps describing the view it
+shows. The transit counts for a new window read *Pending*, never 0, until they
+load.
+
 | Endpoint (loopback) | Returns |
 |---|---|
 | `GET /api/v0/health` | process health |
 | `GET /api/v0/snapshot?bbox=&start=&end=&layers=` | tracks and coverage for a bounded area and interval (default: the latest hours with coverage) |
 | `GET /api/v0/transits?start=&end=&line=` | transit counts for one versioned line, with cited crossings and coverage |
-| `GET /api/v0/stream` (WebSocket) | `subscribe` → snapshot with cursor → sequenced deltas; `resync_required` on reconnect, gap or expired cursor |
+| `GET /api/v0/stream` (WebSocket) | `subscribe` → snapshot with cursor → sequenced deltas; `resync_required` on reconnect, gap or expired cursor. The browser sends one subscribe per connection and opens a new connection for each view change, rebuild, resync or reconnect |
 
 Every limit is in the `[api]` table: interval length, rows, response bytes,
 query time, database connections, live sockets and a hard per-client outbound

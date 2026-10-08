@@ -123,6 +123,17 @@ the empty `media` arrays version 4 requires added.
   method; there is no observed-time field for it. The browser also refuses a
   count whose total is not inbound + outbound, which JSON Schema cannot express.
 
+## WebSocket requests and answers
+
+The server answers each `subscribe` with one snapshot (preceded by
+`resync_required` when a resume cursor was sent) or one error, in order. No
+message carries a request id, and the live feed itself can also send errors
+(a 503 when the change feed cannot be read), so a client cannot tell which
+request an error answers on a connection that has carried more than one
+subscribe. The browser therefore sends one subscribe per connection and
+ignores everything a replaced connection delivers (ADR 0004, item 19). A
+future request id would need a new protocol version.
+
 ## Version mismatch
 
 A message's `schema_version` is read before it is validated, so another

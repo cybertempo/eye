@@ -3,9 +3,10 @@
 // Every message is validated against the wire schema before use. A delta whose
 // previous_cursor or sequence does not follow the last one applied is a gap:
 // the client stops applying deltas and subscribes again with its last good
-// cursor, then rebuilds its state from the fresh snapshot. A dropped connection
-// is retried with capped backoff and the same resume cursor. Nothing is queued
-// on the client: each message is applied or refused as it arrives.
+// cursor, on a new connection, then rebuilds its state from the fresh snapshot.
+// A dropped connection is retried with capped backoff and the same resume
+// cursor. Nothing is queued on the client: each message is applied or refused
+// as it arrives.
 //
 // A fresh subscription (a new view, or a rebuild of cleared client state) puts
 // the feed out of "live" at once: the data on the page belongs to the previous

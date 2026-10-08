@@ -42,7 +42,8 @@ and to `eye.wire/4` for news and media items
    §5). After `subscribe` the client gets a snapshot with its cursor, then
    deltas numbered 1, 2, … each naming the cursor it follows. The browser
    treats a wrong `previous_cursor` or sequence as a gap: it stops applying
-   deltas and subscribes again with its last good cursor. A reconnecting client
+   deltas and subscribes again with its last good cursor, on a new connection
+   (one subscribe per connection since O65, item 19). A reconnecting client
    sends that cursor and receives `resync_required` (`reconnect` if it is a
    valid cursor of this database, `expired_cursor` otherwise) and a fresh
    snapshot; state is rebuilt from the database, not patched across the gap.
@@ -221,7 +222,8 @@ and to `eye.wire/4` for news and media items
     (status `resyncing`, stale banner) for every caller: Show interval, the
     bounded-state rebuild and the first subscription. Only a snapshot whose
     area and interval match the latest request is applied and returns the page
-    to `live`; a snapshot still in flight for an earlier request is ignored. A
+    to `live`; a snapshot still in flight for an earlier request is ignored
+    (this matching was replaced by one connection per request, item 19). A
     delta whose application triggers a rebuild no longer reports `live`. The
     view summary and interval change only when the matching snapshot is
     applied; the transit panel is then marked pending (never zero) until that
