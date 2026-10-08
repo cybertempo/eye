@@ -87,5 +87,5 @@ Reproduced on `b1f3064` (cloud dev container, disposable PostGIS):
     the table on an unclaimed database can claim it.
   - Role separation is Package 8 work.
 - **Migration numbering:** this work was reviewed as PR #14 with a migration 0009, from main. PR #13
-  merges first and keeps 0009, so this migration is 0010 here. The ADR keeps its own number (0009),
+  merged first (as `42250d7`) and keeps 0009, so this migration is 0010 here. The ADR keeps its own number (0009),
   which counts ADRs, not migrations.
