@@ -36,6 +36,7 @@ from conftest import EXAMPLE_CONFIG, REPO_ROOT
 from eye.config import ConfigError, parse_config
 from eye.ingest import capture
 from eye.ingest.capture import ingest, load_fixtures
+from eye.storage import identity
 from eye.storage.db import connect, transaction
 from eye.storage.migrate import migrate
 from eye.worker import backtest, baselines, rollups, transits
@@ -91,6 +92,7 @@ def scenario_db(admin_url):
         conn.url = url
         try:
             migrate(conn)
+            identity.claim(conn, identity.DEMO)  # the commands below run in demo mode
             for doc in sr.captures(SPEC, scenario):
                 ingest(conn, doc)
             assert not [r for r in rollups.refresh_all(conn, []) if r.error]
@@ -898,7 +900,8 @@ def test_migration_0008_leaves_earlier_history_unchanged(make_db, tmp_path):
     prior = digest()
     assert migrate(conn, before) == [8]
     assert digest() == prior
-    assert migrate(conn) == [9]  # 0009 adds a trigger only
+    # 0009 adds a trigger only; 0010 (database identity) adds one empty table.
+    assert migrate(conn) == [9, 10]
     assert digest() == prior
     # Positive control: the new tables accept a run over the old manifests.
     result = backtest.run_backtest(

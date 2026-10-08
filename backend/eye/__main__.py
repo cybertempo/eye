@@ -2,6 +2,8 @@
 
 Commands: check-config, serve, db-migrate, db-status, db-load-fixtures,
 db-derive-transits, db-prepare-demo (migrate, load fixtures and derive, demo only),
+(db-migrate and db-prepare-demo claim the database for the demo or a private
+installation; demo mode refuses a private or real database before writing),
 db-replay, and the Package 5 lifecycle commands: db-rollup, db-manifest-check,
 db-backup, db-restore-drill (synthetic code test), db-retention-plan (read-only)
 and db-retention-execute (refused unless retention.allow_deletion is true, in
@@ -117,6 +119,36 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _identity_refusal(conn, config: EyeConfig, command: str) -> int | None:
+    """Refuse, before reading further or writing, a database of the other kind.
+
+    Only db-migrate and db-prepare-demo may claim a database (after migrating);
+    db-status only reads, in a read-only transaction, so it needs no claim. Every
+    other command needs the claim of its mode.
+    """
+    from eye.storage import identity
+
+    try:
+        if config.mode == "demo":
+            if command in ("db-migrate", "db-prepare-demo", "db-status"):
+                identity.check_demo_target(conn)
+            else:
+                identity.require(conn, identity.DEMO)
+        elif command == "db-migrate":
+            identity.check_private_candidate(conn)
+        elif command != "db-status":
+            identity.require(conn, identity.PRIVATE)
+    except identity.IdentityRefused as exc:
+        conn.close()
+        print(f"eye: REFUSED (database): {exc}", file=sys.stderr)
+        return EXIT_CONFIG
+    except Exception as exc:  # a failed check is never a pass
+        conn.close()
+        print(f"eye: UNVERIFIED (database identity): {type(exc).__name__}", file=sys.stderr)
+        return EXIT_DATABASE
+    return None
+
+
 def _database_command(command: str, config: EyeConfig) -> int:
     import json
     import os
@@ -124,9 +156,12 @@ def _database_command(command: str, config: EyeConfig) -> int:
     from pg8000.exceptions import DatabaseError, InterfaceError
 
     from eye.ingest.capture import CaptureRejected, load_fixtures, replay_pending, verify_replay
+    from eye.storage import identity
     from eye.storage.db import DatabaseConfigError, connect
     from eye.storage.migrate import MigrationError, migrate, status
     from eye.worker import transits
+
+    kind = identity.DEMO if config.mode == "demo" else identity.PRIVATE
 
     url = os.environ.get(config.database_url_env)
     if not url:
@@ -157,11 +192,15 @@ def _database_command(command: str, config: EyeConfig) -> int:
     except Exception as exc:  # connection failures are reported, never treated as empty
         print(f"eye: UNVERIFIED (database unreachable): {type(exc).__name__}", file=sys.stderr)
         return EXIT_DATABASE
+    refused = _identity_refusal(conn, config, command)
+    if refused is not None:
+        return refused
     try:
         if command == "db-migrate":
-            result = {"applied_now": migrate(conn)}
+            result = {"applied_now": migrate(conn), "database": identity.claim(conn, kind)}
         elif command == "db-prepare-demo":
             applied = migrate(conn)
+            identity.claim(conn, identity.DEMO)
             batches = load_fixtures(conn, config.capture_fixtures)
             if config.ais_capture_fixtures is not None:
                 batches += load_fixtures(conn, config.ais_capture_fixtures)
@@ -226,6 +265,9 @@ def _database_command(command: str, config: EyeConfig) -> int:
             if result["discrepancies"]:
                 print(json.dumps(result, sort_keys=True))
                 return EXIT_DATABASE
+    except identity.IdentityRefused as exc:
+        print(f"eye: REFUSED (database): {exc}", file=sys.stderr)
+        return EXIT_CONFIG
     except (
         MigrationError,
         CaptureRejected,
@@ -305,6 +347,9 @@ def _lifecycle_command(args, config: EyeConfig) -> int:
     except Exception as exc:  # connection failures are reported, never treated as empty
         print(f"eye: UNVERIFIED (database unreachable): {type(exc).__name__}", file=sys.stderr)
         return EXIT_DATABASE
+    refused = _identity_refusal(conn, config, command)
+    if refused is not None:
+        return refused
     failed = False
     try:
         if command == "db-rollup":
@@ -461,6 +506,9 @@ def _research_command(args, config: EyeConfig) -> int:
     except Exception as exc:  # connection failures are reported, never treated as empty
         print(f"eye: UNVERIFIED (database unreachable): {type(exc).__name__}", file=sys.stderr)
         return EXIT_DATABASE
+    refused = _identity_refusal(conn, config, args.command)
+    if refused is not None:
+        return refused
     try:
         if args.command == "db-backtest":
             run = backtest.run_backtest(conn, series, first, last, params, limits, lines)

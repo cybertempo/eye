@@ -32,6 +32,7 @@ from eye.api import feed, stream
 from eye.api import websocket as ws
 from eye.api.auth import AuthPort
 from eye.config import EyeConfig, is_loopback_host
+from eye.storage import identity
 from eye.storage.db import DatabaseConfigError
 from eye.wire import SCHEMA_VERSION, WireValidationError, validate_message, wire_version_of
 
@@ -493,7 +494,12 @@ class _Reader:
 
 
 def check_database(config: EyeConfig, database_url: str) -> None:
-    """Refuse to start unless the database is reachable and migrated for the API."""
+    """Refuse to start unless the database is reachable, migrated, and of this mode's kind.
+
+    Each mode needs a database already claimed for it (db-prepare-demo or
+    db-migrate); the demo also refuses one holding a non-synthetic source. A claim
+    is permanent, so the database cannot change kind while this server runs.
+    """
     try:
         conn = feed.open_reader(
             database_url,
@@ -505,9 +511,16 @@ def check_database(config: EyeConfig, database_url: str) -> None:
     except Exception as exc:  # noqa: BLE001
         raise StartupError(f"database unreachable ({type(exc).__name__})") from exc
     try:
-        conn.run("SELECT 1 FROM eye.feed_epoch")
-    except Exception as exc:  # noqa: BLE001
-        raise StartupError("database is not migrated; run db-migrate first") from exc
+        try:
+            conn.run("SELECT 1 FROM eye.feed_epoch")
+        except Exception as exc:  # noqa: BLE001
+            raise StartupError("database is not migrated; run db-migrate first") from exc
+        try:
+            identity.require(conn, identity.DEMO if config.mode == "demo" else identity.PRIVATE)
+        except identity.IdentityRefused as exc:
+            raise StartupError(str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - a failed check is never a pass
+            raise StartupError(f"database identity unverified ({type(exc).__name__})") from exc
     finally:
         with contextlib.suppress(Exception):
             conn.close()

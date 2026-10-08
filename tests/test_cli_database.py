@@ -32,7 +32,7 @@ def test_db_commands_end_to_end(make_db):
     url = make_db()
     migrated = run_eye("db-migrate", url=url)
     assert migrated.returncode == 0, migrated.stderr
-    assert json.loads(migrated.stdout) == {"applied_now": EXISTING}
+    assert json.loads(migrated.stdout) == {"applied_now": EXISTING, "database": "synthetic-demo"}
     loaded = run_eye("db-load-fixtures", url=url)
     assert loaded.returncode == 0, loaded.stderr
     first = json.loads(loaded.stdout)

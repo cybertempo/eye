@@ -59,9 +59,12 @@ def connect(url: str, *, require_loopback: bool = False, timeout: float = 10.0) 
 
 
 @contextlib.contextmanager
-def transaction(conn: Connection) -> Iterator[Connection]:
-    """Run a block in one transaction; roll back on any exception."""
-    conn.run("BEGIN")
+def transaction(conn: Connection, *, read_only: bool = False) -> Iterator[Connection]:
+    """Run a block in one transaction; roll back on any exception.
+
+    A read-only transaction makes the server refuse any write inside it.
+    """
+    conn.run("BEGIN READ ONLY" if read_only else "BEGIN")
     try:
         yield conn
     except BaseException:

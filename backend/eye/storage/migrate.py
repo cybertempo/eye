@@ -237,8 +237,19 @@ def migrate(conn: Connection, directory: Path = MIGRATIONS_DIR) -> list[int]:
 
 
 def status(conn: Connection, directory: Path = MIGRATIONS_DIR) -> dict:
+    """Report applied and pending migrations without changing the database.
+
+    It reads in a read-only transaction and reports a missing bookkeeping table
+    as nothing applied, instead of creating it as ``migrate`` does (O72).
+    """
     migrations = discover(directory)
-    history = applied(conn)
+    with transaction(conn, read_only=True):
+        exists = conn.run("SELECT to_regclass('public.eye_schema_migrations') IS NOT NULL")
+        history = (
+            {v for (v,) in conn.run("SELECT version FROM public.eye_schema_migrations")}
+            if exists[0][0]
+            else set()
+        )
     return {
         "applied": sorted(history),
         "pending": [m.version for m in migrations if m.version not in history],
