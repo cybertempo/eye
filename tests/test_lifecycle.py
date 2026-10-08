@@ -1278,7 +1278,9 @@ def test_migration_0007_leaves_earlier_history_unchanged(make_db, tmp_path):
         ]
 
     prior = digest()
-    assert migrate(conn) == [7]
+    # Exactly 0007: later migrations are checked by their own tests.
+    shutil.copy(next(migrations.glob("0007_*.sql")), before)
+    assert migrate(conn, before) == [7]
     assert digest() == prior
     assert verify_replay(conn) == []
     conn.close()

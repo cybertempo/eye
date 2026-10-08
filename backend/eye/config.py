@@ -33,6 +33,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "database",
         "providers",
         "retention",
+        "research",
     },
     "runtime": {"mode"},
     "server": {
@@ -77,7 +78,18 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "database": {"url_env"},
     "providers": {"enabled"},
     "retention": {"allow_deletion", "lateness_hours", "backup_dir_env", "restore_url_env"},
+    "research": {
+        "bin_hours",
+        "history_days",
+        "min_history_bins",
+        "threshold_sigma",
+        "min_excess",
+        "min_target_coverage_pct",
+        "max_days",
+        "max_output_rows",
+    },
 }
+RESEARCH_BIN_HOURS = (1, 2, 3, 4, 6, 8, 12, 24)
 
 
 class ConfigError(ValueError):
@@ -144,6 +156,20 @@ class RetentionConfig:
 
 
 @dataclass(frozen=True)
+class ResearchConfig:
+    """Package 5 baselines and backtester: parameters and hard bounds."""
+
+    bin_hours: int
+    history_days: int
+    min_history_bins: int
+    threshold_sigma: int
+    min_excess: int
+    min_target_coverage_pct: int
+    max_days: int
+    max_output_rows: int
+
+
+@dataclass(frozen=True)
 class EyeConfig:
     source: Path
     mode: str
@@ -159,6 +185,7 @@ class EyeConfig:
     database_url_env: str
     enabled_providers: tuple[str, ...]
     retention: RetentionConfig
+    research: ResearchConfig
 
 
 def is_loopback_host(host: str) -> bool:
@@ -349,6 +376,22 @@ def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None)
         backup_dir_env=backup_dir_env,
         restore_url_env=restore_url_env,
     )
+    res = _table(raw, "research")
+    research = ResearchConfig(
+        bin_hours=_int(res, "bin_hours", 1, 1, 24),
+        history_days=_int(res, "history_days", 14, 1, 60),
+        min_history_bins=_int(res, "min_history_bins", 3, 1, 60),
+        threshold_sigma=_int(res, "threshold_sigma", 5, 1, 20),
+        min_excess=_int(res, "min_excess", 4, 1, 1_000_000),
+        min_target_coverage_pct=_int(res, "min_target_coverage_pct", 100, 1, 100),
+        max_days=_int(res, "max_days", 92, 1, 366),
+        max_output_rows=_int(res, "max_output_rows", 10_000, 1, 100_000),
+    )
+    if research.bin_hours not in RESEARCH_BIN_HOURS:
+        raise ConfigError(f"research.bin_hours must be one of {RESEARCH_BIN_HOURS}")
+    if research.min_history_bins > research.history_days:
+        raise ConfigError("research.min_history_bins cannot exceed research.history_days")
+
     if allow_deletion and mode != "demo":
         # The only backup target in this repository is synthetic; production
         # retention needs the private, independently verified backup first.
@@ -405,6 +448,7 @@ def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None)
         database_url_env=url_env,
         enabled_providers=tuple(enabled),
         retention=retention,
+        research=research,
     )
 
 

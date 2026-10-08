@@ -32,6 +32,10 @@ ledger rows are never deleted. Provider deletion or refresh obligations (for
 example for a video or photo service) are **not** encoded anywhere and stay
 UNVERIFIED until a source's official terms are reviewed in its own row.
 
+Package 5 status (research slice): no source is added. Baselines and the
+backtester read recorded rollups of the synthetic sources only; their fixture
+(`tests/fixtures/synthetic/research/`) is invented `synthetic-fixture` data.
+
 Occurrence completeness: EYE treats each event capture as a reporting window
 (which reports were published then), never as proof of which events occurred.
 Occurrence completeness is shown as unknown unless a source's approved row
