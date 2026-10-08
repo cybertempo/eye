@@ -89,6 +89,12 @@ Scope:
      cites a manifest that is not current: one with a later manifest for its
      key, or with a settled batch of its source and layer overlapping its day
      that it does not include.
+   - **The guard requires READ COMMITTED:** in that mode each statement in the
+     trigger takes its snapshot after the lock is granted, so it sees a
+     correction that committed while it waited. A lock cannot refresh a
+     REPEATABLE READ or SERIALIZABLE snapshot, so the trigger refuses to record
+     a run in such a transaction at all. The application records in READ
+     COMMITTED.
    - **Recorded:** `eye.backtest_run` holds the series, the range, the
      parameters, the cited manifest ids, an input checksum (manifest ids and
      their output checksums), the result counts and an output checksum.
@@ -152,6 +158,7 @@ bins).
 | Late corrections | After a late backfill, a new run is refused (stale manifests) and nothing is recorded. A **mutant** that reads the current rollups instead of the cited manifests changes the old run's result. | The old run still replays identically. After `db-rollup`, a new run with a new id records the new result: exactly hours 18 to 20 of 2026-03-22 change, from abstained to evaluated. |
 | Replay | With the append-only trigger disabled in a disposable database, an altered stored result fails replay and names the row. An update with the trigger on is refused. An unknown run id fails. | A replay is identical. Running again records nothing new. A separate database built from the same fixtures gives the same run id, manifests and stored results. Reversing the series' order changes nothing. |
 | Check-to-record race (O70) | A late correction ingested while a backtest is between its checks and its commit waits for the lock and times out (`55P03`); it cannot commit in between. A run checked before a correction and recorded after it is refused by `store`, and, with the Python lock and recheck bypassed, by the database (`no longer current`). Nothing is recorded. On `e27ed0b`, the same sequence recorded the stale run. | The concurrent run is recorded and replays identically; the correction then commits. A run whose inputs did not change between a separate check and record is recorded and replays, and the database accepts it. |
+| Database guard alone (O70 follow-up) | A REPEATABLE READ snapshot taken before a late correction commits cannot record the checked run (`READ COMMITTED` required). A READ COMMITTED insert of that run waits in the guard for the correction's open transaction, then refuses the run (`no longer current`). Nothing is recorded. On `87f954a`, the REPEATABLE READ insert was accepted. | Unchanged inputs inserted directly in READ COMMITTED are accepted and replay. After `db-rollup`, the `db-backtest` command records a run and `db-backtest-replay` reports it identical. |
 
 **Old code comparison.** Main (`7cfb9792`) has no baseline, backtest or
 migration 0008. The new tests run against main's backend fail at import
@@ -173,6 +180,14 @@ The mutants above show each control would fail if its rule were removed:
   from before the check until commit, and the database refuses a run citing a
   manifest that is not current. Migration 0008 is revised in place: it has
   never been merged or applied outside a disposable test database.
+- **O70 follow-up, database guard under an older snapshot:** on `87f954a` the
+  trigger's lock could not refresh a REPEATABLE READ snapshot. A direct insert
+  in a transaction whose snapshot predated a late correction recorded the
+  stale run (reproduced). The trigger now refuses any transaction that is not
+  READ COMMITTED; in READ COMMITTED it sees every correction committed before
+  its lock was granted (tested with the correction committing during the
+  wait). The database guarantee is therefore: a run is recorded only in READ
+  COMMITTED, and only if its manifests are current at commit.
 
 ## Consequences and open decisions
 

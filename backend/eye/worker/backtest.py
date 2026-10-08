@@ -293,8 +293,13 @@ def locked(conn: Connection) -> Iterator[Connection]:
     SHARE mode lets other readers (and other backtests) proceed but makes every
     writer to these tables wait for this transaction's commit, so the manifests
     checked inside it cannot go stale before the run is recorded (finding O70).
+
+    READ COMMITTED, set explicitly whatever the session default, so every check
+    after the lock sees all that committed before it; the database guard refuses
+    any other isolation level.
     """
     with transaction(conn):
+        conn.run("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
         conn.run(f"LOCK TABLE {', '.join(LOCKED_TABLES)} IN SHARE MODE")
         yield conn
 

@@ -9,7 +9,8 @@
 --   or correction changes a result only through a new manifest and a new run;
 --   runs and their results are append-only. A run may cite only manifests
 --   that are current and complete when it is recorded; the check locks the
---   batch and manifest tables until commit (O70).
+--   batch and manifest tables until commit (O70) and runs only in a READ
+--   COMMITTED transaction, so its snapshot is taken after the lock.
 -- * Results are deterministic facts, never prose: a verdict, a reason code
 --   from a fixed list when it abstains, and numbers. An abstained result has no
 --   observed, expected or score value (a gap is never a zero), and an evaluated
@@ -54,11 +55,23 @@ CREATE TRIGGER backtest_run_append_only BEFORE UPDATE OR DELETE ON eye.backtest_
 -- ends, so no batch can arrive or settle and no manifest can be added between
 -- this check and the commit (finding O70). The application takes the same
 -- locks before its own checks.
+--
+-- The check is only sound in a READ COMMITTED transaction: there, each
+-- statement below takes a new snapshot after the lock is granted, so it sees
+-- every batch and manifest committed before the lock. A REPEATABLE READ or
+-- SERIALIZABLE transaction keeps the snapshot of its first statement, which a
+-- lock cannot refresh, so a correction committed in between would be invisible
+-- here. Such a transaction is therefore refused outright.
 CREATE FUNCTION eye.backtest_inputs_current() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
     bad text;
 BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'backtest run % must be recorded in a READ COMMITTED transaction, not %; '
+            'an older snapshot could hide a late correction', NEW.run_id,
+            current_setting('transaction_isolation');
+    END IF;
     LOCK TABLE eye.capture_batch, eye.derivation_manifest IN SHARE MODE;
     SELECT m.id::text INTO bad FROM unnest(NEW.input_manifest_ids) AS m(id)
     WHERE NOT EXISTS (SELECT 1 FROM eye.derivation_manifest d WHERE d.manifest_id = m.id)

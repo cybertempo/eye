@@ -34,6 +34,7 @@ import pytest
 import synthetic_research as sr
 from conftest import EXAMPLE_CONFIG, REPO_ROOT
 from eye.config import ConfigError, parse_config
+from eye.ingest import capture
 from eye.ingest.capture import ingest, load_fixtures
 from eye.storage.db import connect, transaction
 from eye.storage.migrate import migrate
@@ -449,6 +450,87 @@ def test_unchanged_inputs_are_recorded_after_a_separate_check_and_replay(scenari
     # The database guard accepts current manifests (an idempotent direct insert).
     with transaction(conn):
         assert backtest._insert(conn, preview) is False
+
+
+def test_database_guard_sees_a_correction_committed_after_an_older_snapshot(fresh_db, monkeypatch):
+    """The database guard alone, with no Python lock or recheck (O70 follow-up).
+
+    A lock cannot refresh a REPEATABLE READ snapshot, so the guard refuses to
+    record a run in such a transaction. In READ COMMITTED, each statement in the
+    guard takes its snapshot after the lock, so it sees a correction that
+    committed while it waited.
+    """
+    conn = fresh_db("null")
+    url = conn.url
+    count = "SELECT count(*) FROM eye.backtest_run WHERE run_id = :r"
+    # Positive control: unchanged inputs, inserted directly, are accepted.
+    unchanged = backtest.compute(conn, SERIES, FIRST, LAST, Params(threshold_sigma=7), Limits(), [])
+    with transaction(conn):
+        assert backtest._insert(conn, unchanged) is True
+    assert backtest.replay(conn, unchanged.run_id).identical
+    stale = backtest.compute(conn, SERIES, FIRST, LAST, Params(threshold_sigma=6), Limits(), [])
+    # A REPEATABLE READ snapshot fixed before the correction exists.
+    older = connect(url)
+    older.run("BEGIN ISOLATION LEVEL REPEATABLE READ")
+    older.run("SELECT count(*) FROM eye.capture_batch")
+    # The correction is archived, then settled in a transaction left open.
+    writer = connect(url)
+    (doc,) = sr.late_captures(SPEC)
+    batch_id = capture.archive(writer, doc).batch_id
+    writer.run("BEGIN")
+    with monkeypatch.context() as m:
+        m.setattr(capture, "transaction", lambda c: contextlib.nullcontext(c))
+        capture.commit_batch(writer, batch_id)
+    # A READ COMMITTED insert of the checked run waits in the guard for that lock.
+    inserting = connect(url)
+    outcome: list = []
+
+    def insert() -> None:
+        try:
+            with transaction(inserting):
+                outcome.append(backtest._insert(inserting, stale))
+        except DatabaseError as exc:
+            outcome.append(exc)
+
+    worker = threading.Thread(target=insert, name="insert", daemon=True)
+    worker.start()
+    waiting = (
+        "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
+        "AND query LIKE 'INSERT INTO eye.backtest_run%'"
+    )
+    for _ in range(300):
+        if conn.run(waiting)[0][0]:
+            break
+        worker.join(0.1)
+    assert conn.run(waiting)[0][0] == 1 and not outcome  # blocked, not finished
+    writer.run("COMMIT")  # the correction commits while the guard waits
+    worker.join(60)
+    (refused,) = outcome
+    assert isinstance(refused, DatabaseError) and "no longer current" in str(refused)
+    # The older snapshot cannot see the correction, so it may not record at all.
+    with pytest.raises(DatabaseError, match="READ COMMITTED"):
+        backtest._insert(older, stale)
+    older.run("ROLLBACK")
+    for c in (older, writer, inserting):
+        c.close()
+    assert conn.run(count, r=stale.run_id)[0][0] == 0
+    # Positive control: after db-rollup, the normal command records and replays.
+    assert run_eye("db-rollup", url=url).returncode == 0
+    done = run_eye(
+        "db-backtest",
+        "--series",
+        SERIES.key,
+        "--start",
+        "2026-03-15",
+        "--end",
+        "2026-03-22",
+        url=url,
+    )
+    assert done.returncode == 0, done.stderr
+    report = json.loads(done.stdout)
+    assert conn.run(count, r=report["run_id"])[0][0] == 1
+    replayed = run_eye("db-backtest-replay", "--run", report["run_id"], url=url)
+    assert replayed.returncode == 0 and json.loads(replayed.stdout)["identical"] is True
 
 
 # --- control 5: replay -------------------------------------------------------------
