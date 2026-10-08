@@ -44,10 +44,19 @@ PYTHONPATH=backend "$PY" -m eye check-config --config config/eye.example.toml
 
 step "tests (loopback demo, wire schema on both sides, PostGIS storage)"
 export EYE_REQUIRE_DB=1
+# Tests run in parallel worker processes (pytest-xdist). Each test still gets
+# its own fresh database, so workers share only the server. The count is fixed
+# rather than one per core because the disposable test server's memory limit
+# (scripts/test-db.sh) is sized for it; EYE_TEST_WORKERS=0 runs them serially.
+WORKERS="${EYE_TEST_WORKERS:-4}"
+case "$WORKERS" in
+  '' | *[!0-9]*) echo "verify: EYE_TEST_WORKERS must be a whole number" >&2; exit 1 ;;
+esac
+PYTEST=("$PY" -m pytest -n "$WORKERS" --dist worksteal)
 if [ -n "${EYE_TEST_DATABASE_URL:-}" ]; then
-  "$PY" -m pytest
+  "${PYTEST[@]}"
 else
-  scripts/test-db.sh run "$PY" -m pytest
+  scripts/test-db.sh run "${PYTEST[@]}"
 fi
 
 if [ "${1:-}" = "--container" ]; then

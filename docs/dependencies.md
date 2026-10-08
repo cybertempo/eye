@@ -7,7 +7,7 @@ developer, CI or container tool, pinned as below.
 | What | Pinned in | Pin |
 |---|---|---|
 | Python runtime (pg8000 and its dependencies) | `requirements/runtime.in` → `requirements/runtime.lock` | exact versions with SHA-256 hashes |
-| Python dev tools (pytest, ruff, jsonschema and Playwright for tests), plus runtime | `requirements/dev.in` → `requirements/dev.lock` | exact versions with SHA-256 hashes |
+| Python dev tools (pytest, pytest-xdist, ruff, jsonschema and Playwright for tests), plus runtime | `requirements/dev.in` → `requirements/dev.lock` | exact versions with SHA-256 hashes |
 | Headless browser for tests | Playwright 1.56.0 in `requirements/dev.lock` | the Chromium headless-shell build that Playwright release names (1194, Chromium 141.0.7390.37), fetched by `scripts/setup.sh` from Playwright's CDN; set `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` where that build is preinstalled |
 | CI audit tool (pip-audit) | `requirements/audit.in` → `requirements/audit.lock` | exact versions with SHA-256 hashes |
 | TypeScript | `web/package.json` → `web/package-lock.json` | exact version and integrity hashes |

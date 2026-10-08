@@ -31,8 +31,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The data directory lives in memory and counts towards the memory limit. 2 GiB
+# leaves headroom for scripts/verify.sh's parallel test workers (about 0.9 GiB
+# at peak with four) without letting the kernel kill the server mid-run.
 docker run -d --name "$name" -e POSTGRES_PASSWORD -p 127.0.0.1::5432 \
-  --tmpfs /var/lib/postgresql/data:rw,size=512m --memory 512m "$IMAGE" >/dev/null
+  --tmpfs /var/lib/postgresql/data:rw,size=1g --memory 2g "$IMAGE" >/dev/null
 port="$(docker port "$name" 5432/tcp | head -n 1 | cut -d: -f2)"
 ready=""
 for _ in $(seq 1 60); do
