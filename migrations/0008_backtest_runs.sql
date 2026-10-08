@@ -17,8 +17,9 @@
 --   one needs exposure. The detail object holds integers only.
 -- * Expected lock impact: none while migrating; the new tables are created
 --   empty. At run time, recording a backtest run holds SHARE locks on
---   eye.capture_batch and eye.derivation_manifest until its transaction ends,
---   so captures and rollups wait for it (a backtest is short and bounded).
+--   eye.capture_batch, eye.derivation_run and eye.derivation_manifest until
+--   its transaction ends, so captures, transit runs and rollups wait for it
+--   (a backtest is short and bounded).
 
 CREATE TABLE eye.backtest_run (
     run_id             uuid PRIMARY KEY,
@@ -48,13 +49,25 @@ CREATE TRIGGER backtest_run_append_only BEFORE UPDATE OR DELETE ON eye.backtest_
     FOR EACH ROW EXECUTE FUNCTION eye.refuse_change();
 
 -- Every cited manifest must exist and still be current and complete when the
--- run is recorded: no later manifest for its key, and no settled batch of its
--- source and layer overlapping its day that it does not include (a late
--- arrival or correction not yet rolled up). The function first takes SHARE
--- locks on the batch and manifest tables, which last until the transaction
--- ends, so no batch can arrive or settle and no manifest can be added between
--- this check and the commit (finding O70). The application takes the same
--- locks before its own checks.
+-- run is recorded:
+-- * no later manifest for its key;
+-- * no settled batch of its source and layer overlapping its day that it does
+--   not include (a late arrival or correction not yet rolled up);
+-- * for a transit-daily manifest, no transit run for the same source, line,
+--   line version and algorithm newer than the run it cites (rollups read the
+--   newest run, so a newer one, even from the same captures, makes it stale).
+-- These are every database input of a rollup: a day's observations and
+-- coverage belong to the settled batches whose request overlaps it (capture
+-- rejects records outside the request) and are append-only, and a transit
+-- run's counts are append-only. Inputs held in code or configuration (the
+-- derivation versions, count line definitions and transit algorithm version)
+-- are not database state; only the application's full re-derivation
+-- (rollups.check) covers them.
+-- The function first takes SHARE locks on the batch, transit-run and manifest
+-- tables, which last until the transaction ends, so no batch can arrive or
+-- settle and no transit run or manifest can be added between this check and
+-- the commit (finding O70). The application takes the same locks before its
+-- own checks.
 --
 -- The check is only sound in a READ COMMITTED transaction: there, each
 -- statement below takes a new snapshot after the lock is granted, so it sees
@@ -72,7 +85,7 @@ BEGIN
             'an older snapshot could hide a late correction', NEW.run_id,
             current_setting('transaction_isolation');
     END IF;
-    LOCK TABLE eye.capture_batch, eye.derivation_manifest IN SHARE MODE;
+    LOCK TABLE eye.capture_batch, eye.derivation_run, eye.derivation_manifest IN SHARE MODE;
     SELECT m.id::text INTO bad FROM unnest(NEW.input_manifest_ids) AS m(id)
     WHERE NOT EXISTS (SELECT 1 FROM eye.derivation_manifest d WHERE d.manifest_id = m.id)
     LIMIT 1;
@@ -94,12 +107,20 @@ BEGIN
             AND b.requested_start < d.interval_end AND b.requested_end > d.interval_start
             AND NOT (b.batch_id = ANY(d.input_batch_ids))
         )
+        OR EXISTS (
+            SELECT 1 FROM eye.derivation_run c
+            JOIN eye.derivation_run n
+                ON (n.source_id, n.line_id, n.line_version, n.algorithm_version)
+                 = (c.source_id, c.line_id, c.line_version, c.algorithm_version)
+            WHERE c.run_id = d.transit_run_id
+            AND (n.derived_at, n.run_id) > (c.derived_at, c.run_id)
+        )
     )
     ORDER BY d.manifest_id
     LIMIT 1;
     IF bad IS NOT NULL THEN
         RAISE EXCEPTION 'backtest run % cites manifest %, which is no longer current '
-            '(a later manifest or settled batch supersedes it)', NEW.run_id, bad;
+            '(a later manifest, settled batch or transit run supersedes it)', NEW.run_id, bad;
     END IF;
     RETURN NEW;
 END;

@@ -10,9 +10,12 @@ a new, recorded run.
 
 Checking and recording share one transaction that first locks the batch,
 evidence, transit-run and manifest tables in SHARE mode, so no batch can
-arrive or settle and no manifest can be added between the check and the
-commit (finding O70). The database guards this independently: a run may cite
-only manifests that are still current and complete (migration 0008).
+arrive or settle and no transit run or manifest can be added between the
+check and the commit (finding O70). The database guards this independently,
+for its own state: a run may cite only manifests that no later manifest,
+settled batch or transit run supersedes (migration 0008). Inputs held in code
+(derivation versions, count lines) are covered only by the re-derivation here,
+so runs are recorded only inside ``locked``.
 
 A run is recorded append-only with the exact manifest ids it read, its
 parameters and an output checksum. Its id is derived from those, so running

@@ -84,11 +84,24 @@ Scope:
      preview; `backtest.store` re-derives the run under the lock and refuses
      it if anything changed since it was computed.
    - **Database guard (O70):** independently of the Python code, a trigger on
-     `eye.backtest_run` takes the same SHARE locks on `eye.capture_batch` and
-     `eye.derivation_manifest` (held until commit) and refuses a run that
-     cites a manifest that is not current: one with a later manifest for its
-     key, or with a settled batch of its source and layer overlapping its day
-     that it does not include.
+     `eye.backtest_run` takes the same SHARE locks on `eye.capture_batch`,
+     `eye.derivation_run` and `eye.derivation_manifest` (held until commit)
+     and refuses a run that cites a manifest that is not current:
+     - a later manifest exists for its key;
+     - a settled batch of its source and layer overlaps its day and is not
+       included;
+     - for a transit-daily manifest, a newer transit run exists for the same
+       source, line, line version and algorithm (rollups read the newest run,
+       even one derived from the same captures).
+   - **What the guard covers, and what it does not:** those are every database
+     input of a rollup. A day's observations and coverage belong to the
+     settled batches whose request overlaps it (capture rejects records outside
+     the request) and are append-only, and so are a transit run's counts.
+     Inputs held in code or configuration (derivation versions, count line
+     definitions, the transit algorithm version) are not database state, so
+     only the application's full re-derivation (`rollups.check`) covers them.
+     A test checks that the only code that records a run does so inside the
+     locked transaction, after that re-derivation.
    - **The guard requires READ COMMITTED:** in that mode each statement in the
      trigger takes its snapshot after the lock is granted, so it sees a
      correction that committed while it waited. A lock cannot refresh a
@@ -159,6 +172,7 @@ bins).
 | Replay | With the append-only trigger disabled in a disposable database, an altered stored result fails replay and names the row. An update with the trigger on is refused. An unknown run id fails. | A replay is identical. Running again records nothing new. A separate database built from the same fixtures gives the same run id, manifests and stored results. Reversing the series' order changes nothing. |
 | Check-to-record race (O70) | A late correction ingested while a backtest is between its checks and its commit waits for the lock and times out (`55P03`); it cannot commit in between. A run checked before a correction and recorded after it is refused by `store`, and, with the Python lock and recheck bypassed, by the database (`no longer current`). Nothing is recorded. On `e27ed0b`, the same sequence recorded the stale run. | The concurrent run is recorded and replays identically; the correction then commits. A run whose inputs did not change between a separate check and record is recorded and replays, and the database accepts it. |
 | Database guard alone (O70 follow-up) | A REPEATABLE READ snapshot taken before a late correction commits cannot record the checked run (`READ COMMITTED` required). A READ COMMITTED insert of that run waits in the guard for the correction's open transaction, then refuses the run (`no longer current`). Nothing is recorded. On `87f954a`, the REPEATABLE READ insert was accepted. | Unchanged inputs inserted directly in READ COMMITTED are accepted and replay. After `db-rollup`, the `db-backtest` command records a run and `db-backtest-replay` reports it identical. |
+| Newer transit run (O70 follow-up) | A newer transit run from the same captures, with no new batch or manifest, makes the cited transit-daily manifest `stale` (`rollups.check`). A direct READ COMMITTED insert of the earlier preview is refused (`no longer current`), and `store` refuses it too. Nothing is recorded. On `52f8f12`, the direct insert was accepted. | Unchanged transit inputs inserted directly are accepted and replay. After a new rollup, the manifest is `valid` again and a new run is recorded and replays. The only code that records a run does it inside `locked()` (`store`, `run_backtest`). |
 
 **Old code comparison.** Main (`7cfb9792`) has no baseline, backtest or
 migration 0008. The new tests run against main's backend fail at import
@@ -188,6 +202,12 @@ The mutants above show each control would fail if its rule were removed:
   its lock was granted (tested with the correction committing during the
   wait). The database guarantee is therefore: a run is recorded only in READ
   COMMITTED, and only if its manifests are current at commit.
+- **O70 follow-up, newer transit run:** on `52f8f12` the trigger checked only
+  batches and manifests. A newer transit run from the same captures made a
+  cited transit-daily manifest stale without adding either, and a direct
+  insert recorded the stale run (reproduced). The trigger now also locks
+  `eye.derivation_run` and refuses a transit-daily manifest whose transit run
+  has a newer run for the same source, line, line version and algorithm.
 
 ## Consequences and open decisions
 
@@ -205,8 +225,8 @@ The mutants above show each control would fail if its rule were removed:
 - **Not backed up.** Backtest runs are not part of the synthetic backup
   generation. They can be recomputed from the manifests that are backed up.
 - **Locks:** recording a run briefly holds SHARE locks on the batch,
-  evidence, transit-run and manifest tables, so captures and rollups wait for
-  it. A backtest is bounded (decision 10), so the wait is short; a writer
+  evidence, transit-run and manifest tables, so captures, transit runs and
+  rollups wait for it. A backtest is bounded (decision 10), so the wait is short; a writer
   with a lock timeout fails rather than waiting, and its batch is retried
   like any refused capture.
 - **Not served.** Showing results in DESK would need a new wire version.

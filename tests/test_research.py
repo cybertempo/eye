@@ -680,6 +680,97 @@ def test_transit_series_with_one_day_of_history_abstains(make_db):
     conn.close()
 
 
+def test_database_guard_refuses_a_manifest_superseded_by_a_newer_transit_run(make_db):
+    """O70 follow-up: a newer transit run from the same captures, before any new manifest.
+
+    Rollups read the newest transit run, so it makes the cited transit-daily
+    manifest stale although no batch or manifest was added. The database guard
+    alone (a direct READ COMMITTED insert) must refuse the earlier preview.
+    """
+    conn = connect(make_db())
+    migrate(conn)
+    load_fixtures(conn, REPO_ROOT / "tests" / "fixtures" / "synthetic" / "ais" / "demo")
+    for line in LINES:
+        inputs = transits.read_inputs(conn, transits.SOURCE_ID, line)
+        transits.store(conn, transits.SOURCE_ID, line, transits.hourly_intervals(inputs))
+    assert not [r for r in rollups.refresh_all(conn, LINES) if r.error]
+    line, scope = LINES[0], rollups.line_scope(LINES[0])
+    series = Series.parse(f"synthetic-ais:vessel:transit-daily:{scope}")
+    day = date(2026, 2, 1)
+    partition = rollups.Partition(transits.SOURCE_ID, "vessel", day)
+    count = "SELECT count(*) FROM eye.backtest_run WHERE run_id = :r"
+
+    def preview(sigma: int) -> backtest.Run:
+        return backtest.compute(
+            conn, series, day, day, Params(threshold_sigma=sigma), Limits(), LINES
+        )
+
+    # Positive control: unchanged inputs, inserted directly, are accepted.
+    unchanged = preview(7)
+    with transaction(conn):
+        assert backtest._insert(conn, unchanged) is True
+    assert backtest.replay(conn, unchanged.run_id).identical
+    stale = preview(6)
+    assert rollups.check(conn, partition, rollups.TRANSIT, scope, LINES).state == "valid"
+    # A newer transit run from the same captures (one more requested interval).
+    sizes = (
+        "SELECT (SELECT count(*) FROM eye.capture_batch), "
+        "(SELECT count(*) FROM eye.derivation_manifest), (SELECT count(*) FROM eye.derivation_run)"
+    )
+    batches, manifests, runs = conn.run(sizes)[0]
+    hours = transits.hourly_intervals(transits.read_inputs(conn, transits.SOURCE_ID, line))
+    extra = (hours[0][0] - timedelta(hours=1), hours[0][0])
+    transits.store(conn, transits.SOURCE_ID, line, sorted({*hours, extra}))
+    assert conn.run(sizes)[0] == [batches, manifests, runs + 1]  # only a transit run added
+    assert rollups.check(conn, partition, rollups.TRANSIT, scope, LINES).state == "stale"
+    with pytest.raises(DatabaseError, match="no longer current"), transaction(conn):
+        backtest._insert(conn, stale)
+    assert conn.run(count, r=stale.run_id)[0][0] == 0
+    with pytest.raises(BacktestRefused, match="not valid now"):
+        backtest.store(conn, preview(5))
+    # Positive control: after a new rollup, a new run is recorded and replays.
+    assert not [r for r in rollups.refresh_all(conn, LINES) if r.error]
+    assert rollups.check(conn, partition, rollups.TRANSIT, scope, LINES).state == "valid"
+    fresh = backtest.run_backtest(conn, series, day, day, Params(), Limits(), LINES)
+    assert fresh.created and conn.run(count, r=fresh.run_id)[0][0] == 1
+    assert backtest.replay(conn, fresh.run_id).identical
+    conn.close()
+
+
+def test_backtest_runs_are_recorded_only_inside_the_locked_transaction():
+    """Code inputs (derivation versions, count lines) are checked only by the
+    application's re-derivation, so the only writer must hold the lock first."""
+    import ast
+
+    writers = [
+        p.relative_to(REPO_ROOT).as_posix()
+        for p in (REPO_ROOT / "backend").rglob("*.py")
+        if "INSERT INTO eye.backtest_run" in p.read_text(encoding="utf-8")
+    ]
+    assert writers == ["backend/eye/worker/backtest.py"]
+    tree = ast.parse((REPO_ROOT / writers[0]).read_text(encoding="utf-8"))
+    callers: list[str] = []
+    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "_insert":
+                locked_blocks = [
+                    w
+                    for w in ast.walk(fn)
+                    if isinstance(w, ast.With)
+                    and any(getattr(i.context_expr.func, "id", "") == "locked" for i in w.items)
+                    and any(node is x for x in ast.walk(w))
+                ]
+                assert locked_blocks, f"{fn.name} calls _insert outside locked()"
+                callers.append(fn.name)
+    assert sorted(callers) == ["run_backtest", "store"]  # positive control: both found
+    # The locked transaction re-derives every cited manifest before recording.
+    source = ast.get_source_segment(
+        (REPO_ROOT / writers[0]).read_text(encoding="utf-8"),
+        next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_evaluate"),
+    )
+    assert "rollups.check(" in source
+
+
 # --- configuration and command line ------------------------------------------------
 
 
