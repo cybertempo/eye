@@ -209,6 +209,21 @@ The mutants above show each control would fail if its rule were removed:
   `eye.derivation_run` and refuses a transit-daily manifest whose transit run
   has a newer run for the same source, line, line version and algorithm.
 
+- **Unsupported series (after merge, migration 0009):** `Series.parse`
+  accepted a transit series for a position source that never produces transit
+  rollups, an unconfigured count line, and a layer the source does not
+  provide. Each read no manifest of its own series, so every hour abstained
+  and an empty run was recorded (reproduced on `b1f3064`; one such run cited
+  no manifest at all). Now:
+  - `Series.parse` refuses a layer the source does not provide;
+  - every backtest first requires the series to be one that rollups derive
+    for the configured count lines (`rollups.required`);
+  - the database (migration 0009) refuses a run that cites a manifest of
+    another series, or no manifest of its own series.
+
+  A valid transit series and a valid observation series still record and
+  replay beside the refusals.
+
 ## Consequences and open decisions
 
 - **Statistics are a starting point, not a forecast.** The detector flags
