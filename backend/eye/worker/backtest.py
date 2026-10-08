@@ -41,7 +41,7 @@ from fractions import Fraction
 
 from pg8000.exceptions import DatabaseError, InterfaceError
 
-from eye.ingest.capture import stable_id
+from eye.ingest.capture import SOURCE_LAYERS, stable_id
 from eye.storage.db import Connection, transaction
 from eye.worker import baselines, rollups
 from eye.worker.baselines import BaselineRefused, Hour, Params, Result
@@ -89,7 +89,23 @@ class Series:
             raise BacktestRefused(f"a backtest reads one of {sorted(SERIES_DERIVATIONS)}")
         if (derivation == rollups.TRANSIT) != scope.startswith("line:"):
             raise BacktestRefused("transit-daily needs a line:<id>/v<n> scope; others none")
+        if layer not in SOURCE_LAYERS[source_id]:
+            raise BacktestRefused(f"{source_id} does not provide layer {layer}")
         return cls(source_id, layer, derivation, scope)
+
+    def require_supported(self, lines) -> None:
+        """Refuse a series no rollup is derived for with these count lines.
+
+        Without this, an unsupported series would read no metric manifest, so
+        every hour would abstain and an empty run would be recorded.
+        """
+        partition = rollups.Partition(self.source_id, self.layer, date(2000, 1, 1))
+        if (self.derivation, self.scope) not in rollups.required(partition, list(lines)):
+            what = f"{self.derivation} {self.scope}".strip()
+            raise BacktestRefused(
+                f"no {what} rollups are derived for {self.source_id}:{self.layer} "
+                "with the configured count lines; this series cannot be backtested"
+            )
 
 
 @dataclass(frozen=True)
@@ -309,6 +325,7 @@ def locked(conn: Connection) -> Iterator[Connection]:
 
 def _evaluate(conn, series, first_day, last_day, params, lines) -> Run:
     """Resolve and check the current manifests, read them and backtest (caller's transaction)."""
+    series.require_supported(lines)
     start = history_start(first_day, params)
     inputs = resolve_inputs(conn, series, start, last_day)
     problems = []

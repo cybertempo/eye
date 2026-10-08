@@ -771,6 +771,66 @@ def test_backtest_runs_are_recorded_only_inside_the_locked_transaction():
     assert "rollups.check(" in source
 
 
+def test_unsupported_series_are_refused_beside_a_valid_transit_run(make_db, monkeypatch):
+    """A series no rollup is derived for is refused, by the backtester and by the
+    database, instead of recording a run in which every hour abstains."""
+    conn = connect(make_db())
+    migrate(conn)
+    for doc in sr.captures(SPEC, "null")[:16]:
+        ingest(conn, doc)
+    load_fixtures(conn, REPO_ROOT / "tests" / "fixtures" / "synthetic" / "ais" / "demo")
+    for line in LINES:
+        inputs = transits.read_inputs(conn, transits.SOURCE_ID, line)
+        transits.store(conn, transits.SOURCE_ID, line, transits.hourly_intervals(inputs))
+    assert not [r for r in rollups.refresh_all(conn, LINES) if r.error]
+    scope = rollups.line_scope(LINES[0])
+    ais_day, fixture_day = date(2026, 2, 1), date(2026, 3, 2)
+    runs = "SELECT count(*) FROM eye.backtest_run"
+    # The layer check happens while parsing.
+    with pytest.raises(BacktestRefused, match="does not provide layer"):
+        Series.parse("synthetic-ais:flight:observations-hourly")
+    unsupported = [
+        # a transit series of a position source that has no transit rollups
+        (Series.parse(f"synthetic-fixture:vessel:transit-daily:{scope}"), fixture_day),
+        # a count line that is not configured
+        (Series.parse("synthetic-ais:vessel:transit-daily:line:no-such-line/v1"), ais_day),
+    ]
+    for series, day in unsupported:
+        with pytest.raises(BacktestRefused, match="cannot be backtested"):
+            backtest.run_backtest(conn, series, day, day, Params(), Limits(), LINES)
+        with pytest.raises(BacktestRefused, match="cannot be backtested"):
+            backtest.compute(conn, series, day, day, Params(), Limits(), LINES)
+    assert conn.run(runs)[0][0] == 0
+    # The database refuses them on its own: with the Python check bypassed, the
+    # run would cite coverage manifests only.
+    with monkeypatch.context() as m:
+        m.setattr(Series, "require_supported", lambda self, lines: None)
+        for series, day in unsupported:
+            empty = backtest.compute(conn, series, day, day, Params(), Limits(), LINES)
+            assert baselines.summary(empty.results)["abstained"] == len(empty.results)
+            with pytest.raises(DatabaseError, match="reads no"), transaction(conn):
+                backtest._insert(conn, empty)
+        # A run citing a manifest of another series is refused too.
+        valid = Series.parse(f"synthetic-ais:vessel:transit-daily:{scope}")
+        mixed = backtest.compute(conn, valid, ais_day, ais_day, Params(), Limits(), LINES)
+        other = conn.run(
+            "SELECT manifest_id::text FROM eye.current_manifest WHERE source_id = 'synthetic-ais' "
+            "AND derivation = 'observations-hourly' LIMIT 1"
+        )[0][0]
+        mixed.input_manifest_ids = (*mixed.input_manifest_ids, other)
+        with pytest.raises(DatabaseError, match="not of its series"), transaction(conn):
+            backtest._insert(conn, mixed)
+    assert conn.run(runs)[0][0] == 0
+    # Positive controls beside them: a valid transit series and a valid
+    # observation series are recorded and replay.
+    transit = backtest.run_backtest(conn, valid, ais_day, ais_day, Params(), Limits(), LINES)
+    assert transit.created and backtest.replay(conn, transit.run_id).identical
+    observed = backtest.run_backtest(conn, SERIES, fixture_day, fixture_day, Params(), Limits(), [])
+    assert observed.created and backtest.replay(conn, observed.run_id).identical
+    assert conn.run(runs)[0][0] == 2
+    conn.close()
+
+
 # --- configuration and command line ------------------------------------------------
 
 
@@ -813,6 +873,7 @@ def test_migration_0008_leaves_earlier_history_unchanged(make_db, tmp_path):
         shutil.copy(path, before / path.name)
     conn = connect(make_db())
     assert migrate(conn, before) == [1, 2, 3, 4, 5, 6, 7]
+    shutil.copy(migrations / "0008_backtest_runs.sql", before / "0008_backtest_runs.sql")
     for doc in sr.captures(SPEC, "null")[:16]:
         ingest(conn, doc)
     assert not [r for r in rollups.refresh_all(conn, []) if r.error]
@@ -835,7 +896,9 @@ def test_migration_0008_leaves_earlier_history_unchanged(make_db, tmp_path):
         ]
 
     prior = digest()
-    assert migrate(conn) == [8]
+    assert migrate(conn, before) == [8]
+    assert digest() == prior
+    assert migrate(conn) == [9]  # 0009 adds a trigger only
     assert digest() == prior
     # Positive control: the new tables accept a run over the old manifests.
     result = backtest.run_backtest(
