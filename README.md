@@ -1,8 +1,10 @@
 # EYE
 
 EYE is a planned self-hosted geospatial and solar-system observation and research
-application. This repository holds its public source. **Status: the
-source-independent part of Package 4c (world-event ledger) on Packages 0 to 3.**
+application. This repository holds its public source. **Status: Packages 0
+to 3, the source-independent parts of 4c (world-event ledger) and 4d (news and
+media evidence), and the lifecycle slice of Package 5 (rollups, manifests,
+checked retention and a synthetic backup and restore drill).**
 It contains the layout, tooling, CI, the
 versioned wire schema with validation on both sides, PostgreSQL/PostGIS storage
 for captures, evidence, observations and coverage, a synthetic vessel adapter
@@ -177,6 +179,53 @@ The only news source is `synthetic-news`, invented fixtures in
 none is approved or enabled. See
 [ADR 0006](docs/adr/0006-package-4d-news-media-evidence.md).
 
+## Lifecycle: rollups, manifests, retention and a synthetic drill (Package 5, partial)
+
+Every command below runs on the **developer laptop** (or in CI, through the
+tests) against a loopback database with synthetic data. None of them needs an
+account or the owner's server, and none of them opens a browser.
+
+| Where it runs | Command | What it does |
+|---|---|---|
+| Developer laptop | `… -m eye db-rollup --config config/eye.example.toml` | Records the rollups and their manifests for every partition (source, layer, UTC day) |
+| Developer laptop | `… -m eye db-manifest-check --config …` | Re-derives every current manifest and records `valid`, `stale`, `failed` or `unverified`; exits 5 unless all are valid |
+| Developer laptop | `EYE_BACKUP_DIR=<empty temp dir> … -m eye db-backup --config …` | Writes a **synthetic** backup generation to that directory and verifies it by an independent read-back |
+| Developer laptop | `EYE_BACKUP_DIR=… EYE_RESTORE_DATABASE_URL=<empty loopback db> … -m eye db-restore-drill --generation ID --config …` | Restores that generation into the empty database and compares every named metric |
+| Developer laptop | `… -m eye db-retention-plan --config …` | Read-only: each partition's retention verdict and its reasons |
+| Developer laptop | `… -m eye db-retention-execute --partition SOURCE:LAYER:YYYY-MM-DD --config …` | Refused unless `retention.allow_deletion = true` (default false), in demo mode, for a synthetic source |
+| Developer laptop (Docker), CI | `scripts/restore-drill.sh` | The whole synthetic drill in two disposable databases and a temporary directory |
+
+(`…` is `PYTHONPATH=backend .venv/bin/python`, with `EYE_DATABASE_URL` set as
+above.)
+
+- **Rollups never turn unknown into zero.** An hour lacking usable coverage
+  has no value, a partial one is a lower bound, and only a fully covered hour
+  is exact; a covered hour with nothing seen is a real 0. Coverage is judged
+  over the whole area requested that day: a qualified capture of one area
+  never vouches for a failed or missing capture of another at the same time. Activity per grid
+  cell names the cell and its bounds, never a mean or centre position.
+- **Manifests** record each rollup's inputs (batches, checksum, watermark),
+  versions, outputs and coverage. A late arrival or correction makes a
+  manifest stale; the next `db-rollup` adds a new one and keeps the old.
+- **Retention prunes raw evidence bytes only, and only after every check
+  passes**: the lateness window (at least 48 hours) has closed, every
+  manifest re-derives exactly, the partition's own bytes still reproduce
+  every observation, event claim, media item, receipt and coverage row they
+  produced (`ledger-replay`), and a verified backup holds the same bytes and
+  is re-read just before pruning. A check that cannot run is UNVERIFIED and
+  blocks. The database independently refuses pruning before the lateness
+  window closes by its own clock, without current, complete manifests checked
+  valid in the same transaction, or when a batch's ledger rows no longer match
+  the seal it recorded when the batch settled. Observation, event-claim and media
+  history is never deleted. After pruning, `db-manifest-check` reports that
+  partition's `ledger-replay` as UNVERIFIED: only the restore drill can
+  replay those bytes.
+- **The backup and drill are a synthetic code test.** They prove nothing
+  about an off-site Google Drive backup, the private installation or any
+  recovery objective.
+
+See [ADR 0007](docs/adr/0007-package-5-lifecycle.md).
+
 ## Layout
 
 ```text
@@ -184,7 +233,7 @@ backend/eye/api/      HTTP and WebSocket API, feed queries, auth port
 backend/eye/ingest/   capture pipeline and synthetic AIS adapter
 backend/eye/storage/  database connection and migration runner
 backend/eye/wire/     wire-schema runtime validator
-backend/eye/worker/   tracks, line crossings and transit counts
+backend/eye/worker/   tracks, line crossings, transit counts, rollups, retention, synthetic backup
 backend/eye/raster/   optional imagery pipeline (Package 6)
 config/               example configuration
 deploy/dev/           loopback synthetic demo container
@@ -194,7 +243,7 @@ migrations/           forward-only PostgreSQL/PostGIS migrations
 reference/lines/      versioned synthetic count lines
 requirements/         hash-locked Python tool manifests
 schemas/              versioned wire schema (eye.wire/4; v1 to v3 kept unchanged)
-scripts/              setup, verify, demo, boundary and web-build checks, fixture generators
+scripts/              setup, verify, demo, restore drill, boundary and web-build checks, fixture generators
 tests/                tests and synthetic fixtures
 web/                  browser client: THEATRE globe and DESK panel
 ```
@@ -213,4 +262,7 @@ web/                  browser client: THEATRE globe and DESK panel
 - A passing CI run shows the public code builds and its synthetic tests pass. It
   is **not** evidence that EYE is installed or secure on the owner's private
   server; that is proved separately (brief §8).
+- Package 5 is partial: coverage-weighted baselines and the backtester are not
+  built, rollups are not shown in the browser, and the only backup target is a
+  synthetic local directory. Production refuses `retention.allow_deletion`.
 - Dependency and image pins are listed in [`docs/dependencies.md`](docs/dependencies.md).

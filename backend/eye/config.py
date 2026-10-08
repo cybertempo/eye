@@ -32,6 +32,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "data",
         "database",
         "providers",
+        "retention",
     },
     "runtime": {"mode"},
     "server": {
@@ -75,6 +76,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     },
     "database": {"url_env"},
     "providers": {"enabled"},
+    "retention": {"allow_deletion", "lateness_hours", "backup_dir_env", "restore_url_env"},
 }
 
 
@@ -132,6 +134,16 @@ class AuthConfig:
 
 
 @dataclass(frozen=True)
+class RetentionConfig:
+    """Package 5 lifecycle settings. Deletion is off unless explicitly enabled."""
+
+    allow_deletion: bool
+    lateness_hours: int
+    backup_dir_env: str
+    restore_url_env: str
+
+
+@dataclass(frozen=True)
 class EyeConfig:
     source: Path
     mode: str
@@ -146,6 +158,7 @@ class EyeConfig:
     count_lines: Path | None
     database_url_env: str
     enabled_providers: tuple[str, ...]
+    retention: RetentionConfig
 
 
 def is_loopback_host(host: str) -> bool:
@@ -311,6 +324,39 @@ def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None)
             f"docs/source-policy-register.md; refusing: {', '.join(enabled)}"
         )
 
+    ret = _table(raw, "retention")
+    allow_deletion = ret.get("allow_deletion", False)
+    if not isinstance(allow_deletion, bool):
+        raise ConfigError("retention.allow_deletion must be true or false")
+    backup_dir_env = ret.get("backup_dir_env", "EYE_BACKUP_DIR")
+    if not isinstance(backup_dir_env, str) or not re.fullmatch(
+        r"[A-Z][A-Z0-9_]{0,63}", backup_dir_env
+    ):
+        raise ConfigError("retention.backup_dir_env must be an environment variable name")
+    restore_url_env = ret.get("restore_url_env", "EYE_RESTORE_DATABASE_URL")
+    if (
+        not isinstance(restore_url_env, str)
+        or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", restore_url_env)
+        or restore_url_env == url_env
+    ):
+        raise ConfigError(
+            "retention.restore_url_env must be an environment variable name other than "
+            "database.url_env (a drill restores into a separate, empty database)"
+        )
+    retention = RetentionConfig(
+        allow_deletion=allow_deletion,
+        lateness_hours=_int(ret, "lateness_hours", 48, 48, 8760),
+        backup_dir_env=backup_dir_env,
+        restore_url_env=restore_url_env,
+    )
+    if allow_deletion and mode != "demo":
+        # The only backup target in this repository is synthetic; production
+        # retention needs the private, independently verified backup first.
+        raise ConfigError(
+            "retention.allow_deletion is refused outside demo mode: no verified "
+            "private backup target exists in this repository"
+        )
+
     if mode == "demo":
         if auth.adapter != "demo":
             raise ConfigError("demo mode uses the demo auth adapter only")
@@ -358,6 +404,7 @@ def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None)
         count_lines=count_lines,
         database_url_env=url_env,
         enabled_providers=tuple(enabled),
+        retention=retention,
     )
 
 

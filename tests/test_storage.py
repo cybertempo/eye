@@ -460,9 +460,21 @@ def test_ok_capture_with_every_record_rejected_is_not_a_zero(db):
     assert coverage_for(db, one_good)[:2] == ["partial", 1]
 
 
+def _pending_batch(db) -> str:
+    """Archive a fresh copy of a fixture without committing it (its ledger is still open)."""
+    copy = edited(
+        "001-flight-ok.json",
+        lambda d: d["attempt"].update(
+            started_at="2026-01-01T00:16:00Z", finished_at="2026-01-01T00:16:02Z"
+        ),
+    )
+    return archive(db, copy).batch_id
+
+
 def test_database_refuses_zero_for_an_outage(db):
     load_fixtures(db, CAPTURES)
-    batch = db.run("SELECT batch_id::text FROM eye.capture_batch ORDER BY 1 LIMIT 1")[0][0]
+    settled = db.run("SELECT batch_id::text FROM eye.capture_batch ORDER BY 1 LIMIT 1")[0][0]
+    batch = _pending_batch(db)  # rows are written while a batch is pending (migration 0007)
     insert = (
         "INSERT INTO eye.coverage (coverage_id, batch_id, source_id, layer, interval_start, "
         "interval_end, state, reason, metric_name, metric_value, derivation_version) VALUES "
@@ -475,6 +487,8 @@ def test_database_refuses_zero_for_an_outage(db):
         with pytest.raises(DatabaseError, match="coverage_missing_is_null"):
             db.run(insert, b=batch, state=state, reason=reason, metric="m_bad", value=value)
     db.run(insert, b=batch, state="qualified", reason=None, metric="m_zero", value=0)
+    with pytest.raises(DatabaseError, match="its ledger is closed"):  # settled: closed
+        db.run(insert, b=settled, state="qualified", reason=None, metric="m_late", value=1)
 
 
 # --- time provenance and chronology ----------------------------------------
@@ -564,16 +578,41 @@ def test_database_refuses_an_invalid_receipt_and_accepts_a_genuine_one(db):
         "'synthetic-adapter/2')"
     )
     timeout_batch, timeout_evidence = batch_finished_at("2026-01-01T01:00:30Z")
-    early_batch, early_evidence = batch_finished_at("2026-01-01T00:10:31Z")
+    _, early_evidence = batch_finished_at("2026-01-01T00:10:31Z")
+    # A settled batch's ledger is closed (migration 0007): no receipt may be added.
+    with pytest.raises(DatabaseError, match="its ledger is closed"):
+        db.run(insert, o=oid, b=timeout_batch, e=timeout_evidence, t="2026-01-01T01:00:30Z")
+    # The remaining refusals are probed on pending batches, whose ledgers are open.
+    early = archive(
+        db,
+        edited(
+            "001-flight-ok.json",
+            lambda d: d["attempt"].update(
+                started_at="2026-01-01T00:16:00Z", finished_at="2026-01-01T00:16:02Z"
+            ),
+        ),
+    )
+    late = archive(
+        db,
+        edited(
+            "004-vessel-correction.json",
+            lambda d: d["attempt"].update(
+                started_at="2026-01-01T00:58:00Z", finished_at="2026-01-01T00:58:02Z"
+            ),
+        ),
+    )
     # Evidence from a different batch.
     with pytest.raises(DatabaseError, match="receipt_evidence_of_batch"):
-        db.run(insert, o=oid, b=timeout_batch, e=early_evidence, t="2026-01-01T01:00:30Z")
+        db.run(insert, o=oid, b=late.batch_id, e=early_evidence, t="2026-01-01T00:58:02Z")
     # A receipt time that is not the batch's own receipt time.
     with pytest.raises(DatabaseError, match="not the batch receipt time"):
-        db.run(insert, o=oid, b=timeout_batch, e=timeout_evidence, t="2026-01-01T01:00:29Z")
-    # Received (00:10:31) before the source published it (00:51:30).
+        db.run(insert, o=oid, b=late.batch_id, e=late.evidence_id, t="2026-01-01T00:58:01Z")
+    # Received (00:16:02) before the source published it (00:51:30).
     with pytest.raises(DatabaseError, match="before the source published"):
-        db.run(insert, o=oid, b=early_batch, e=early_evidence, t="2026-01-01T00:10:31Z")
+        db.run(insert, o=oid, b=early.batch_id, e=early.evidence_id, t="2026-01-01T00:16:02Z")
+    # Nothing was written by the refused probes; settle both probe batches.
+    for probe in (early, late):
+        assert commit_batch(db, probe.batch_id).status == "committed"
 
     # Positive control: a batch that genuinely re-delivers the correction.
     redelivery = edited(

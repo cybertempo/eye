@@ -2,8 +2,12 @@
 
 Commands: check-config, serve, db-migrate, db-status, db-load-fixtures,
 db-derive-transits, db-prepare-demo (migrate, load fixtures and derive, demo only),
-db-replay. Exit codes: 0 success, 2 configuration refused, 3 authentication
-adapter refused, 4 other startup refusal, 5 database operation failed.
+db-replay, and the Package 5 lifecycle commands: db-rollup, db-manifest-check,
+db-backup, db-restore-drill (synthetic code test), db-retention-plan (read-only)
+and db-retention-execute (refused unless retention.allow_deletion is true, in
+demo mode, for one explicitly named synthetic partition). Exit codes: 0 success,
+2 configuration refused, 3 authentication adapter refused, 4 other startup
+refusal, 5 database operation failed.
 Nothing here opens a browser.
 """
 
@@ -26,7 +30,14 @@ DB_COMMANDS = (
     "db-derive-transits",
     "db-prepare-demo",
     "db-replay",
+    "db-rollup",
+    "db-manifest-check",
+    "db-backup",
+    "db-restore-drill",
+    "db-retention-plan",
+    "db-retention-execute",
 )
+LIFECYCLE_COMMANDS = DB_COMMANDS[6:]
 
 
 def _prepare(path: str) -> tuple[EyeConfig, object]:
@@ -38,6 +49,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="eye")
     parser.add_argument("command", choices=("check-config", "serve", *DB_COMMANDS))
     parser.add_argument("--config", required=True, help="path to an EYE TOML configuration")
+    parser.add_argument("--partition", help="db-retention-execute: SOURCE:LAYER:YYYY-MM-DD")
+    parser.add_argument("--generation", help="db-restore-drill: backup generation id")
     args = parser.parse_args(argv)
 
     try:
@@ -53,6 +66,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"eye: configuration accepted (mode={config.mode}, auth={auth.name})")
         return 0
 
+    if args.command in LIFECYCLE_COMMANDS:
+        return _lifecycle_command(args, config)
     if args.command in DB_COMMANDS:
         return _database_command(args.command, config)
 
@@ -215,6 +230,173 @@ def _database_command(command: str, config: EyeConfig) -> int:
         conn.close()
     print(json.dumps(result, sort_keys=True))
     return 0
+
+
+def _lifecycle_command(args, config: EyeConfig) -> int:
+    """Package 5: rollups, manifests, synthetic backup and drill, checked retention."""
+    import json
+    import os
+    from pathlib import Path
+
+    from pg8000.exceptions import DatabaseError, InterfaceError
+
+    from eye.storage.db import DatabaseConfigError, connect
+    from eye.worker import backup, retention, rollups, transits
+
+    command = args.command
+    ret = config.retention
+    url = os.environ.get(config.database_url_env)
+    if not url:
+        print(
+            f"eye: REFUSED (configuration): environment variable {config.database_url_env} "
+            "is not set",
+            file=sys.stderr,
+        )
+        return EXIT_CONFIG
+    backup_value = os.environ.get(ret.backup_dir_env)
+    backup_dir = Path(backup_value) if backup_value else None
+    if command in ("db-backup", "db-restore-drill") and backup_dir is None:
+        print(
+            f"eye: REFUSED (configuration): environment variable {ret.backup_dir_env} "
+            "(the synthetic backup directory) is not set",
+            file=sys.stderr,
+        )
+        return EXIT_CONFIG
+    if command in ("db-backup", "db-restore-drill") and config.mode != "demo":
+        print(
+            "eye: REFUSED (configuration): the synthetic backup and drill run in demo mode only",
+            file=sys.stderr,
+        )
+        return EXIT_CONFIG
+    if command == "db-retention-execute":
+        if not args.partition:
+            print(
+                "eye: REFUSED (configuration): --partition SOURCE:LAYER:YYYY-MM-DD is "
+                "required; retention never selects partitions itself",
+                file=sys.stderr,
+            )
+            return EXIT_CONFIG
+        try:
+            partition = rollups.Partition.parse(args.partition)
+        except ValueError as exc:
+            print(f"eye: REFUSED (configuration): {exc}", file=sys.stderr)
+            return EXIT_CONFIG
+    if command == "db-restore-drill" and not args.generation:
+        print("eye: REFUSED (configuration): --generation ID is required", file=sys.stderr)
+        return EXIT_CONFIG
+    lines = _lines(transits, config.count_lines) if config.count_lines else []
+    try:
+        conn = connect(url, require_loopback=config.mode == "demo")
+    except DatabaseConfigError as exc:
+        print(f"eye: REFUSED (configuration): {exc}", file=sys.stderr)
+        return EXIT_CONFIG
+    except Exception as exc:  # connection failures are reported, never treated as empty
+        print(f"eye: UNVERIFIED (database unreachable): {type(exc).__name__}", file=sys.stderr)
+        return EXIT_DATABASE
+    failed = False
+    try:
+        if command == "db-rollup":
+            results = rollups.refresh_all(conn, lines, ret.lateness_hours)
+            failed = any(r.error for r in results)
+            result = {
+                "manifests": [
+                    {
+                        "partition": r.partition.key,
+                        "derivation": r.derivation,
+                        "scope": r.scope,
+                        "manifest_id": r.manifest_id,
+                        "created": r.created,
+                        "error": r.error,
+                    }
+                    for r in results
+                ]
+            }
+        elif command == "db-manifest-check":
+            checks = []
+            for p in rollups.partitions(conn):
+                for day in rollups.days_touched(conn, p):
+                    checks += rollups.validate(
+                        conn, rollups.Partition(p.source_id, p.layer, day), lines
+                    )
+            from eye.storage.db import transaction
+
+            with transaction(conn):
+                rollups.record_checks(conn, checks)
+            checks = sorted(set(checks), key=lambda c: c.label)
+            failed = any(c.state != "valid" for c in checks)
+            result = {
+                "checks": [{"check": c.label, "state": c.state, "reason": c.reason} for c in checks]
+            }
+        elif command == "db-backup":
+            generation = backup.export(conn, backup_dir, config.count_lines)
+            proof = backup.verify(conn, backup_dir, generation)
+            failed = proof.state != "verified"
+            result = {
+                "label": backup.LABEL,
+                "generation_id": generation,
+                "proof_id": proof.proof_id,
+                "state": proof.state,
+                "reason": proof.reason,
+            }
+        elif command == "db-restore-drill":
+            target_url = os.environ.get(ret.restore_url_env)
+            if not target_url:
+                print(
+                    f"eye: REFUSED (configuration): environment variable "
+                    f"{ret.restore_url_env} (an empty restore database) is not set",
+                    file=sys.stderr,
+                )
+                return EXIT_CONFIG
+            if target_url == url:
+                print(
+                    "eye: REFUSED (configuration): the restore database must not be the "
+                    "main database",
+                    file=sys.stderr,
+                )
+                return EXIT_CONFIG
+            target = connect(target_url, require_loopback=True)
+            try:
+                report = backup.restore_drill(
+                    backup_dir, args.generation, target, ret.lateness_hours
+                )
+            finally:
+                target.close()
+            failed = report.state != "verified"
+            result = report.as_dict()
+        elif command == "db-retention-plan":
+            verdicts = retention.plan(
+                conn, lateness_hours=ret.lateness_hours, lines=lines, backup_dir=backup_dir
+            )
+            result = {
+                "read_only": True,
+                "deletion_enabled": ret.allow_deletion,
+                "partitions": [v.as_dict() for v in verdicts],
+            }
+        else:
+            outcome = retention.execute(
+                conn,
+                partition,
+                allow_deletion=ret.allow_deletion,
+                mode=config.mode,
+                lateness_hours=ret.lateness_hours,
+                lines=lines,
+                backup_dir=backup_dir,
+            )
+            failed = outcome.verdict.verdict != "eligible"
+            result = outcome.as_dict()
+    except retention.RetentionRefused as exc:
+        print(f"eye: REFUSED (retention): {exc}", file=sys.stderr)
+        return EXIT_CONFIG
+    except (backup.BackupError, OSError, LookupError, transits.LineDefinitionError) as exc:
+        print(f"eye: FAILED ({command}): {exc}", file=sys.stderr)
+        return EXIT_DATABASE
+    except (DatabaseError, InterfaceError) as exc:
+        print(f"eye: FAILED ({command}): database error {type(exc).__name__}", file=sys.stderr)
+        return EXIT_DATABASE
+    finally:
+        conn.close()
+    print(json.dumps(result, sort_keys=True, default=str))
+    return EXIT_DATABASE if failed else 0
 
 
 def _lines(transits, directory):

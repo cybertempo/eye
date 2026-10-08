@@ -1081,7 +1081,7 @@ def _compare(label: str, expected: dict, actual: dict, problems: list[str]) -> N
             problems.append(f"{label} {key}: stored {actual[key]!r}, derived {expected[key]!r}")
 
 
-ARCHIVE_FACTS = """
+ARCHIVE_SELECT = """
     SELECT b.batch_id::text, b.source_id, b.layer, b.adapter_version, b.capture_format,
            ST_XMin(b.requested_area), ST_YMin(b.requested_area), ST_XMax(b.requested_area),
            ST_YMax(b.requested_area), ST_Equals(b.requested_area, ST_Envelope(b.requested_area)),
@@ -1090,14 +1090,29 @@ ARCHIVE_FACTS = """
            b.provider_status, b.quota_cost, b.evidence_sha256,
            e.evidence_id::text, e.sha256, e.byte_size, e.media_type, e.content
     FROM eye.capture_batch b LEFT JOIN eye.raw_evidence e USING (batch_id)
-    ORDER BY b.batch_id
 """
+ARCHIVE_FACTS = ARCHIVE_SELECT + " ORDER BY b.batch_id"
 
 
-def _verify_archive(conn: Connection, problems: list[str]) -> None:
+def _verify_archive(
+    conn: Connection,
+    problems: list[str],
+    pruned: frozenset = frozenset(),
+    batch_ids: list[str] | None = None,
+) -> None:
     """Compare each batch's stored capture facts and evidence metadata with its bytes."""
-    for row in conn.run(ARCHIVE_FACTS):
+    rows = (
+        conn.run(ARCHIVE_FACTS)
+        if batch_ids is None
+        else conn.run(
+            ARCHIVE_SELECT + " WHERE b.batch_id = ANY(CAST(:b AS uuid[])) ORDER BY b.batch_id",
+            b=batch_ids,
+        )
+    )
+    for row in rows:
         batch_id, facts, evidence, content = row[0], row[1:18], row[18:22], row[22]
+        if content is None and batch_id in pruned:
+            continue  # bytes held by the verified backup its retention decision cites
         if content is None:
             problems.append(f"capture {batch_id}: archived batch has no raw evidence")
             continue
@@ -1170,6 +1185,60 @@ CAPTURE_FACT_NAMES = (
 )
 
 
+def _pruned_batches(conn: Connection, problems: list[str]) -> frozenset:
+    """Batches whose bytes a checked retention decision pruned (migration 0007).
+
+    Their rows cannot be re-derived here; they are taken as stored, and only
+    the restore drill, from the backup the decision cites, can re-derive them.
+    Missing bytes without such a decision are reported, never adopted.
+    """
+    if not conn.run("SELECT to_regclass('eye.retention_decision') IS NOT NULL")[0][0]:
+        return frozenset()
+    out = set()
+    for batch_id, ok in conn.run(
+        "SELECT e.batch_id::text, d.verdict = 'pruned' AND p.state = 'verified' "
+        "AND e.batch_id = ANY(d.batch_ids) AND e.sha256 = ANY(p.evidence_sha256s) "
+        "FROM eye.raw_evidence e "
+        "LEFT JOIN eye.retention_decision d ON d.decision_id = e.pruned_by_decision "
+        "LEFT JOIN eye.backup_proof p ON p.proof_id = d.backup_proof_id "
+        "WHERE e.content IS NULL ORDER BY 1"
+    ):
+        if ok:
+            out.add(batch_id)
+        else:
+            problems.append(
+                f"batch {batch_id}: evidence bytes are missing without a checked "
+                "retention decision and verified backup"
+            )
+    return frozenset(out)
+
+
+def _only_pruned(conn: Connection, table: str, pruned: frozenset) -> set:
+    """Ids of ledger rows every one of whose receipts comes from a pruned batch."""
+    if not pruned:
+        return set()
+    key = {
+        "observation": "observation_id",
+        "event_claim": "claim_id",
+        "media_item": "media_item_id",
+    }[table]
+    return {
+        str(r[0])
+        for r in conn.run(
+            f"SELECT {key}::text FROM eye.{table}_receipt GROUP BY {key} "  # noqa: S608
+            "HAVING bool_and(batch_id = ANY(CAST(:p AS uuid[])))",
+            p=sorted(pruned),
+        )
+    }
+
+
+def _adopt(expected: dict, actual: dict, keys) -> None:
+    """Take stored rows that only pruned evidence produced as their own expectation."""
+    for key in keys:
+        if key in actual and key not in expected:
+            expected[key] = actual[key]
+
+
 def verify_replay(conn: Connection) -> list[str]:
     """Re-derive every row from stored evidence and compare every value and link.
 
@@ -1188,12 +1257,15 @@ def verify_replay(conn: Connection) -> list[str]:
     claim_receipts: dict[tuple, tuple] = {}
     media: dict[str, tuple] = {}
     media_receipts: dict[tuple, tuple] = {}
+    pruned = _pruned_batches(conn, problems)
     for batch_id, *row in conn.run(
         BATCH_FACTS.replace("SELECT ", "SELECT b.batch_id::text, ", 1) + " ORDER BY b.batch_id"
     ):
         if row[0] == "pending":
             problems.append(f"batch {batch_id}: still pending; run db-replay")
             continue
+        if row[5] is None:
+            continue  # pruned by a checked retention decision; rows are adopted below
         content, sha = bytes(row[5]), row[4]
         if hashlib.sha256(content).hexdigest() != sha:
             problems.append(f"batch {batch_id}: stored evidence does not match its checksum")
@@ -1213,7 +1285,7 @@ def verify_replay(conn: Connection) -> list[str]:
         media.update(derived.media)
         media_receipts.update(derived.media_receipts)
 
-    _verify_archive(conn, problems)
+    _verify_archive(conn, problems, pruned)
 
     actual_batches = {
         r[0]: r[1:]
@@ -1223,6 +1295,7 @@ def verify_replay(conn: Connection) -> list[str]:
             "FROM eye.capture_batch WHERE status <> 'pending'",
         )
     }
+    _adopt(expected_batches, actual_batches, pruned)
     _compare("batch", expected_batches, actual_batches, problems)
 
     actual_observations = {
@@ -1235,6 +1308,7 @@ def verify_replay(conn: Connection) -> list[str]:
             "confidence, quality_flags, content_sha256 FROM eye.observation",
         )
     }
+    _adopt(observations, actual_observations, _only_pruned(conn, "observation", pruned))
     _compare("observation", observations, actual_observations, problems)
 
     actual_receipts = {
@@ -1246,6 +1320,7 @@ def verify_replay(conn: Connection) -> list[str]:
             "FROM eye.observation_receipt",
         )
     }
+    _adopt(receipts, actual_receipts, {k for k in actual_receipts if k[1] in pruned})
     _compare("receipt", receipts, actual_receipts, problems)
 
     actual_coverage = {
@@ -1257,6 +1332,7 @@ def verify_replay(conn: Connection) -> list[str]:
             "metric_name, metric_value, derivation_version FROM eye.coverage",
         )
     }
+    _adopt(coverage, actual_coverage, {k for k, v in actual_coverage.items() if v[0] in pruned})
     _compare("coverage", coverage, actual_coverage, problems)
 
     actual_versions = {
@@ -1274,6 +1350,7 @@ def verify_replay(conn: Connection) -> list[str]:
         values = [_normalise(v) for v in row]
         values[11] = tuple(tuple(p) for p in row[11])  # coordinates, in order
         actual_claims[values[0]] = tuple(values[1:])
+    _adopt(claims, actual_claims, _only_pruned(conn, "event_claim", pruned))
     _compare("event claim", claims, actual_claims, problems)
     actual_claim_receipts = {
         (r[0], r[1]): r[2:]
@@ -1283,6 +1360,8 @@ def verify_replay(conn: Connection) -> list[str]:
             "eye.iso_utc(received_time), adapter_version FROM eye.event_claim_receipt",
         )
     }
+    pruned_claim_receipts = {k for k in actual_claim_receipts if k[1] in pruned}
+    _adopt(claim_receipts, actual_claim_receipts, pruned_claim_receipts)
     _compare("event claim receipt", claim_receipts, actual_claim_receipts, problems)
     actual_claim_versions = {
         r[0]: r[1:]
@@ -1296,6 +1375,7 @@ def verify_replay(conn: Connection) -> list[str]:
         "event claim version", expected_claim_versions(claims), actual_claim_versions, problems
     )
     actual_media = {r[0]: r[1:] for r in _rows(conn, MEDIA_FACTS)}
+    _adopt(media, actual_media, _only_pruned(conn, "media_item", pruned))
     _compare("media item", media, actual_media, problems)
     actual_media_receipts = {
         (r[0], r[1]): r[2:]
@@ -1305,6 +1385,8 @@ def verify_replay(conn: Connection) -> list[str]:
             "eye.iso_utc(received_time), adapter_version FROM eye.media_item_receipt",
         )
     }
+    pruned_media_receipts = {k for k in actual_media_receipts if k[1] in pruned}
+    _adopt(media_receipts, actual_media_receipts, pruned_media_receipts)
     _compare("media item receipt", media_receipts, actual_media_receipts, problems)
     actual_media_versions = {
         r[0]: r[1:]
@@ -1349,3 +1431,154 @@ CLAIM_FACTS = """
            content_sha256
     FROM eye.event_claim
 """
+
+
+class EvidencePruned(LookupError):
+    """A batch's raw bytes were pruned, so its rows cannot be re-derived here."""
+
+
+def _filtered(conn: Connection, sql: str, **params) -> list[tuple]:
+    return [tuple(_normalise(v) for v in row) for row in conn.run(sql, **params)]
+
+
+def ledger_rows(conn: Connection, batch_ids: list[str]) -> dict[str, dict]:
+    """The stored rows these batches produced: outcomes, ledgers, receipts and coverage.
+
+    Observations, event claims and media items are included when any of their
+    receipts comes from one of the batches. Version links are not included:
+    they depend on every batch of a record, and verify_replay checks them.
+    """
+    b = sorted(batch_ids)
+    by = "WHERE batch_id = ANY(CAST(:b AS uuid[]))"
+    claims = {}
+    for row in conn.run(
+        CLAIM_FACTS + " WHERE claim_id IN (SELECT claim_id FROM eye.event_claim_receipt "  # noqa: S608
+        f"{by})",
+        b=b,
+    ):
+        values = [_normalise(v) for v in row]
+        values[11] = tuple(tuple(p) for p in row[11])
+        claims[values[0]] = tuple(values[1:])
+    return {
+        "batch": {
+            r[0]: r[1:]
+            for r in _filtered(
+                conn,
+                "SELECT batch_id::text, status::text, accepted_count, rejected_count, "  # noqa: S608
+                f"failure_reason FROM eye.capture_batch {by} AND status <> 'pending'",
+                b=b,
+            )
+        },
+        "observation": {
+            r[0]: r[1:]
+            for r in _filtered(
+                conn,
+                "SELECT observation_id::text, source_id, source_record_id, layer, "  # noqa: S608
+                "display_type::text, eye.iso_utc(observed_time), "
+                "eye.iso_utc(source_published_time), ST_X(position), ST_Y(position), "
+                "altitude_m, confidence, quality_flags, content_sha256 FROM eye.observation "
+                "WHERE observation_id IN (SELECT observation_id FROM eye.observation_receipt "
+                f"{by})",
+                b=b,
+            )
+        },
+        "receipt": {
+            (r[0], r[1]): r[2:]
+            for r in _filtered(
+                conn,
+                "SELECT observation_id::text, batch_id::text, evidence_id::text, "  # noqa: S608
+                "eye.iso_utc(received_time), schema_version, adapter_version "
+                f"FROM eye.observation_receipt {by}",
+                b=b,
+            )
+        },
+        "coverage": {
+            r[0]: r[1:]
+            for r in _filtered(
+                conn,
+                "SELECT coverage_id::text, batch_id::text, source_id, layer, "  # noqa: S608
+                "eye.iso_utc(interval_start), eye.iso_utc(interval_end), state::text, reason, "
+                f"metric_name, metric_value, derivation_version FROM eye.coverage {by}",
+                b=b,
+            )
+        },
+        "event claim": claims,
+        "event claim receipt": {
+            (r[0], r[1]): r[2:]
+            for r in _filtered(
+                conn,
+                "SELECT claim_id::text, batch_id::text, evidence_id::text, "  # noqa: S608
+                f"eye.iso_utc(received_time), adapter_version FROM eye.event_claim_receipt {by}",
+                b=b,
+            )
+        },
+        "media item": {
+            r[0]: r[1:]
+            for r in _filtered(
+                conn,
+                MEDIA_FACTS + " WHERE media_item_id IN (SELECT media_item_id FROM "  # noqa: S608
+                f"eye.media_item_receipt {by})",
+                b=b,
+            )
+        },
+        "media item receipt": {
+            (r[0], r[1]): r[2:]
+            for r in _filtered(
+                conn,
+                "SELECT media_item_id::text, batch_id::text, evidence_id::text, "  # noqa: S608
+                f"eye.iso_utc(received_time), adapter_version FROM eye.media_item_receipt {by}",
+                b=b,
+            )
+        },
+    }
+
+
+def replay_batches(conn: Connection, batch_ids: list[str]) -> tuple[dict[str, dict], list[str]]:
+    """Re-derive these batches from their stored bytes and compare with what they stored.
+
+    Returns the stored rows (``ledger_rows``) and the discrepancies; an empty
+    list means the bytes reproduce every outcome, observation, event claim,
+    media item, receipt and coverage row these batches produced, and their
+    capture facts. Raises EvidencePruned when any batch's bytes are gone.
+    """
+    problems: list[str] = []
+    expected: dict[str, dict] = {kind: {} for kind in LEDGER_KINDS}
+    for batch_id, *row in conn.run(
+        BATCH_FACTS.replace("SELECT ", "SELECT b.batch_id::text, ", 1)
+        + " WHERE b.batch_id = ANY(CAST(:b AS uuid[])) ORDER BY b.batch_id",
+        b=sorted(batch_ids),
+    ):
+        if row[0] == "pending":
+            problems.append(f"batch {batch_id}: still pending")
+            continue
+        if row[5] is None:
+            raise EvidencePruned(f"batch {batch_id}: evidence bytes were pruned")
+        content = bytes(row[5])
+        if hashlib.sha256(content).hexdigest() != row[4]:
+            problems.append(f"batch {batch_id}: stored evidence does not match its checksum")
+        derived = _expected_for(batch_id, row)
+        expected["batch"][batch_id] = derived.batch
+        expected["observation"].update(derived.observations)
+        expected["receipt"].update(derived.receipts)
+        expected["coverage"].update(derived.coverage)
+        expected["event claim"].update(derived.claims)
+        expected["event claim receipt"].update(derived.claim_receipts)
+        expected["media item"].update(derived.media)
+        expected["media item receipt"].update(derived.media_receipts)
+    _verify_archive(conn, problems, batch_ids=sorted(batch_ids))
+    stored = ledger_rows(conn, batch_ids)
+    for kind in LEDGER_KINDS:
+        _compare(kind, expected[kind], stored[kind], problems)
+    return stored, problems
+
+
+LEDGER_KINDS = (
+    "batch",
+    "observation",
+    "receipt",
+    "coverage",
+    "event claim",
+    "event claim receipt",
+    "media item",
+    "media item receipt",
+)
