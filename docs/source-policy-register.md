@@ -36,6 +36,12 @@ Package 5 status (research slice): no source is added. Baselines and the
 backtester read recorded rollups of the synthetic sources only; their fixture
 (`tests/fixtures/synthetic/research/`) is invented `synthetic-fixture` data.
 
+Package 6 status (source review only): one candidate scientific imagery
+product, Copernicus Sentinel-2 Level-2A, is reviewed below as
+`copernicus-sentinel-2-l2a`. It is a **candidate and stays disabled**: no
+imagery code, adapter, fixture or download exists, and no default command or
+CI run contacts a Copernicus host. Approval is the owner's decision.
+
 Occurrence completeness: EYE treats each event capture as a reporting window
 (which reports were published then), never as proof of which events occurred.
 Occurrence completeness is shown as unknown unless a source's approved row
@@ -51,6 +57,159 @@ no code path claims completeness yet.
 | `synthetic-ais` | Approved for demo and tests | invented AIS reports from `scripts/gen_ais_fixtures.py`; `backend/eye/ingest/synthetic_ais.py` (only `SYNV-` vessel ids) | 2026-09-28 |
 | `synthetic-news` | Approved for demo and tests | invented news and media items in `tests/fixtures/synthetic/media/` (format `eye.synthetic-media-items/1`); parsed by the source-independent `backend/eye/ingest/media_items.py`. Publishers, headlines, people and links are invented; every URL uses the reserved `.invalid` domain; no body, image or video is stored | 2026-09-30 |
 | `synthetic-events` | Approved for demo and tests | invented event-report claims in `tests/fixtures/synthetic/events/` (format `eye.synthetic-event-claims/1`); parsed by the source-independent `backend/eye/ingest/event_claims.py`. Case ids, evidence references (`synthetic-doc:…`) and summaries are invented; no real authority, aircraft, vessel or road is described | 2026-09-29 |
+| `copernicus-sentinel-2-l2a` | **Candidate, disabled** (Package 6 source review) | none; no imagery code exists | 2026-10-08 (terms read; see below) |
+
+## Candidate rows
+
+### copernicus-sentinel-2-l2a
+
+*Reviewed 2026-10-08 in a Claude cloud session. Read-only: no account was
+created, no token requested and no imagery downloaded. Nothing here is
+approved.*
+
+**Why this product.** The brief (§7, Package 6) asks for "one permitted
+scientific product" and names none. Sentinel-2 Level-2A (surface
+reflectance, 10/20/60 m) is a widely used scientific product with a written
+EU licence that covers reproduction, distribution and modification. It ships
+as a Sentinel-SAFE archive, which suits Package 6's "known product/date
+result" and "malformed archive refusal" checks.
+
+**How the facts were read, and its limits.**
+
+- Pages were read through a fetch tool that returns a summary of each page,
+  not the raw page. Text in quotes below is the wording that tool returned.
+  The reviewer should check it against the live page before approval.
+- Plain `curl` to every provider host was refused by the session's proxy
+  (HTTP 403 on CONNECT). The fetch tool reached the pages listed below.
+- The ESA-hosted primary legal notice
+  (`https://sentinel.esa.int/documents/247904/690755/Sentinel_Data_Legal_Notice`)
+  refused the fetch tool (robots disallowed). The licence terms below come
+  from a copy hosted by ECMWF for its Copernicus services, so they are
+  **UNVERIFIED against the ESA primary**.
+- Anything marked UNVERIFIED was not found on a page that was read. A failed
+  or silent read is not evidence that a term is absent (CLAUDE.md).
+
+Pages read on 2026-10-08:
+
+| Page | URL | Result |
+|---|---|---|
+| CDSE terms and conditions | https://dataspace.copernicus.eu/terms-and-conditions | read; no revision date shown |
+| Copernicus Sentinel data licence (rev. 1), ECMWF copy | https://ecds.ecmwf.int/licences/ec-sentinel | read; no date shown |
+| ESA Sentinel data legal notice | https://sentinel.esa.int/documents/247904/690755/Sentinel_Data_Legal_Notice | **not read** (robots disallowed) |
+| CDSE quotas | https://documentation.dataspace.copernicus.eu/Quotas.html | read; no revision date shown |
+| CDSE Sentinel-2 data page | https://documentation.dataspace.copernicus.eu/Data/SentinelMissions/Sentinel2.html | read |
+| CDSE OData API | https://documentation.dataspace.copernicus.eu/APIs/OData.html | read; download section not returned |
+| CDSE access token | https://documentation.dataspace.copernicus.eu/APIs/Token.html | read |
+| SentiWiki S2 products | https://sentiwiki.copernicus.eu/web/s2-products | read |
+
+- Status: **candidate, disabled**
+- Data class: imagery (satellite surface reflectance, Level-2A)
+- Occurrence-time guarantee or reporting-delay watermark: not applicable
+  (not an occurrence report). Each product carries its own sensing time.
+  Timeliness after sensing: **UNVERIFIED** (not stated on the pages read).
+- Reuse rights per item and deletion or refresh obligations: the licence
+  applies to all Sentinel data, not per item. No deletion or refresh
+  obligation was found on the pages read: **UNVERIFIED**. The licence allows
+  "specific limitations of access and use in the rare cases of security
+  concerns, protection of third party rights or risk of service disruption".
+  Products may be reprocessed under a newer processing baseline (the CDSE
+  Sentinel-2 page says historical L1C/L2A up to 13 December 2023 will be
+  available in baseline 5.0 or better), so a stored product needs its
+  baseline recorded and a re-fetch path.
+- API endpoint(s):
+  - OData catalogue search:
+    `https://catalogue.dataspace.copernicus.eu/odata/v1/Products`, filtered
+    on `productType` `S2MSI2A`. Whether search needs a token is
+    **UNVERIFIED** (the page's examples send none).
+  - STAC catalogue: collection `sentinel-2-l2a`. Base URL **UNVERIFIED**.
+  - Product download host, `$value` URL pattern and redirect behaviour:
+    **UNVERIFIED** (the OData page's download section was not returned).
+  - S3 access: the Sentinel-2 page gives no S3 path for L2A. **UNVERIFIED**.
+- Official terms URL and review date: the three legal pages in the table
+  above, read 2026-10-08. CDSE terms §3: Sentinel data access "is available
+  on a free, full and open basis" under the separate legal notice.
+- Permitted purpose: the licence lists reproduction; distribution;
+  communication to the public; "adaptation, modification and combination
+  with other data and information"; and any combination of these, "in so far
+  as it is lawful". It draws no commercial/noncommercial line. Separately,
+  CDSE terms say "any other contents" of the portal (not Sentinel data) are
+  "intended for non-commercial use". Research use by EYE fits either.
+  Licence text **UNVERIFIED against the ESA primary**.
+- Rate limits and credit/cost calculation: no fee is stated (free, full and
+  open). Free-tier quotas for S3, OData and STAC on immediately available
+  data: 4 concurrent connections; 2000 requests per minute (stated for S3
+  only); 20 MB/s per connection; 12 TB per rolling 30 days, after which
+  bandwidth drops to 1 MB/s and 1 connection. CDSE terms §9 forbid bypassing
+  limits with multiple accounts and allow "immediate cessation or limitation
+  of the services" on breach.
+- Worst-case requests and cost per day at configured bounds: **not
+  computable yet**. Package 6 has not set its bounds, and the size of one
+  L2A product was not stated on any page read (**UNVERIFIED**). The adapter
+  PR must fix a per-day product cap and byte cap and compute this from a
+  measured product size. Monetary cost: none stated.
+- Storage rights (raw / derived / retention limit): the licence grants free
+  reproduction and modification, so storing raw products and derived tiles
+  appears permitted. No retention limit was found: **UNVERIFIED**. Storage
+  is bounded by EYE's own quota and the raster worker's scratch budget, not
+  by the licence.
+- Redistribution rights: the licence lists "distribution" and "communication
+  to the public". **Open question for the owner:** CDSE terms §3 also say the
+  portal does "not grant the right to resell or redistribute any
+  information, documents, images or material" or to "create derivative works
+  from material on its web portal". As read, this applies to portal content
+  and §3 points Sentinel data to the legal notice instead, but the boundary
+  is **UNVERIFIED**. Until resolved: private install only; no Sentinel
+  imagery, tile cache or derived raster in the public repo or CI.
+- Required attribution text and placement: unmodified data, "Copernicus
+  Sentinel data [Year]"; modified data (any resampled, reprojected, tiled or
+  composited output), "Contains modified Copernicus Sentinel data [Year]".
+  The licence requires informing the public of the source when distributing
+  or communicating; placement is not specified, so EYE would show it in the
+  layer legend and the evidence panel of every view that renders the layer.
+  CDSE terms §3 also ask for "an appropriate credit" for portal material.
+  Wording **UNVERIFIED against the ESA primary**.
+- Credential handling: download requires a registered CDSE account (terms
+  §4). Token endpoint
+  `https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token`,
+  `password` grant, client id `cdse-public`; with two-factor authentication
+  a `totp` value is added. Access and refresh token lifetimes:
+  **UNVERIFIED** (referred to the quotas page, which did not state them).
+  The password grant means the ingest service would hold the account
+  password at runtime; that is a private server runtime file, never git,
+  CI or a cloud session, and owned by ingest only, not the raster worker.
+- Egress destination(s): `catalogue.dataspace.copernicus.eu` and
+  `identity.dataspace.copernicus.eu` (read). Download host(s):
+  **UNVERIFIED**.
+- Failure and outage behaviour: not yet designed (no adapter). The licence
+  allows access limits for "risk of service disruption", and quota breach
+  can cut service, so the layer must report coverage as unknown or stale,
+  never as clear sky or no change.
+- Redirect policy: **UNVERIFIED** (download redirects not read). The adapter
+  must refuse any redirect off the listed egress hosts.
+- Test fixture: none yet. Package 6 should use a synthetic SAFE-shaped
+  archive generated in the repository, not a real product, because public
+  redistribution of real products is the open question above.
+- Disable switch: none specific yet. `providers.enabled` already refuses
+  every non-synthetic source (`backend/eye/config.py`), and capture refuses
+  any source without an approved row.
+- Approved by / date: **not approved**.
+
+**Other facts read (product).** 110 × 110 km tiles in UTM/WGS84; L2A at
+10 m, 20 m or 60 m; revisit 5 days with two satellites (2 to 3 days at
+mid-latitudes); SAFE format with JPEG2000 images; L2A pilot products from
+28 March 2017, operational from mid-March 2018 (Euro-Mediterranean) and
+global from 13 December 2018.
+
+**What the owner needs to settle before an adapter.**
+
+1. Read the ESA primary legal notice and confirm the licence and
+   attribution wording above.
+2. Decide the redistribution question: whether any derived Sentinel raster
+   may appear in the public repo, or private install only.
+3. Decide whether a CDSE account is acceptable for the private server, given
+   the password grant.
+4. Fill the UNVERIFIED download host, redirect, token lifetime, product size
+   and timeliness fields, then set per-day caps.
 
 ## Row template
 
