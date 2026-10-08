@@ -123,7 +123,8 @@ def _identity_refusal(conn, config: EyeConfig, command: str) -> int | None:
     """Refuse, before reading further or writing, a database of the other kind.
 
     Only db-migrate and db-prepare-demo may claim a database (after migrating);
-    db-status only reads. Every other command needs the claim of its mode.
+    db-status only reads, in a read-only transaction, so it needs no claim. Every
+    other command needs the claim of its mode.
     """
     from eye.storage import identity
 

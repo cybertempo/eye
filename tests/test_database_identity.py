@@ -8,6 +8,7 @@ sits beside a positive control on a synthetic demo database.
 from __future__ import annotations
 
 import copy
+import json
 import os
 import subprocess
 import sys
@@ -19,7 +20,7 @@ from eye.config import load_config
 from eye.ingest.capture import load_fixtures
 from eye.storage import identity
 from eye.storage.db import connect, transaction
-from eye.storage.migrate import migrate
+from eye.storage.migrate import discover, migrate
 from pg8000.exceptions import DatabaseError
 
 # Every demo-mode command that would migrate, load, derive, delete or record.
@@ -240,3 +241,70 @@ def test_a_running_demo_server_keeps_a_database_production_cannot_claim(make_db,
     finally:
         server.shutdown()
         server.server_close()
+
+
+# --- O72: db-status needs no claim, so it must not write ----------------------------
+
+# Every relation and schema outside the system catalogs, and the bookkeeping table.
+CATALOG = (
+    "SELECT to_regclass('public.eye_schema_migrations') IS NOT NULL, "
+    "(SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')), "
+    "(SELECT count(*) FROM pg_namespace)"
+)
+ALL = [m.version for m in discover()]
+
+
+def test_status_leaves_a_fresh_unclaimed_database_unchanged(make_db, config_path):
+    """O72: db-status runs without a claim, so it reads only; claimed databases report
+    their migrations as before (positive control)."""
+    demo, production = config_path(), config_path("production")
+    for config in (demo, production):
+        url = make_db()
+        conn = connect(url)
+        before = conn.run(CATALOG)[0]
+        assert before[0] is False
+        shown = run_eye("db-status", config=config, url=url)
+        assert shown.returncode == 0, shown.stderr
+        assert json.loads(shown.stdout) == {"applied": [], "pending": ALL}
+        assert conn.run(CATALOG)[0] == before  # no bookkeeping table, nothing created
+        conn.close()
+    # Positive controls: a claimed database of each kind reports every migration applied.
+    url = make_db()
+    assert run_eye("db-prepare-demo", config=demo, url=url).returncode == 0
+    shown = run_eye("db-status", config=demo, url=url)
+    assert json.loads(shown.stdout) == {"applied": ALL, "pending": []}
+    url = make_db()
+    assert run_eye("db-migrate", config=production, url=url).returncode == 0
+    shown = run_eye("db-status", config=production, url=url)
+    assert json.loads(shown.stdout) == {"applied": ALL, "pending": []}
+
+
+def test_status_works_for_a_role_that_cannot_create(make_db, config_path):
+    """A separate mechanism for O72: a login role without CREATE on the database or
+    its public schema can run db-status on a fresh database, and the server refuses
+    that role a write (negative control for the role itself)."""
+    import secrets
+    import uuid
+    from urllib.parse import quote, urlsplit, urlunsplit
+
+    url = make_db()
+    role, password = f"eye_t_reader_{uuid.uuid4().hex[:8]}", secrets.token_hex(16)
+    admin = connect(url)
+    admin.run(f"CREATE ROLE {role} LOGIN PASSWORD '{password}'")
+    try:
+        admin.run(f"REVOKE CREATE ON SCHEMA public FROM PUBLIC, {role}")
+        parts = urlsplit(url)
+        host = parts.hostname + (f":{parts.port}" if parts.port else "")
+        reader = urlunsplit(parts._replace(netloc=f"{role}:{quote(password)}@{host}"))
+        shown = run_eye("db-status", config=config_path(), url=reader)
+        assert shown.returncode == 0, shown.stderr
+        assert json.loads(shown.stdout) == {"applied": [], "pending": ALL}
+        conn = connect(reader)
+        with pytest.raises(DatabaseError, match="permission denied"):
+            conn.run("CREATE TABLE public.eye_schema_migrations (version integer)")
+        conn.close()
+    finally:
+        admin.run(f"DROP OWNED BY {role}")
+        admin.run(f"DROP ROLE {role}")
+        admin.close()

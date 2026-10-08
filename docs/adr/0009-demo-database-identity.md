@@ -40,8 +40,8 @@ Reproduced on `b1f3064` (cloud dev container, disposable PostGIS):
      kind.
    - **Claim before use (O71):** only `db-migrate` and `db-prepare-demo` may claim an unclaimed
      database (synthetic data only, or none), and they do so after migrating. Demo `serve` and every
-     other demo-mode command need a database already claimed `synthetic-demo`. `db-status` only reads
-     and is the one exception.
+     other demo-mode command need a database already claimed `synthetic-demo`. `db-status` is the one
+     exception, because it only reads (decision 6).
    - **Naming rule this relies on:** every synthetic source id starts with `synthetic-`, and a real
      source must never use that prefix.
 3. **Production needs its own claim too.**
@@ -56,6 +56,10 @@ Reproduced on `b1f3064` (cloud dev container, disposable PostGIS):
    runs, and the startup check needs no repetition.
 5. **A check that cannot run is a refusal** (`UNVERIFIED`, exit 5, or a startup refusal), never a
    pass.
+6. **`db-status` needs no claim, so it never writes (O72).** It runs in a read-only transaction,
+   in either mode, and reports a missing migration bookkeeping table as nothing applied. Before
+   O72 it created `public.eye_schema_migrations` on a fresh, unclaimed database. `db-migrate` still
+   creates that table when it migrates.
 
 ## Controls (each beside a positive control)
 
@@ -69,6 +73,7 @@ Reproduced on `b1f3064` (cloud dev container, disposable PostGIS):
 | An unclaimed database: production startup is refused. | |
 | O71: an unclaimed, migrated database. Demo startup and five demo writers are refused, with nothing written and no claim made. The writers are `db-load-fixtures`, `db-derive-transits`, `db-rollup`, `db-retention-execute` and `db-backtest`. On `f3801ac`, the demo served this database, `db-load-fixtures` wrote 23 synthetic batches into it, and production `db-migrate` then claimed it `private`. | Production `db-migrate` claims it `private`, and production startup accepts it. |
 | An unclaimed database an older release filled with synthetic batches: production `db-migrate` and a private claim are refused; nothing changes. | `db-prepare-demo` claims it for the demo, and demo startup accepts it. |
+| O72: a fresh, unclaimed database. Demo and production `db-status` report every migration pending, and the catalog is unchanged: no `public.eye_schema_migrations`, no new relation or schema. A login role without CREATE also gets the status, and the server refuses that role a CREATE TABLE. On `7ac697e`, `db-status` created the bookkeeping table and its index, and failed for the role without CREATE (exit 5). | A database claimed by `db-prepare-demo` and one claimed by production `db-migrate` report every migration applied. |
 | O71: a demo server running on a demo database. Production `db-migrate`, `db-replay` and `db-rollup` are refused, and the claim stays `synthetic-demo`. On `f3801ac`, production `db-migrate` claimed the database `private` under a running demo server, which kept serving it. | The server keeps serving its synthetic demo (health 200). |
 
 ## Consequences
