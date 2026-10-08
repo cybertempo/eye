@@ -32,6 +32,7 @@ from eye.api import feed, stream
 from eye.api import websocket as ws
 from eye.api.auth import AuthPort
 from eye.config import EyeConfig, is_loopback_host
+from eye.storage import identity
 from eye.storage.db import DatabaseConfigError
 from eye.wire import SCHEMA_VERSION, WireValidationError, validate_message, wire_version_of
 
@@ -493,7 +494,11 @@ class _Reader:
 
 
 def check_database(config: EyeConfig, database_url: str) -> None:
-    """Refuse to start unless the database is reachable and migrated for the API."""
+    """Refuse to start unless the database is reachable, migrated, and of this mode's kind.
+
+    Demo mode refuses a database claimed by a private installation or holding a
+    non-synthetic source; production refuses one not claimed ``private``.
+    """
     try:
         conn = feed.open_reader(
             database_url,
@@ -505,9 +510,19 @@ def check_database(config: EyeConfig, database_url: str) -> None:
     except Exception as exc:  # noqa: BLE001
         raise StartupError(f"database unreachable ({type(exc).__name__})") from exc
     try:
-        conn.run("SELECT 1 FROM eye.feed_epoch")
-    except Exception as exc:  # noqa: BLE001
-        raise StartupError("database is not migrated; run db-migrate first") from exc
+        try:
+            conn.run("SELECT 1 FROM eye.feed_epoch")
+        except Exception as exc:  # noqa: BLE001
+            raise StartupError("database is not migrated; run db-migrate first") from exc
+        try:
+            if config.mode == "demo":
+                identity.check_demo_target(conn)
+            else:
+                identity.check_private_target(conn)
+        except identity.IdentityRefused as exc:
+            raise StartupError(str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - a failed check is never a pass
+            raise StartupError(f"database identity unverified ({type(exc).__name__})") from exc
     finally:
         with contextlib.suppress(Exception):
             conn.close()

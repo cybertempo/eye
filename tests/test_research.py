@@ -835,7 +835,7 @@ def test_migration_0008_leaves_earlier_history_unchanged(make_db, tmp_path):
         ]
 
     prior = digest()
-    assert migrate(conn) == [8]
+    assert migrate(conn) == [8, 9]  # 0009 (database identity) adds one empty table
     assert digest() == prior
     # Positive control: the new tables accept a run over the old manifests.
     result = backtest.run_backtest(

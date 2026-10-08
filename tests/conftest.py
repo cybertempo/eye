@@ -168,6 +168,7 @@ def api_server(make_db, example_raw, write_config):
     from eye.api.server import build_server
     from eye.config import load_config
     from eye.ingest.capture import load_fixtures
+    from eye.storage import identity
     from eye.storage.db import connect
     from eye.storage.migrate import migrate
 
@@ -183,6 +184,7 @@ def api_server(make_db, example_raw, write_config):
         raw["api"].update({"poll_interval_ms": 60_000, **(api or {})})
         raw["server"].update(server or {})
         config = load_config(write_config(raw))
+        identity.claim(conn, identity.DEMO if config.mode == "demo" else identity.PRIVATE)
         handle_files = sorted(AIS_DEMO.glob("*.json")) if ais_files is None else ais_files
         srv = build_server(config, auth or DemoAuth("demo"), url)
         handle = ApiHandle(srv, url, conn)
