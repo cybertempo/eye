@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from conftest import REPO_ROOT
 from eye.ingest.capture import archive, ingest, replay_pending, verify_replay
+from eye.storage import identity
 from eye.storage.db import connect
 from eye.storage.migrate import migrate
 from eye.worker import transits
@@ -640,6 +641,7 @@ def test_replay_audits_every_recorded_run(make_db):
     url = make_db()
     conn = connect(url)
     migrate(conn)
+    identity.claim(conn, identity.DEMO)  # db-replay runs in demo mode
     first, backfill = (p.read_bytes() for p in files("late"))
     ingest(conn, first)
     derive(conn)
@@ -690,6 +692,7 @@ def test_replay_detects_deleted_count_rows(make_db, deletion):
     url = make_db()
     conn = connect(url)
     migrate(conn)
+    identity.claim(conn, identity.DEMO)  # db-replay runs in demo mode
     load(conn, "transit")
     run_id, _ = derive(conn, HOURS_3)
     table = "run_count" if "recorded" in deletion else "transit_count"

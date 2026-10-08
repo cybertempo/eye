@@ -9,10 +9,10 @@
 --   or `db-prepare-demo` in demo mode ('synthetic-demo'), or by `db-migrate`
 --   in production mode ('private'). A database claimed for one kind refuses
 --   the other for good; there is no command that relabels it.
--- * Demo startup and every demo-mode database command refuse a database that
---   is claimed 'private' or holds a capture batch of a non-synthetic source,
---   before they serve or write anything. Production startup refuses a
---   database that is not claimed 'private'.
+-- * Only those two commands claim a database. Serving and every other command
+--   need the claim of their mode first. The demo also refuses a database
+--   holding a capture batch of a non-synthetic source, and production one
+--   holding a synthetic source, before they serve or write anything.
 -- * Expected lock impact: none while migrating (the table is created empty).
 
 CREATE TABLE eye.database_identity (

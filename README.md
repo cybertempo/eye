@@ -63,10 +63,11 @@ PYTHONPATH=backend .venv/bin/python -m eye db-status        --config config/eye.
 
 Demo mode connects only to a loopback database, and only demo mode loads
 synthetic fixtures. The database records whether it is the demo or a private
-installation (`db-migrate` and `db-prepare-demo` claim it once). Demo mode
-refuses a database claimed `private` or holding a non-synthetic capture before
-it serves or writes anything; production refuses a database not claimed
-`private` ([ADR 0009](docs/adr/0009-demo-database-identity.md)). `db-derive-transits` counts crossings of every line in
+installation: `db-migrate` and `db-prepare-demo` claim it once, and the demo
+and every other command need that claim before they serve or write. The demo
+refuses a database claimed `private` or holding a non-synthetic capture;
+production refuses one not claimed `private`
+([ADR 0009](docs/adr/0009-demo-database-identity.md)). `db-derive-transits` counts crossings of every line in
 `reference/lines/` per hour; `db-prepare-demo` runs migrate, load and derive in
 one step; `db-replay` also re-derives and checks them. See
 [`migrations/README.md`](migrations/README.md),

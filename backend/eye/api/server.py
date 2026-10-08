@@ -496,8 +496,9 @@ class _Reader:
 def check_database(config: EyeConfig, database_url: str) -> None:
     """Refuse to start unless the database is reachable, migrated, and of this mode's kind.
 
-    Demo mode refuses a database claimed by a private installation or holding a
-    non-synthetic source; production refuses one not claimed ``private``.
+    Each mode needs a database already claimed for it (db-prepare-demo or
+    db-migrate); the demo also refuses one holding a non-synthetic source. A claim
+    is permanent, so the database cannot change kind while this server runs.
     """
     try:
         conn = feed.open_reader(
@@ -515,10 +516,7 @@ def check_database(config: EyeConfig, database_url: str) -> None:
         except Exception as exc:  # noqa: BLE001
             raise StartupError("database is not migrated; run db-migrate first") from exc
         try:
-            if config.mode == "demo":
-                identity.check_demo_target(conn)
-            else:
-                identity.check_private_target(conn)
+            identity.require(conn, identity.DEMO if config.mode == "demo" else identity.PRIVATE)
         except identity.IdentityRefused as exc:
             raise StartupError(str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 - a failed check is never a pass

@@ -38,13 +38,23 @@ Reproduced on `b1f3064` (cloud dev container, disposable PostGIS):
 
      The second rule catches a private database migrated by an older release that never claimed a
      kind.
-   - **What is allowed:** an unclaimed database with synthetic data only (or none). The demo claims
-     it.
+   - **Claim before use (O71):** only `db-migrate` and `db-prepare-demo` may claim an unclaimed
+     database (synthetic data only, or none), and they do so after migrating. Demo `serve` and every
+     other demo-mode command need a database already claimed `synthetic-demo`. `db-status` only reads
+     and is the one exception.
    - **Naming rule this relies on:** every synthetic source id starts with `synthetic-`, and a real
      source must never use that prefix.
-3. **Production startup refuses a database that is not claimed `private`.** It refuses one claimed
-   by the demo and one claimed by nobody. Production `db-migrate` makes the claim.
-4. **A check that cannot run is a refusal** (`UNVERIFIED`, exit 5, or a startup refusal), never a
+3. **Production needs its own claim too.**
+   - **Startup and commands:** production startup and every production database command except
+     `db-migrate` and `db-status` refuse a database not claimed `private`. That includes one claimed
+     by the demo and one claimed by nobody.
+   - **Claiming:** production `db-migrate` makes the claim.
+   - **Refused before migrating:** production `db-migrate` refuses, before it migrates, a database
+     that is claimed by the demo or that holds a capture batch of a `synthetic-` source.
+4. **A running server cannot lose its kind (O71).** A server needs a claim of its own kind before
+   it starts, and a claim is permanent. So the database cannot become the other kind while the server
+   runs, and the startup check needs no repetition.
+5. **A check that cannot run is a refusal** (`UNVERIFIED`, exit 5, or a startup refusal), never a
    pass.
 
 ## Controls (each beside a positive control)
@@ -57,11 +67,14 @@ Reproduced on `b1f3064` (cloud dev container, disposable PostGIS):
 | An unclaimed, migrated database holding a `real-provider` batch: `db-prepare-demo`, `db-load-fixtures`, demo startup and a demo claim are refused; nothing changes. | A fresh database: `db-prepare-demo` succeeds twice and claims `synthetic-demo`, and demo startup accepts it. |
 | A demo database: production startup and production `db-migrate` are refused; the claim cannot be updated or deleted. | A database claimed `private` passes production startup. |
 | An unclaimed database: production startup is refused. | |
+| O71: an unclaimed, migrated database. Demo startup and five demo writers are refused, with nothing written and no claim made. The writers are `db-load-fixtures`, `db-derive-transits`, `db-rollup`, `db-retention-execute` and `db-backtest`. On `f3801ac`, the demo served this database, `db-load-fixtures` wrote 23 synthetic batches into it, and production `db-migrate` then claimed it `private`. | Production `db-migrate` claims it `private`, and production startup accepts it. |
+| An unclaimed database an older release filled with synthetic batches: production `db-migrate` and a private claim are refused; nothing changes. | `db-prepare-demo` claims it for the demo, and demo startup accepts it. |
+| O71: a demo server running on a demo database. Production `db-migrate`, `db-replay` and `db-rollup` are refused, and the claim stays `synthetic-demo`. On `f3801ac`, production `db-migrate` claimed the database `private` under a running demo server, which kept serving it. | The server keeps serving its synthetic demo (health 200). |
 
 ## Consequences
 
-- **Existing local demo databases:** the next `db-migrate` or `db-prepare-demo` claims them, if they
-  hold synthetic data only.
+- **Existing local demo databases:** they must be claimed once by `db-migrate` or `db-prepare-demo`
+  (synthetic data only) before the demo serves or writes them again.
 - **Private installation:** it must run `db-migrate` in production mode once to claim its database
   before the API starts.
 - **Limits:**

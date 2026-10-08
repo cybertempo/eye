@@ -36,6 +36,7 @@ from conftest import EXAMPLE_CONFIG, REPO_ROOT
 from eye.config import ConfigError, parse_config
 from eye.ingest import capture
 from eye.ingest.capture import ingest, load_fixtures
+from eye.storage import identity
 from eye.storage.db import connect, transaction
 from eye.storage.migrate import migrate
 from eye.worker import backtest, baselines, rollups, transits
@@ -91,6 +92,7 @@ def scenario_db(admin_url):
         conn.url = url
         try:
             migrate(conn)
+            identity.claim(conn, identity.DEMO)  # the commands below run in demo mode
             for doc in sr.captures(SPEC, scenario):
                 ingest(conn, doc)
             assert not [r for r in rollups.refresh_all(conn, []) if r.error]

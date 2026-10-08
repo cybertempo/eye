@@ -119,14 +119,24 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _demo_target_refusal(conn, config: EyeConfig) -> int | None:
-    """In demo mode, refuse a private or real database before reading further or writing."""
+def _identity_refusal(conn, config: EyeConfig, command: str) -> int | None:
+    """Refuse, before reading further or writing, a database of the other kind.
+
+    Only db-migrate and db-prepare-demo may claim a database (after migrating);
+    db-status only reads. Every other command needs the claim of its mode.
+    """
     from eye.storage import identity
 
-    if config.mode != "demo":
-        return None
     try:
-        identity.check_demo_target(conn)
+        if config.mode == "demo":
+            if command in ("db-migrate", "db-prepare-demo", "db-status"):
+                identity.check_demo_target(conn)
+            else:
+                identity.require(conn, identity.DEMO)
+        elif command == "db-migrate":
+            identity.check_private_candidate(conn)
+        elif command != "db-status":
+            identity.require(conn, identity.PRIVATE)
     except identity.IdentityRefused as exc:
         conn.close()
         print(f"eye: REFUSED (database): {exc}", file=sys.stderr)
@@ -181,7 +191,7 @@ def _database_command(command: str, config: EyeConfig) -> int:
     except Exception as exc:  # connection failures are reported, never treated as empty
         print(f"eye: UNVERIFIED (database unreachable): {type(exc).__name__}", file=sys.stderr)
         return EXIT_DATABASE
-    refused = _demo_target_refusal(conn, config)
+    refused = _identity_refusal(conn, config, command)
     if refused is not None:
         return refused
     try:
@@ -336,7 +346,7 @@ def _lifecycle_command(args, config: EyeConfig) -> int:
     except Exception as exc:  # connection failures are reported, never treated as empty
         print(f"eye: UNVERIFIED (database unreachable): {type(exc).__name__}", file=sys.stderr)
         return EXIT_DATABASE
-    refused = _demo_target_refusal(conn, config)
+    refused = _identity_refusal(conn, config, command)
     if refused is not None:
         return refused
     failed = False
@@ -495,7 +505,7 @@ def _research_command(args, config: EyeConfig) -> int:
     except Exception as exc:  # connection failures are reported, never treated as empty
         print(f"eye: UNVERIFIED (database unreachable): {type(exc).__name__}", file=sys.stderr)
         return EXIT_DATABASE
-    refused = _demo_target_refusal(conn, config)
+    refused = _identity_refusal(conn, config, args.command)
     if refused is not None:
         return refused
     try:

@@ -178,13 +178,15 @@ def api_server(make_db, example_raw, write_config):
         url = make_db()
         conn = connect(url)
         migrate(conn)
-        load_fixtures(conn, CAPTURES)
         raw = copy.deepcopy(mode_raw or example_raw)
         raw["server"]["port"] = 0
         raw["api"].update({"poll_interval_ms": 60_000, **(api or {})})
         raw["server"].update(server or {})
         config = load_config(write_config(raw))
+        # Claimed before loading: a production-mode test serves synthetic rows from a
+        # database claimed private, which only this test shortcut can produce.
         identity.claim(conn, identity.DEMO if config.mode == "demo" else identity.PRIVATE)
+        load_fixtures(conn, CAPTURES)
         handle_files = sorted(AIS_DEMO.glob("*.json")) if ais_files is None else ais_files
         srv = build_server(config, auth or DemoAuth("demo"), url)
         handle = ApiHandle(srv, url, conn)

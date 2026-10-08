@@ -13,9 +13,10 @@ import subprocess
 import sys
 
 import pytest
-from conftest import REPO_ROOT
+from conftest import CAPTURES, REPO_ROOT
 from eye.api.server import StartupError, check_database
 from eye.config import load_config
+from eye.ingest.capture import load_fixtures
 from eye.storage import identity
 from eye.storage.db import connect, transaction
 from eye.storage.migrate import migrate
@@ -114,10 +115,12 @@ def test_demo_refuses_an_unclaimed_database_holding_a_real_source(make_db, confi
         conn.run(REAL_BATCH)
     before = conn.run(STATE)[0]
     assert before[-1] is None  # not claimed
-    for args in (("db-prepare-demo",), ("db-load-fixtures",)):
-        refused = run_eye(*args, config=demo, url=url)
-        assert refused.returncode == 2 and "non-synthetic sources (real-provider)" in refused.stderr
-    with pytest.raises(StartupError, match="non-synthetic"):
+    prepared = run_eye("db-prepare-demo", config=demo, url=url)  # the claiming command
+    assert prepared.returncode == 2
+    assert "non-synthetic sources (real-provider)" in prepared.stderr
+    loaded = run_eye("db-load-fixtures", config=demo, url=url)  # needs an existing claim
+    assert loaded.returncode == 2 and "claimed by no installation" in loaded.stderr
+    with pytest.raises(StartupError, match="claimed by no installation"):
         check_database(load_config(demo), url)
     with pytest.raises(identity.IdentityRefused, match="non-synthetic"):
         identity.claim(conn, identity.DEMO)
@@ -139,7 +142,7 @@ def test_demo_database_is_prepared_and_served_and_production_refuses_it(make_db,
     with pytest.raises(StartupError, match="claimed by the synthetic demo"):
         check_database(load_config(production), url)
     migrated = run_eye("db-migrate", config=production, url=url)
-    assert migrated.returncode == 2 and "already claimed as synthetic-demo" in migrated.stderr
+    assert migrated.returncode == 2 and "claimed by the synthetic demo" in migrated.stderr
     assert identity.kind(conn) == identity.DEMO
     # The claim is permanent: the table refuses a change or removal.
     for sql in (
@@ -161,3 +164,79 @@ def test_production_refuses_an_unclaimed_database(make_db, config_path):
     identity.claim(conn, identity.PRIVATE)
     check_database(load_config(config_path("production")), url)  # positive control
     conn.close()
+
+
+# --- O71: an unclaimed database ----------------------------------------------------
+
+
+def test_demo_needs_its_own_claim_before_serving_or_writing(make_db, config_path):
+    """O71: an unclaimed, migrated database is neither served nor written by the demo,
+    so production can still claim it, and nothing synthetic lands in it."""
+    demo, production = config_path(), config_path("production")
+    url = make_db()
+    conn = connect(url)
+    migrate(conn)  # migrated, never claimed
+    before = conn.run(STATE)[0]
+    with pytest.raises(StartupError, match="claimed by no installation"):
+        check_database(load_config(demo), url)
+    for args in DEMO_WRITERS[2:]:  # every writer except the two that claim
+        refused = run_eye(*args, config=demo, url=url)
+        assert refused.returncode == 2, (args, refused.stdout, refused.stderr)
+        assert "claimed by no installation" in refused.stderr, args
+    assert conn.run(STATE)[0] == before  # no synthetic batch written, no claim
+    # Positive control: production claims it and accepts it.
+    claimed = run_eye("db-migrate", config=production, url=url)
+    assert claimed.returncode == 0 and '"database": "private"' in claimed.stdout
+    check_database(load_config(production), url)
+    conn.close()
+
+
+def test_production_refuses_an_unclaimed_database_the_demo_has_written(make_db, config_path):
+    """A database an older release loaded with synthetic data stays out of production;
+    the demo may claim it (positive control)."""
+    demo, production = config_path(), config_path("production")
+    url = make_db()
+    conn = connect(url)
+    migrate(conn)
+    load_fixtures(conn, CAPTURES)  # synthetic batches, no claim
+    before = conn.run(STATE)[0]
+    refused = run_eye("db-migrate", config=production, url=url)
+    assert refused.returncode == 2 and "synthetic sources" in refused.stderr
+    with pytest.raises(identity.IdentityRefused, match="synthetic sources"):
+        identity.claim(conn, identity.PRIVATE)
+    assert conn.run(STATE)[0] == before
+    prepared = run_eye("db-prepare-demo", config=demo, url=url)
+    assert prepared.returncode == 0, prepared.stderr
+    assert identity.kind(conn) == identity.DEMO
+    check_database(load_config(demo), url)
+    conn.close()
+
+
+def test_a_running_demo_server_keeps_a_database_production_cannot_claim(make_db, config_path):
+    """O71: the claim a demo server needs is permanent, so production cannot claim the
+    database underneath it; the server keeps serving the synthetic demo."""
+    import threading
+    import urllib.request
+
+    from eye.api.auth import DemoAuth
+    from eye.api.server import build_server
+
+    demo, production = config_path(), config_path("production")
+    url = make_db()
+    assert run_eye("db-prepare-demo", config=demo, url=url).returncode == 0
+    server = build_server(load_config(demo), DemoAuth("demo"), url)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address[:2]
+    try:
+        refused = run_eye("db-migrate", config=production, url=url)
+        assert refused.returncode == 2 and "claimed by the synthetic demo" in refused.stderr
+        for args in (("db-replay",), ("db-rollup",)):
+            other = run_eye(*args, config=production, url=url)
+            assert other.returncode == 2 and "claimed by the synthetic demo" in other.stderr
+        assert identity.kind(connect(url)) == identity.DEMO
+        with urllib.request.urlopen(f"http://{host}:{port}/api/v0/health", timeout=10) as r:
+            assert r.status == 200  # still the synthetic demo it started on
+    finally:
+        server.shutdown()
+        server.server_close()
