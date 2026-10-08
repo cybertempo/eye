@@ -8,9 +8,15 @@ a stale manifest (a late arrival or correction not yet rolled up) refuses the
 run, so a correction can change a result only through a new manifest and then
 a new, recorded run.
 
-A run is recorded append-only (migration 0008) with the exact manifest ids it
-read, its parameters and an output checksum. Its id is derived from those, so
-running again on the same manifests is a no-op. ``replay`` re-reads the cited
+Checking and recording share one transaction that first locks the batch,
+evidence, transit-run and manifest tables in SHARE mode, so no batch can
+arrive or settle and no manifest can be added between the check and the
+commit (finding O70). The database guards this independently: a run may cite
+only manifests that are still current and complete (migration 0008).
+
+A run is recorded append-only with the exact manifest ids it read, its
+parameters and an output checksum. Its id is derived from those, so running
+again on the same manifests is a no-op. ``replay`` re-reads the cited
 manifests (never the current ones), recomputes, and compares every stored
 result.
 
@@ -21,8 +27,10 @@ days before the range; anything larger is refused, never cut short.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -269,6 +277,50 @@ def run_id_for(series: Series, first: date, last: date, params: Params, input_sh
     )
 
 
+LOCKED_TABLES = (
+    "eye.capture_batch",
+    "eye.raw_evidence",
+    "eye.derivation_run",
+    "eye.derivation_manifest",
+)
+
+
+@contextlib.contextmanager
+def locked(conn: Connection) -> Iterator[Connection]:
+    """One transaction in which no batch can arrive or settle and no manifest or
+    transit run can be added until it ends.
+
+    SHARE mode lets other readers (and other backtests) proceed but makes every
+    writer to these tables wait for this transaction's commit, so the manifests
+    checked inside it cannot go stale before the run is recorded (finding O70).
+    """
+    with transaction(conn):
+        conn.run(f"LOCK TABLE {', '.join(LOCKED_TABLES)} IN SHARE MODE")
+        yield conn
+
+
+def _evaluate(conn, series, first_day, last_day, params, lines) -> Run:
+    """Resolve and check the current manifests, read them and backtest (caller's transaction)."""
+    start = history_start(first_day, params)
+    inputs = resolve_inputs(conn, series, start, last_day)
+    problems = []
+    for mid, derivation, day, scope in inputs:
+        partition = rollups.Partition(series.source_id, series.layer, day)
+        checked = rollups.check(conn, partition, derivation, scope, lines)
+        if checked.manifest_id != mid or checked.state != "valid":
+            problems.append(f"{checked.label}: {checked.state} ({checked.reason})")
+    if problems:
+        raise BacktestRefused(
+            f"{len(problems)} cited manifest(s) are not valid now; run db-rollup for a "
+            f"new manifest first, e.g. {problems[0]}"[:500]
+        )
+    ids = [i[0] for i in inputs]
+    hours, input_sha = load_series(conn, series, ids, start, last_day)
+    results = baselines.backtest(hours, first_day, last_day, params)
+    run_id = run_id_for(series, first_day, last_day, params, input_sha)
+    return Run(run_id, series, first_day, last_day, params, tuple(sorted(ids)), input_sha, results)
+
+
 def compute(
     conn: Connection,
     series: Series,
@@ -278,82 +330,89 @@ def compute(
     limits: Limits,
     lines,
 ) -> Run:
-    """Resolve, check and read the current manifests, then backtest. Reads only."""
+    """A read-only preview: resolve, check and read the current manifests, then backtest.
+
+    It records nothing. ``store`` re-derives it under the lock before recording.
+    """
     check_bounds(first_day, last_day, params, limits)
-    start = history_start(first_day, params)
     with rollups.snapshot(conn):
-        inputs = resolve_inputs(conn, series, start, last_day)
-        problems = []
-        for mid, derivation, day, scope in inputs:
-            partition = rollups.Partition(series.source_id, series.layer, day)
-            checked = rollups.check(conn, partition, derivation, scope, lines)
-            if checked.manifest_id != mid or checked.state != "valid":
-                problems.append(f"{checked.label}: {checked.state} ({checked.reason})")
-        if problems:
-            raise BacktestRefused(
-                f"{len(problems)} cited manifest(s) are not valid now; run db-rollup for a "
-                f"new manifest first, e.g. {problems[0]}"[:500]
-            )
-        ids = [i[0] for i in inputs]
-        hours, input_sha = load_series(conn, series, ids, start, last_day)
-    results = baselines.backtest(hours, first_day, last_day, params)
-    run_id = run_id_for(series, first_day, last_day, params, input_sha)
-    return Run(run_id, series, first_day, last_day, params, tuple(sorted(ids)), input_sha, results)
+        return _evaluate(conn, series, first_day, last_day, params, lines)
 
 
-def store(conn: Connection, run: Run) -> Run:
-    """Record a run and its results. Idempotent: the same inputs give the same id."""
+def _insert(conn: Connection, run: Run) -> bool:
     counts = baselines.summary(run.results)
-    with transaction(conn):
-        created = conn.run(
-            "INSERT INTO eye.backtest_run (run_id, algorithm_version, source_id, layer, "
-            "derivation, scope, metric, first_day, last_day, params, input_manifest_ids, "
-            "input_sha256, output_row_count, output_sha256, detected, not_detected, abstained) "
-            "VALUES (:id, :alg, :s, :l, :d, :scope, :m, :a, :b, CAST(:params AS jsonb), "
-            "CAST(:ids AS uuid[]), :isha, :n, :osha, :det, :nd, :ab) "
-            "ON CONFLICT (run_id) DO NOTHING RETURNING run_id",
-            id=run.run_id,
-            alg=baselines.ALGORITHM_VERSION,
-            s=run.series.source_id,
-            l=run.series.layer,
-            d=run.series.derivation,
-            scope=run.series.scope,
-            m=run.series.metric,
-            a=run.first_day,
-            b=run.last_day,
-            params=json.dumps(run.params.as_dict(), sort_keys=True),
-            ids=list(run.input_manifest_ids),
-            isha=run.input_sha256,
-            n=len(run.results),
-            osha=run.output_sha256,
-            det=counts["detected"],
-            nd=counts["not_detected"],
-            ab=counts["abstained"],
-        )
-        if created:
-            for r in run.results:
-                conn.run(
-                    "INSERT INTO eye.backtest_result (run_id, row_key, bin_start, bin_end, "
-                    "verdict, reason_code, observed, exposure_s, expected, score, detail) "
-                    "VALUES (:id, :k, :b, :e, :v, :rc, :o, :x, :ex, :sc, CAST(:detail AS jsonb))",
-                    id=run.run_id,
-                    k=r.row_key,
-                    b=r.bin_start,
-                    e=r.bin_end,
-                    v=r.verdict,
-                    rc=r.reason_code,
-                    o=r.observed,
-                    x=r.exposure_s,
-                    ex=None if r.expected is None else baselines.fixed(r.expected),
-                    sc=r.score,
-                    detail=json.dumps(r.detail, sort_keys=True),
-                )
-    run.created = bool(created)
+    created = conn.run(
+        "INSERT INTO eye.backtest_run (run_id, algorithm_version, source_id, layer, "
+        "derivation, scope, metric, first_day, last_day, params, input_manifest_ids, "
+        "input_sha256, output_row_count, output_sha256, detected, not_detected, abstained) "
+        "VALUES (:id, :alg, :s, :l, :d, :scope, :m, :a, :b, CAST(:params AS jsonb), "
+        "CAST(:ids AS uuid[]), :isha, :n, :osha, :det, :nd, :ab) "
+        "ON CONFLICT (run_id) DO NOTHING RETURNING run_id",
+        id=run.run_id,
+        alg=baselines.ALGORITHM_VERSION,
+        s=run.series.source_id,
+        l=run.series.layer,
+        d=run.series.derivation,
+        scope=run.series.scope,
+        m=run.series.metric,
+        a=run.first_day,
+        b=run.last_day,
+        params=json.dumps(run.params.as_dict(), sort_keys=True),
+        ids=list(run.input_manifest_ids),
+        isha=run.input_sha256,
+        n=len(run.results),
+        osha=run.output_sha256,
+        det=counts["detected"],
+        nd=counts["not_detected"],
+        ab=counts["abstained"],
+    )
+    if created:
+        for r in run.results:
+            conn.run(
+                "INSERT INTO eye.backtest_result (run_id, row_key, bin_start, bin_end, "
+                "verdict, reason_code, observed, exposure_s, expected, score, detail) "
+                "VALUES (:id, :k, :b, :e, :v, :rc, :o, :x, :ex, :sc, CAST(:detail AS jsonb))",
+                id=run.run_id,
+                k=r.row_key,
+                b=r.bin_start,
+                e=r.bin_end,
+                v=r.verdict,
+                rc=r.reason_code,
+                o=r.observed,
+                x=r.exposure_s,
+                ex=None if r.expected is None else baselines.fixed(r.expected),
+                sc=r.score,
+                detail=json.dumps(r.detail, sort_keys=True),
+            )
+    return bool(created)
+
+
+def store(conn: Connection, run: Run, lines=()) -> Run:
+    """Record a computed run, re-deriving it under the lock first.
+
+    The manifests are re-resolved and re-checked, and the results recomputed,
+    inside the same locked transaction that inserts them. A run whose inputs
+    changed since it was computed (a late arrival, a correction, a new
+    manifest) is refused and nothing is recorded. Idempotent.
+    """
+    with locked(conn):
+        fresh = _evaluate(conn, run.series, run.first_day, run.last_day, run.params, lines)
+        if fresh.run_id != run.run_id or fresh.output_sha256 != run.output_sha256:
+            raise BacktestRefused(
+                "the cited manifests or their inputs changed after this run was computed; "
+                "nothing is recorded"
+            )
+        run.created = _insert(conn, fresh)
     return run
 
 
 def run_backtest(conn, series, first_day, last_day, params, limits, lines) -> Run:
-    return store(conn, compute(conn, series, first_day, last_day, params, limits, lines))
+    """Check, read, backtest and record in one locked transaction."""
+    check_bounds(first_day, last_day, params, limits)
+    with locked(conn):
+        run = _evaluate(conn, series, first_day, last_day, params, lines)
+        run.created = _insert(conn, run)
+    return run
 
 
 def stored_canonical(conn: Connection, run_id: str) -> list:

@@ -75,6 +75,20 @@ Scope:
      it is about to cite (`rollups.check`). If any is not `valid` now, for
      example after a late arrival or correction that has not been rolled up,
      the run is refused and nothing is recorded.
+   - **Check and record in one locked transaction (O70):** the transaction
+     first takes SHARE locks on the batch, evidence, transit-run and manifest
+     tables. A capture, a settling batch, a transit run or a new manifest then
+     waits until the run is committed, so nothing can make the checked
+     manifests stale between the check and the commit. Other readers, and
+     other backtests, are not blocked. `backtest.compute` is a read-only
+     preview; `backtest.store` re-derives the run under the lock and refuses
+     it if anything changed since it was computed.
+   - **Database guard (O70):** independently of the Python code, a trigger on
+     `eye.backtest_run` takes the same SHARE locks on `eye.capture_batch` and
+     `eye.derivation_manifest` (held until commit) and refuses a run that
+     cites a manifest that is not current: one with a later manifest for its
+     key, or with a settled batch of its source and layer overlapping its day
+     that it does not include.
    - **Recorded:** `eye.backtest_run` holds the series, the range, the
      parameters, the cited manifest ids, an input checksum (manifest ids and
      their output checksums), the result counts and an output checksum.
@@ -137,6 +151,7 @@ bins).
 | Shuffled and null | Null and shuffled scenarios: 0 detections. | Not vacuous: 186 of 192 bins evaluated; only the six uncovered bins abstain. Over 60 further seeded series, false detections are 3 of 11,520 null bins and 4 of 11,520 shuffled bins (test bound: under 0.2%), and a planted +20 is found in 60 of 60. |
 | Late corrections | After a late backfill, a new run is refused (stale manifests) and nothing is recorded. A **mutant** that reads the current rollups instead of the cited manifests changes the old run's result. | The old run still replays identically. After `db-rollup`, a new run with a new id records the new result: exactly hours 18 to 20 of 2026-03-22 change, from abstained to evaluated. |
 | Replay | With the append-only trigger disabled in a disposable database, an altered stored result fails replay and names the row. An update with the trigger on is refused. An unknown run id fails. | A replay is identical. Running again records nothing new. A separate database built from the same fixtures gives the same run id, manifests and stored results. Reversing the series' order changes nothing. |
+| Check-to-record race (O70) | A late correction ingested while a backtest is between its checks and its commit waits for the lock and times out (`55P03`); it cannot commit in between. A run checked before a correction and recorded after it is refused by `store`, and, with the Python lock and recheck bypassed, by the database (`no longer current`). Nothing is recorded. On `e27ed0b`, the same sequence recorded the stale run. | The concurrent run is recorded and replays identically; the correction then commits. A run whose inputs did not change between a separate check and record is recorded and replays, and the database accepts it. |
 
 **Old code comparison.** Main (`7cfb9792`) has no baseline, backtest or
 migration 0008. The new tests run against main's backend fail at import
@@ -146,6 +161,18 @@ The mutants above show each control would fail if its rule were removed:
 - unpinned replay breaks late-correction safety;
 - an altered stored row breaks replay;
 - the same detector without the plant finds nothing.
+
+## Review findings (2026-10-08)
+
+- **O70, check-to-record race:** on `e27ed0b` the backtester checked its
+  manifests in a read-only transaction, ended it, and recorded the run in a
+  separate transaction. A late correction committing in between let a run be
+  recorded after its manifests went stale (reproduced: the run was recorded
+  while its 2026-03-22 coverage and observation manifests checked `stale`).
+  Checking and recording now share one transaction that holds SHARE locks
+  from before the check until commit, and the database refuses a run citing a
+  manifest that is not current. Migration 0008 is revised in place: it has
+  never been merged or applied outside a disposable test database.
 
 ## Consequences and open decisions
 
@@ -162,6 +189,11 @@ The mutants above show each control would fail if its rule were removed:
   needs a separate rule, because a drop is easily confused with a coverage gap.
 - **Not backed up.** Backtest runs are not part of the synthetic backup
   generation. They can be recomputed from the manifests that are backed up.
+- **Locks:** recording a run briefly holds SHARE locks on the batch,
+  evidence, transit-run and manifest tables, so captures and rollups wait for
+  it. A backtest is bounded (decision 10), so the wait is short; a writer
+  with a lock timeout fails rather than waiting, and its batch is retried
+  like any refused capture.
 - **Not served.** Showing results in DESK would need a new wire version.
 - **Real-data deletion still blocked.** It needs database role separation and
   a proven real backup and restore in the private environment (Package 8).

@@ -24,6 +24,7 @@ import os
 import random
 import subprocess
 import sys
+import threading
 import uuid
 from datetime import date, timedelta
 from fractions import Fraction
@@ -372,6 +373,82 @@ def test_late_arrival_changes_a_result_only_through_a_new_recorded_derivation(fr
     assert changed == {key("2026-03-22", h) for h in (18, 19, 20)}
     assert conn.run("SELECT count(*) FROM eye.backtest_run")[0][0] == 2
     assert backtest.replay(conn, second.run_id).identical
+
+
+def test_correction_between_check_and_record_cannot_be_recorded(fresh_db, monkeypatch):
+    """Finding O70: a late correction committing after the check and before the record.
+
+    On the earlier code, ``compute`` checked the manifests in one transaction and
+    ``store`` inserted in another, so this sequence recorded a run whose
+    manifests were already stale.
+    """
+    conn = fresh_db("null")
+    url = conn.url
+    preview = backtest.compute(conn, SERIES, FIRST, LAST, Params(threshold_sigma=6), Limits(), [])
+    # A concurrent backtest holds the lock from its checks to its commit: a late
+    # correction arriving meanwhile waits, it cannot commit in between.
+    reached, release = threading.Event(), threading.Event()
+    real_backtest = baselines.backtest
+
+    def paused(*args, **kwargs):
+        reached.set()  # the manifests have just been checked
+        assert release.wait(30)
+        return real_backtest(*args, **kwargs)
+
+    monkeypatch.setattr(baselines, "backtest", paused)
+    recorded: list = []
+
+    def concurrent_backtest() -> None:
+        own = connect(url)
+        try:
+            recorded.append(run(own))
+        finally:
+            own.close()
+
+    worker = threading.Thread(target=concurrent_backtest, name="backtest", daemon=True)
+    worker.start()
+    assert reached.wait(60)
+    writer = connect(url)
+    writer.run("SET lock_timeout = '1s'")
+    with pytest.raises(DatabaseError, match="55P03"):  # lock_not_available
+        for doc in sr.late_captures(SPEC):
+            ingest(writer, doc)
+    release.set()
+    worker.join(60)
+    monkeypatch.setattr(baselines, "backtest", real_backtest)
+    (concurrent,) = recorded
+    assert concurrent.created and backtest.replay(conn, concurrent.run_id).identical
+    assert conn.run("SELECT count(*) FROM eye.capture_batch WHERE status = 'pending'")[0][0] == 0
+    # Now the correction commits, after the concurrent run was recorded.
+    for doc in sr.late_captures(SPEC):
+        ingest(writer, doc)
+    writer.close()
+    # The earlier sequence: a run checked before the correction is refused when
+    # recorded after it, and nothing is recorded.
+    with pytest.raises(BacktestRefused, match="not valid now"):
+        backtest.store(conn, preview)
+    # The database refuses it on its own, with the Python lock and recheck bypassed.
+    with pytest.raises(DatabaseError, match="no longer current"), transaction(conn):
+        backtest._insert(conn, preview)
+    count = "SELECT count(*) FROM eye.backtest_run WHERE run_id = :r"
+    assert conn.run(count, r=preview.run_id)[0][0] == 0
+    # The run recorded before the correction is unchanged and still replays.
+    assert backtest.replay(conn, concurrent.run_id).identical
+
+
+def test_unchanged_inputs_are_recorded_after_a_separate_check_and_replay(scenario_db):
+    """Positive control for O70: nothing changed between check and record."""
+    conn = scenario_db("null")
+    params = Params(threshold_sigma=7)  # a run no other test records
+    preview = backtest.compute(conn, SERIES, FIRST, LAST, params, Limits(), [])
+    count = "SELECT count(*) FROM eye.backtest_run WHERE run_id = :r"
+    assert conn.run(count, r=preview.run_id)[0][0] == 0  # computing records nothing
+    stored = backtest.store(conn, preview)
+    assert stored.created and conn.run(count, r=preview.run_id)[0][0] == 1
+    assert backtest.replay(conn, preview.run_id).identical
+    # The database guard accepts current manifests (an idempotent direct insert).
+    with transaction(conn):
+        assert backtest._insert(conn, preview) is False
 
 
 # --- control 5: replay -------------------------------------------------------------

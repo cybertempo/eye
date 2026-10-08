@@ -7,13 +7,17 @@
 -- * A run names the exact rollup manifests it read (input_manifest_ids), so a
 --   replay re-reads those manifests, never whatever is current. A late arrival
 --   or correction changes a result only through a new manifest and a new run;
---   runs and their results are append-only.
+--   runs and their results are append-only. A run may cite only manifests
+--   that are current and complete when it is recorded; the check locks the
+--   batch and manifest tables until commit (O70).
 -- * Results are deterministic facts, never prose: a verdict, a reason code
 --   from a fixed list when it abstains, and numbers. An abstained result has no
 --   observed, expected or score value (a gap is never a zero), and an evaluated
 --   one needs exposure. The detail object holds integers only.
--- * Expected lock impact: none on existing tables; the new tables are created
---   empty.
+-- * Expected lock impact: none while migrating; the new tables are created
+--   empty. At run time, recording a backtest run holds SHARE locks on
+--   eye.capture_batch and eye.derivation_manifest until its transaction ends,
+--   so captures and rollups wait for it (a backtest is short and bounded).
 
 CREATE TABLE eye.backtest_run (
     run_id             uuid PRIMARY KEY,
@@ -42,21 +46,53 @@ CREATE TABLE eye.backtest_run (
 CREATE TRIGGER backtest_run_append_only BEFORE UPDATE OR DELETE ON eye.backtest_run
     FOR EACH ROW EXECUTE FUNCTION eye.refuse_change();
 
--- Every cited manifest must exist (manifests are append-only, so it stays).
-CREATE FUNCTION eye.backtest_inputs_exist() RETURNS trigger
+-- Every cited manifest must exist and still be current and complete when the
+-- run is recorded: no later manifest for its key, and no settled batch of its
+-- source and layer overlapping its day that it does not include (a late
+-- arrival or correction not yet rolled up). The function first takes SHARE
+-- locks on the batch and manifest tables, which last until the transaction
+-- ends, so no batch can arrive or settle and no manifest can be added between
+-- this check and the commit (finding O70). The application takes the same
+-- locks before its own checks.
+CREATE FUNCTION eye.backtest_inputs_current() RETURNS trigger
 LANGUAGE plpgsql AS $$
+DECLARE
+    bad text;
 BEGIN
-    IF EXISTS (
-        SELECT 1 FROM unnest(NEW.input_manifest_ids) AS m(id)
-        WHERE NOT EXISTS (SELECT 1 FROM eye.derivation_manifest d WHERE d.manifest_id = m.id)
-    ) THEN
-        RAISE EXCEPTION 'backtest run % cites a manifest that does not exist', NEW.run_id;
+    LOCK TABLE eye.capture_batch, eye.derivation_manifest IN SHARE MODE;
+    SELECT m.id::text INTO bad FROM unnest(NEW.input_manifest_ids) AS m(id)
+    WHERE NOT EXISTS (SELECT 1 FROM eye.derivation_manifest d WHERE d.manifest_id = m.id)
+    LIMIT 1;
+    IF bad IS NOT NULL THEN
+        RAISE EXCEPTION 'backtest run % cites manifest %, which does not exist', NEW.run_id, bad;
+    END IF;
+    SELECT d.manifest_id::text INTO bad FROM eye.derivation_manifest d
+    WHERE d.manifest_id = ANY(NEW.input_manifest_ids)
+    AND (
+        EXISTS (
+            SELECT 1 FROM eye.derivation_manifest n
+            WHERE (n.source_id, n.layer, n.day, n.derivation, n.scope)
+                = (d.source_id, d.layer, d.day, d.derivation, d.scope)
+            AND n.manifest_seq > d.manifest_seq
+        )
+        OR EXISTS (
+            SELECT 1 FROM eye.capture_batch b
+            WHERE b.source_id = d.source_id AND b.layer = d.layer AND b.status <> 'pending'
+            AND b.requested_start < d.interval_end AND b.requested_end > d.interval_start
+            AND NOT (b.batch_id = ANY(d.input_batch_ids))
+        )
+    )
+    ORDER BY d.manifest_id
+    LIMIT 1;
+    IF bad IS NOT NULL THEN
+        RAISE EXCEPTION 'backtest run % cites manifest %, which is no longer current '
+            '(a later manifest or settled batch supersedes it)', NEW.run_id, bad;
     END IF;
     RETURN NEW;
 END;
 $$;
-CREATE TRIGGER backtest_run_inputs_exist BEFORE INSERT ON eye.backtest_run
-    FOR EACH ROW EXECUTE FUNCTION eye.backtest_inputs_exist();
+CREATE TRIGGER backtest_run_inputs_current BEFORE INSERT ON eye.backtest_run
+    FOR EACH ROW EXECUTE FUNCTION eye.backtest_inputs_current();
 
 CREATE TABLE eye.backtest_result (
     run_id      uuid NOT NULL REFERENCES eye.backtest_run (run_id),
