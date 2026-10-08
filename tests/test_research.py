@@ -70,42 +70,70 @@ def detected(results) -> list[str]:
 
 @pytest.fixture(scope="module")
 def scenario_db(admin_url):
-    """One disposable database per fixture scenario, loaded and rolled up once."""
-    admin = connect(admin_url)
-    made: list[str] = []
-    conns = []
+    """Disposable databases per fixture scenario, loaded and rolled up once.
 
-    def make(scenario: str | None, *, rollup: bool = True):
+    One is kept at a time (the disposable test server has 512 MB of memory,
+    its data directory included); each dropped database is followed by a
+    checkpoint so its WAL can be recycled. ``fresh`` databases belong to one
+    test and are dropped after it.
+    """
+    admin = connect(admin_url)
+    live: dict[str, tuple[str, object]] = {}
+
+    def make(scenario: str):
         name = f"eye_r_{uuid.uuid4().hex[:12]}"
-        admin.run(f'CREATE DATABASE "{name}"')
-        made.append(name)
+        # FILE_COPY keeps the template copy out of the WAL on the small test server.
+        admin.run(f'CREATE DATABASE "{name}" STRATEGY = FILE_COPY')
         url = urlunsplit(urlsplit(admin_url)._replace(path=f"/{name}"))
         conn = connect(url)
         conn.url = url
-        conns.append(conn)
-        migrate(conn)
-        if scenario is not None:
+        try:
+            migrate(conn)
             for doc in sr.captures(SPEC, scenario):
                 ingest(conn, doc)
-            if rollup:
-                assert not [r for r in rollups.refresh_all(conn, []) if r.error]
-        return conn
+            assert not [r for r in rollups.refresh_all(conn, []) if r.error]
+        except BaseException:
+            drop(name, conn)
+            raise
+        return name, conn
 
-    cache: dict[str, object] = {}
-
-    def get(scenario: str):
-        if scenario not in cache:
-            cache[scenario] = make(scenario)
-        return cache[scenario]
-
-    get.fresh = make
-    yield get
-    for conn in conns:
+    def drop(name: str, conn) -> None:
         with contextlib.suppress(Exception):  # the database is dropped next
             conn.close()
-    for name in made:
         admin.run(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        admin.run("CHECKPOINT")
+
+    def shrink(keep: int) -> None:
+        while len(live) > keep:
+            drop(*live.pop(next(iter(live))))
+
+    def get(scenario: str):
+        if scenario in live:
+            live[scenario] = live.pop(scenario)  # most recently used last
+        else:
+            shrink(0)
+            live[scenario] = make(scenario)
+        return live[scenario][1]
+
+    get.make, get.drop, get.shrink = make, drop, shrink
+    yield get
+    shrink(0)
     admin.close()
+
+
+@pytest.fixture
+def fresh_db(scenario_db):
+    """A scenario database of this test's own, dropped when the test ends."""
+    made = []
+
+    def _fresh(scenario: str):
+        scenario_db.shrink(1)
+        made.append(scenario_db.make(scenario))
+        return made[-1][1]
+
+    yield _fresh
+    for name, conn in made:
+        scenario_db.drop(name, conn)
 
 
 # --- the fixture itself ------------------------------------------------------------
@@ -311,8 +339,8 @@ def test_false_detection_rate_on_many_null_and_shuffled_series_stays_small():
 # --- control 4: late corrections ---------------------------------------------------
 
 
-def test_late_arrival_changes_a_result_only_through_a_new_recorded_derivation(scenario_db):
-    conn = scenario_db.fresh("null")
+def test_late_arrival_changes_a_result_only_through_a_new_recorded_derivation(fresh_db):
+    conn = fresh_db("null")
     first = run(conn)
     before = by_key(first.results)
     assert before[key("2026-03-22", 19)].reason_code == "target_not_covered"
@@ -349,7 +377,7 @@ def test_late_arrival_changes_a_result_only_through_a_new_recorded_derivation(sc
 # --- control 5: replay -------------------------------------------------------------
 
 
-def test_replay_from_the_same_manifests_gives_identical_results(scenario_db):
+def test_replay_from_the_same_manifests_gives_identical_results(scenario_db, fresh_db):
     conn = scenario_db("planted")
     first = run(conn)
     again = run(conn)
@@ -358,7 +386,7 @@ def test_replay_from_the_same_manifests_gives_identical_results(scenario_db):
     assert report.identical and report.differences == ()
     # A separate database built from the same fixtures reproduces the manifests,
     # the run id and every result.
-    other = scenario_db.fresh("planted")
+    other = fresh_db("planted")
     rebuilt = run(other)
     assert rebuilt.run_id == first.run_id
     assert rebuilt.input_manifest_ids == first.input_manifest_ids
@@ -373,6 +401,37 @@ def test_replay_from_the_same_manifests_gives_identical_results(scenario_db):
     assert [
         baselines.canonical(r) for r in baselines.backtest(reversed_hours, FIRST, LAST, Params())
     ] == [baselines.canonical(r) for r in first.results]
+
+
+def run_eye(*args: str, url: str) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ, PYTHONPATH=str(REPO_ROOT / "backend"), EYE_DATABASE_URL=url)
+    return subprocess.run(  # noqa: S603 - fixed interpreter and arguments
+        [sys.executable, "-m", "eye", *args, "--config", str(EXAMPLE_CONFIG)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+        cwd=REPO_ROOT,
+    )
+
+
+def test_backtest_commands_end_to_end(scenario_db):
+    url = scenario_db("planted").url
+    assert run_eye("db-rollup", url=url).returncode == 0  # already current: records nothing
+    missing = run_eye("db-backtest", url=url)
+    assert missing.returncode == 2 and "--series" in missing.stderr
+    window = ("db-backtest", "--series", SERIES.key, "--start")
+    too_long = run_eye(*window, "2026-01-01", "--end", "2026-12-31", url=url)
+    assert too_long.returncode == 2 and "max_days" in too_long.stderr
+    done = run_eye(*window, "2026-03-15", "--end", "2026-03-22", url=url)
+    assert done.returncode == 0, done.stderr
+    report = json.loads(done.stdout)
+    assert [d["bin"] for d in report["detected"]] == [PLANTED_BIN]
+    assert report["summary"] == {"detected": 1, "not_detected": 185, "abstained": 6}
+    replayed = run_eye("db-backtest-replay", "--run", report["run_id"], url=url)
+    assert replayed.returncode == 0 and json.loads(replayed.stdout)["identical"] is True
+    unknown = run_eye("db-backtest-replay", "--run", str(uuid.uuid4()), url=url)
+    assert unknown.returncode == 5 and json.loads(unknown.stdout)["identical"] is False
 
 
 def test_replay_detects_an_altered_result_and_results_are_append_only(scenario_db):
@@ -472,37 +531,6 @@ def test_research_configuration_defaults_and_refusals(example_raw):
         raw = {**example_raw, "research": {**example_raw["research"], **bad}}
         with pytest.raises(ConfigError):
             parse_config(raw, EXAMPLE_CONFIG, {})
-
-
-def run_eye(*args: str, url: str) -> subprocess.CompletedProcess[str]:
-    env = dict(os.environ, PYTHONPATH=str(REPO_ROOT / "backend"), EYE_DATABASE_URL=url)
-    return subprocess.run(  # noqa: S603 - fixed interpreter and arguments
-        [sys.executable, "-m", "eye", *args, "--config", str(EXAMPLE_CONFIG)],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-        cwd=REPO_ROOT,
-    )
-
-
-def test_backtest_commands_end_to_end(scenario_db):
-    url = scenario_db("planted").url
-    assert run_eye("db-rollup", url=url).returncode == 0  # already current: records nothing
-    missing = run_eye("db-backtest", url=url)
-    assert missing.returncode == 2 and "--series" in missing.stderr
-    window = ("db-backtest", "--series", SERIES.key, "--start")
-    too_long = run_eye(*window, "2026-01-01", "--end", "2026-12-31", url=url)
-    assert too_long.returncode == 2 and "max_days" in too_long.stderr
-    done = run_eye(*window, "2026-03-15", "--end", "2026-03-22", url=url)
-    assert done.returncode == 0, done.stderr
-    report = json.loads(done.stdout)
-    assert [d["bin"] for d in report["detected"]] == [PLANTED_BIN]
-    assert report["summary"] == {"detected": 1, "not_detected": 185, "abstained": 6}
-    replayed = run_eye("db-backtest-replay", "--run", report["run_id"], url=url)
-    assert replayed.returncode == 0 and json.loads(replayed.stdout)["identical"] is True
-    unknown = run_eye("db-backtest-replay", "--run", str(uuid.uuid4()), url=url)
-    assert unknown.returncode == 5 and json.loads(unknown.stdout)["identical"] is False
 
 
 def test_no_model_or_network_in_the_research_path():
