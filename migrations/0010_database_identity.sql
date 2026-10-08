@@ -1,9 +1,9 @@
--- 0009: what kind of EYE database this is: the synthetic demo or a private
+-- 0010: what kind of EYE database this is: the synthetic demo or a private
 -- installation (review finding: demo startup and demo writes trusted the
 -- configured mode and a loopback connection only).
 --
 -- Review notes (see migrations/README.md for process and restore):
--- * Forward only; 0001 to 0008 are unchanged. New objects only: one table
+-- * Forward only; 0001 to 0009 are unchanged. New objects only: one table
 --   and its append-only trigger. No existing row is read or rewritten.
 -- * At most one row. It is claimed once and never changed: by `db-migrate`
 --   or `db-prepare-demo` in demo mode ('synthetic-demo'), or by `db-migrate`
