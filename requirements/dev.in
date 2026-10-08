@@ -2,6 +2,8 @@
 # Regenerate requirements/dev.lock with the command in docs/dependencies.md.
 -r runtime.in
 pytest==9.1.1
+# Runs the test suite across CPU cores (scripts/verify.sh). MIT.
+pytest-xdist==3.8.0
 ruff==0.16.9
 # Reference JSON Schema implementation, used only by tests to cross-check
 # EYE's own wire validators. Never imported by runtime code.

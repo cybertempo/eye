@@ -28,6 +28,7 @@ metadata on 2026-09-28.
 | scramp, asn1crypto, python-dateutil, six | see `requirements/runtime.lock` | MIT-0 / MIT / Apache-2.0 or BSD-3-Clause / MIT | pg8000 dependencies |
 | jsonschema and its dependencies (attrs, referencing, jsonschema-specifications, rpds-py, typing-extensions) | 4.26.0; see `requirements/dev.lock` | MIT (typing-extensions: PSF-2.0) | reference validator in tests only |
 | pytest | 9.1.1 | MIT | tests |
+| pytest-xdist and its dependency execnet | 3.8.0; see `requirements/dev.lock` | MIT | runs tests in parallel worker processes |
 | Playwright for Python | 1.56.0 | Apache-2.0 | headless browser tests only |
 | greenlet, pyee | see `requirements/dev.lock` | MIT AND PSF-2.0 / MIT | Playwright dependencies |
 | Chromium headless shell | build 1194 (Chromium 141.0.7390.37), fetched by `scripts/setup.sh` for the locked Playwright release | BSD-3-Clause and bundled third-party licences (Chromium) | headless browser tests only; not committed or redistributed |
