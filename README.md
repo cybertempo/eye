@@ -42,8 +42,8 @@ container check (or set `EYE_TEST_DATABASE_URL` to a disposable PostGIS).
 | Developer laptop, CI | `scripts/setup.sh` | Creates `.venv` with hash-locked tools, runs `npm ci`, builds the browser client, fetches the headless browser build pinned by the locked Playwright release, pulls the pinned PostGIS image. Downloads from PyPI, npm, Playwright's browser CDN and Docker Hub only. |
 | Developer laptop, CI | `scripts/verify.sh` | Boundary scan, lint, format, generated-type check, a clean typechecked rebuild of `web/dist` from `web/src` plus a check that it matches a separate fresh build (so the browser tests never run stale JavaScript), config check and all tests: PostGIS tests in a disposable loopback container and headless browser tests (no window opens). No network. Fails (never skips) if no database is available. |
 | Developer laptop (Docker), CI | `scripts/verify.sh --container` | Adds an image build and a loopback smoke test of the demo and its database. |
-| Developer laptop (Docker) | `scripts/demo.sh` | Builds and runs the demo container with a disposable PostGIS database (one-run password, nothing stored) on `http://127.0.0.1:8765/`. Open that URL yourself; Ctrl-C stops and removes it. Run `scripts/setup.sh` first. |
-| Developer laptop | `EYE_DATABASE_URL=… scripts/demo.sh --local` | The same demo from `.venv`, against a loopback PostGIS you started yourself; loads the synthetic data into it. |
+| Developer laptop (Docker) | `scripts/demo.sh` | Builds and runs the demo container with a disposable PostGIS database (one-run password, nothing stored) on `http://127.0.0.1:8765/`. Open that URL yourself; Ctrl-C stops and removes it. Run `scripts/setup.sh` first. Serves the `web/dist` that setup or verify last built: after changing `web/src`, run `npm run --prefix web build` (developer laptop) or `scripts/verify.sh` first. |
+| Developer laptop | `EYE_DATABASE_URL=… scripts/demo.sh --local` | The same demo from `.venv`, against a loopback PostGIS you started yourself; loads the synthetic data into it. Serves `web/dist` as built, like the container demo. |
 
 ## Database (synthetic data only)
 

@@ -35,7 +35,10 @@ let CI run the full workflow.
   (same for `runtime` and `audit`; regenerate `dev` after `runtime`, since it
   includes it).
 - TypeScript: edit the exact version in `web/package.json`, then
-  `npm install --prefix web --package-lock-only --ignore-scripts`.
+  `npm install --prefix web --package-lock-only --ignore-scripts`. The reruns
+  above then cover the compiler change: `scripts/verify.sh` rebuilds `web/dist`
+  with it and `scripts/check_web_dist.py` compares that build with a separate
+  fresh one, so the browser tests never run the old compiler's output.
 - Base image: `docker pull python:3.12-slim-bookworm`, then
   `docker image inspect python:3.12-slim-bookworm --format '{{index .RepoDigests 0}}'`
   and copy the digest into the `FROM` line.
