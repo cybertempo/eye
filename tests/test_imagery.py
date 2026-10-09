@@ -244,12 +244,13 @@ def test_date_order_is_enforced(tmp_path: Path, fields: dict) -> None:
         inspect(build_safe(tmp_path / "p.zip", fields=fields))
 
 
-def test_discriminator_before_sensing_is_refused(tmp_path: Path) -> None:
+def test_discriminator_may_precede_sensing_but_not_be_in_the_future(tmp_path: Path) -> None:
+    # ESA: the discriminator "can be earlier or slightly later" than sensing.
     name = product_name(discriminator="20260214T103028")
-    with refused("date_order"):
-        inspect(build_safe(tmp_path / "p.zip", name=name), name=name)
-    name = product_name(discriminator="20260214T103029")
     assert inspect(build_safe(tmp_path / "ok.zip", name=name), name=name).name == name
+    name = product_name(discriminator="20260220T001000")
+    with refused("date_future"):
+        inspect(build_safe(tmp_path / "p.zip", name=name), name=name)
 
 
 def _dated(day: str) -> tuple[str, dict]:
@@ -1292,3 +1293,78 @@ def test_o78_transport_returning_more_than_asked_is_refused(
         with refused("transfer_failed"):
             acquire(store, SyntheticTransport({download_url(): greedy}))
         assert partial_files(scratch_root) == []
+
+
+# -- audit round 2: O76 wrong-typed cached record, O77 image time relation -------
+
+
+@pytest.mark.parametrize(
+    "change", [{"record": []}, {"record": "x"}, {"record": None}, {"last_used": 5}]
+)
+def test_o76_wrong_typed_cached_record_is_a_named_refusal(
+    scratch_root: Path, clock: Clock, archive_bytes: bytes, change: dict
+) -> None:
+    with store_for(scratch_root, clock) as store:
+        acquire(store, SyntheticTransport({download_url(): SyntheticResponse(200, archive_bytes)}))
+        path = scratch_root / "products" / PRODUCT_ID / "record.json"
+        saved = json.loads(path.read_text())
+        # Control: the valid record is read back.
+        assert store.cached()[0].record == saved["record"]
+        path.write_text(json.dumps({**saved, **change}), encoding="utf-8")
+        with refused("scratch_corrupt"):
+            store.cached()
+        with refused("scratch_corrupt"):
+            acquire(store, SyntheticTransport())
+
+
+def _images_at(image_time: str, granule_time: str = "20260214T103029") -> dict:
+    files = image_files()
+    return {
+        k.replace("A000001_20260214T103029", f"A000001_{granule_time}").replace(
+            "_20260214T103029_", f"_{image_time}_"
+        ): v
+        for k, v in files.items()
+    }
+
+
+@pytest.mark.parametrize(
+    ("image_time", "granule_time", "accepted"),
+    [
+        ("20260214T103029", "20260214T103029", True),
+        ("20260215T103029", "20260214T103029", False),
+        ("20260213T103029", "20260214T103029", False),
+        ("20260214T103030", "20260214T103029", False),
+        ("20260215T103029", "20260215T103029", False),
+        ("20260214T103029", "20260214T103028", False),
+        ("20260214T103029", "20260214T103031", False),
+    ],
+    ids=[
+        "aligned",
+        "images-next-day",
+        "images-previous-day",
+        "images-one-second-late",
+        "images-and-granule-next-day",
+        "granule-before-datatake",
+        "granule-after-product-stop",
+    ],
+)
+def test_o77_image_times_follow_the_product(
+    tmp_path: Path, image_time: str, granule_time: str, accepted: bool
+) -> None:
+    # Product: sensing start 10:30:29.024, product stop 10:30:29.024 (fixture).
+    path = build_safe(tmp_path / "p.zip", files=_images_at(image_time, granule_time), images=False)
+    if accepted:
+        assert inspect(path).name == NAME
+    else:
+        with refused("image_time_mismatch"):
+            inspect(path)
+
+
+def test_o77_granule_time_within_the_datatake_is_accepted(tmp_path: Path) -> None:
+    # Control: a granule sensed after the datatake start and before product stop.
+    fields = {"PRODUCT_STOP_TIME": "2026-02-14T10:31:00Z"}
+    files = _images_at("20260214T103029", granule_time="20260214T103045")
+    assert inspect(build_safe(tmp_path / "ok.zip", files=files, images=False, fields=fields))
+    files = _images_at("20260214T103029", granule_time="20260214T103101")
+    with refused("image_time_mismatch"):
+        inspect(build_safe(tmp_path / "p.zip", files=files, images=False, fields=fields))

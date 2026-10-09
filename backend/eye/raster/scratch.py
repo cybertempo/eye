@@ -133,7 +133,11 @@ class ScratchStore:
                 raise ImageryRefused(
                     "scratch_corrupt", f"cached product {folder.name} has no readable record"
                 ) from exc
-            if not isinstance(last_used, str) or record.get("product_id") != folder.name:
+            if (
+                not isinstance(last_used, str)
+                or not isinstance(record, dict)
+                or record.get("product_id") != folder.name
+            ):
                 raise ImageryRefused("scratch_corrupt", f"cached product {folder.name} is damaged")
             items.append(CachedProduct(folder.name, size, last_used, record))
         return sorted(items, key=lambda item: (item.last_used, item.product_id))

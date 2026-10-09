@@ -20,7 +20,9 @@ What is checked (each refusal raises ``ImageryRefused`` with a ``code``):
 - every file the manifest lists exists and matches its MD5 or SHA3-256;
 - the minimum Level-2A image structure (``REQUIRED_IMAGES``): one granule
   with its 10 m B02, B03, B04 and B08 bands and the 20 m scene
-  classification, each checksum-listed, non-empty and a JPEG 2000 file;
+  classification, each checksum-listed, non-empty and a JPEG 2000 file,
+  with image file times equal to the datatake sensing start and the granule
+  time within the datatake;
 - dates: sensing time agrees between name and metadata, product start is not
   after stop, generation is not before stop, nothing is in the future, and no
   sensing time precedes Level-2A availability.
@@ -340,10 +342,11 @@ def _resolve_href(href: str, top: str) -> str:
 def _required_images(
     by_name: dict[str, zipfile.ZipInfo],
     listed: dict[str, tuple[str, str]],
-    top: str,
-    tile: str,
+    expected: ProductName,
+    stop: datetime,
 ) -> set[str]:
     """Member names of the required images; refuse an archive without them."""
+    top, tile = expected.name, expected.tile
     granules = {
         name[len(top) + 1 :].split("/")[1]
         for name in by_name
@@ -386,6 +389,23 @@ def _required_images(
         images.add(name)
     if len(stamps) != 1:
         raise ImageryRefused("image_structure", "required images carry different sensing times")
+    # Image file names carry the datatake sensing start, the same time as the
+    # product name; the granule name carries the granule's own sensing time,
+    # which falls within the datatake (from its start to PRODUCT_STOP_TIME).
+    # These relations follow ESA's naming examples; their fit with a real
+    # CDSE product is UNVERIFIED and a mismatch fails closed.
+    image_time = _name_time(stamps.pop(), "image time")
+    if image_time != expected.sensing:
+        raise ImageryRefused(
+            "image_time_mismatch",
+            "image file times differ from the product's datatake sensing start",
+        )
+    granule_time = _name_time(granule.rsplit("_", 1)[1], "granule time")
+    if not expected.sensing <= granule_time <= stop.replace(microsecond=0):
+        raise ImageryRefused(
+            "image_time_mismatch",
+            "granule sensing time is outside the datatake (sensing start to product stop)",
+        )
     return images
 
 
@@ -496,7 +516,7 @@ def _inspect(
             raise ImageryRefused("manifest_reference", f"manifest lists {href!r} twice")
         expected_digests[member] = (algorithm, digest)
 
-    images = _required_images(by_name, expected_digests, top, expected.tile)
+    images = _required_images(by_name, expected_digests, expected, dates["product_stop"])
 
     # One streaming pass over every file: zipfile checks each CRC at the end of
     # the member, listed files are hashed against the manifest, and each
@@ -566,8 +586,9 @@ def _check_metadata(fields: dict[str, str], expected: ProductName, now: datetime
         raise ImageryRefused("date_order", "PRODUCT_START_TIME is after PRODUCT_STOP_TIME")
     if generated < stop:
         raise ImageryRefused("date_order", "GENERATION_TIME is before PRODUCT_STOP_TIME")
-    if expected.discriminator < expected.sensing:
-        raise ImageryRefused("date_order", "the name's discriminator precedes its sensing time")
+    # The discriminator only tells products of one datatake apart; ESA says it
+    # "can be earlier or slightly later" than the sensing time, so it is not
+    # ordered against it here (it must still be a real, non-future time).
     if min(sensing, start) < L2A_FIRST_DAY:
         raise ImageryRefused("date_before_l2a", "sensing time precedes Level-2A availability")
     latest = now + FUTURE_TOLERANCE

@@ -8,8 +8,8 @@ Scope:
   rules, streamed size caps, archive and metadata checks, product-date
   handling, attribution, a bounded scratch cache with eviction, and an
   `[imagery]` configuration table. Synthetic SAFE-shaped archives and an
-  offline transport drive 165 tests. Audit findings O76 to O78 are repaired
-  here (decisions 4, 5 and 8).
+  offline transport drive 177 tests. Audit findings O76 to O78 are repaired
+  here, including their second round (decisions 4, 5, 6 and 8).
 - **Not built:** any real network transport, token request or credential;
   catalogue or STAC search; JPEG2000 decoding, tiling or any derived raster;
   a database ledger for imagery; wire or browser changes. The wire schema
@@ -86,17 +86,29 @@ Scope:
      one granule directory `GRANULE/L2A_T<tile>_A<6 digits>_<time>`, and in
      its `IMG_DATA` exactly one each of the 10 m B02, B03, B04 and B08 bands
      and the 20 m scene classification (`SCL`), named
-     `T<tile>_<time>_<band>_<resolution>.jp2`. They must share one time,
-     carry the product's tile, be listed with a checksum in the manifest, be
-     non-empty and start with the JPEG 2000 signature. This is a floor, not
-     a full SAFE validation. Metadata with any other files and no imagery is
-     not a product.
+     `T<tile>_<time>_<band>_<resolution>.jp2`. They must carry the
+     product's tile, be listed with a checksum in the manifest, be non-empty
+     and start with the JPEG 2000 signature. This is a floor, not a full SAFE
+     validation. Metadata with any other files and no imagery is not a
+     product.
+   - image times that do not follow the product (O77, second round, code
+     `image_time_mismatch`). Every required image file name must carry the
+     datatake sensing start, the same time as the product name, to the
+     second. The granule name's time is the granule's own sensing time and
+     must fall within the datatake, from that start to `PRODUCT_STOP_TIME`.
+     ESA's published naming convention defines only the product name's
+     times. The image and granule relations follow ESA's naming examples,
+     and their fit with a real CDSE product is UNVERIFIED, so a mismatch
+     fails closed.
 
 6. **Dates come from the product, never from EYE's clock.** These must hold:
    - the name's sensing time equals `DATATAKE_SENSING_START` to the second;
    - `PRODUCT_START_TIME` is not after `PRODUCT_STOP_TIME`;
    - `GENERATION_TIME` is not before `PRODUCT_STOP_TIME`;
-   - the discriminator is not before the sensing time;
+   - the discriminator is a real time and not in the future. It is not
+     ordered against sensing: ESA says it "can be earlier or slightly later
+     than the datatake sensing time". (An earlier draft refused an earlier
+     discriminator, which would have refused valid products.)
    - no sensing time precedes 28 March 2017 (Level-2A availability, register
      row);
    - nothing is more than five minutes in the future.
@@ -122,7 +134,8 @@ Scope:
    bytes received reset at UTC midnight. One process holds the scratch root
    (file lock). A partial file left by a stopped process is deleted on open.
    A damaged `record.json` or `budget.json` stops the store rather than being
-   guessed at. A cache hit is never taken on trust (O76): the cached archive
+   guessed at. That includes a wrong-typed field, such as a `record` that is
+   not an object, which is refused with `scratch_corrupt` (O76, second round). A cache hit is never taken on trust (O76): the cached archive
    is inspected again with the full archive check, and its fresh record,
    including the archive's SHA-256 and size, must equal the stored record.
    A cached product that fails is evicted and refused with `cache_corrupt`,

@@ -95,13 +95,17 @@ def manifest_xml(
     ).encode()
 
 
-def image_files(tile: str = "31NAA", band_bytes: int = len(PLACEHOLDER) * 4) -> dict[str, bytes]:
+def image_files(
+    tile: str = "31NAA",
+    band_bytes: int = len(PLACEHOLDER) * 4,
+    sensing: str = "20260214T103029",
+) -> dict[str, bytes]:
     """The minimum L2A image set: B02, B03, B04, B08 at 10 m and SCL at 20 m.
 
     Each starts with the 12-byte JPEG 2000 signature box and is otherwise an
     invented text placeholder, not imagery.
     """
-    granule = f"GRANULE/L2A_T{tile}_A000001_20260214T103029"
+    granule = f"GRANULE/L2A_T{tile}_A000001_{sensing}"
     files = {}
     for resolution, band, suffix in (
         ("R10m", "B02", "10m"),
@@ -112,16 +116,20 @@ def image_files(tile: str = "31NAA", band_bytes: int = len(PLACEHOLDER) * 4) -> 
     ):
         filler = band.encode() + b" " + PLACEHOLDER
         body = (filler * (band_bytes // len(filler) + 1))[:band_bytes]
-        path = f"{granule}/IMG_DATA/{resolution}/T{tile}_20260214T103029_{band}_{suffix}.jp2"
+        path = f"{granule}/IMG_DATA/{resolution}/T{tile}_{sensing}_{band}_{suffix}.jp2"
         files[path] = JP2_SIGNATURE + body
     return files
 
 
-def data_files(band_bytes: int = len(PLACEHOLDER) * 4, tile: str = "31NAA") -> dict[str, bytes]:
+def data_files(
+    band_bytes: int = len(PLACEHOLDER) * 4,
+    tile: str = "31NAA",
+    sensing: str = "20260214T103029",
+) -> dict[str, bytes]:
     """The required images plus one quality file: a complete synthetic product."""
     return {
-        **image_files(tile, band_bytes),
-        f"GRANULE/L2A_T{tile}_A000001_20260214T103029/QI_DATA/MSK_CLDPRB_20m.jp2": PLACEHOLDER,
+        **image_files(tile, band_bytes, sensing),
+        f"GRANULE/L2A_T{tile}_A000001_{sensing}/QI_DATA/MSK_CLDPRB_20m.jp2": PLACEHOLDER,
     }
 
 
@@ -138,9 +146,10 @@ def safe_members(
     The required images for the name's tile are always included (and listed
     in the manifest) unless ``images`` is false; ``files`` adds to them.
     """
-    tile = name.split("_")[5][1:] if name.count("_") >= 6 else "31NAA"
-    extra = dict(data_files(tile=tile) if files is None else files)
-    files = {**(image_files(tile) if images else {}), **extra}
+    parts = name.split("_")
+    tile, sensing = (parts[5][1:], parts[2]) if len(parts) == 7 else ("31NAA", "20260214T103029")
+    extra = dict(data_files(tile=tile, sensing=sensing) if files is None else files)
+    files = {**(image_files(tile, sensing=sensing) if images else {}), **extra}
     fields = {"PRODUCT_URI": name, **(fields or {})}
     members = {f"{name}/{path}": data for path, data in files.items()}
     members[f"{name}/MTD_MSIL2A.xml"] = mtd_xml(fields)
