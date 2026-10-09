@@ -36,11 +36,13 @@ Package 5 status (research slice): no source is added. Baselines and the
 backtester read recorded rollups of the synthetic sources only; their fixture
 (`tests/fixtures/synthetic/research/`) is invented `synthetic-fixture` data.
 
-Package 6 status (source review only): one candidate scientific imagery
-product, Copernicus Sentinel-2 Level-2A, is reviewed below as
-`copernicus-sentinel-2-l2a`. It is a **candidate and stays disabled**: no
-imagery code, adapter, fixture or download exists, and no default command or
-CI run contacts a Copernicus host. Approval is the owner's decision.
+Package 6 status: one candidate scientific imagery product, Copernicus
+Sentinel-2 Level-2A, is reviewed below as `copernicus-sentinel-2-l2a`. It is a
+**candidate and stays disabled**. A download adapter exists and is tested
+only on invented archives through an offline transport (ADR 0010). The
+repository has no real transport for it, no default command or CI run
+contacts a Copernicus host, and no real product has been downloaded.
+Approval is the owner's decision.
 
 Occurrence completeness: EYE treats each event capture as a reporting window
 (which reports were published then), never as proof of which events occurred.
@@ -57,7 +59,7 @@ no code path claims completeness yet.
 | `synthetic-ais` | Approved for demo and tests | invented AIS reports from `scripts/gen_ais_fixtures.py`; `backend/eye/ingest/synthetic_ais.py` (only `SYNV-` vessel ids) | 2026-09-28 |
 | `synthetic-news` | Approved for demo and tests | invented news and media items in `tests/fixtures/synthetic/media/` (format `eye.synthetic-media-items/1`); parsed by the source-independent `backend/eye/ingest/media_items.py`. Publishers, headlines, people and links are invented; every URL uses the reserved `.invalid` domain; no body, image or video is stored | 2026-09-30 |
 | `synthetic-events` | Approved for demo and tests | invented event-report claims in `tests/fixtures/synthetic/events/` (format `eye.synthetic-event-claims/1`); parsed by the source-independent `backend/eye/ingest/event_claims.py`. Case ids, evidence references (`synthetic-doc:…`) and summaries are invented; no real authority, aircraft, vessel or road is described | 2026-09-29 |
-| `copernicus-sentinel-2-l2a` | **Candidate, disabled** (Package 6 source review) | none; no imagery code exists | 2026-10-08 (terms read; see below) |
+| `copernicus-sentinel-2-l2a` | **Candidate, disabled** (Package 6) | `backend/eye/ingest/copernicus.py` (download rules) and `backend/eye/raster/` (archive checks, scratch); synthetic tests only, no real transport | 2026-10-08 (terms read; see below) |
 
 ## Candidate rows
 
@@ -170,11 +172,14 @@ The fields:
   bandwidth drops to 1 MB/s and 1 connection. CDSE terms §9 forbid bypassing
   limits with multiple accounts and allow "immediate cessation or limitation
   of the services" on breach.
-- Worst-case requests and cost per day at configured bounds: **open**.
-  Package 6 has not set its operating caps, and the size of one L2A
-  product has not been measured (**UNVERIFIED**). The adapter PR must fix a
-  per-day product cap and byte cap and compute this from a measured product
-  size. Monetary cost: none stated.
+- Worst-case requests and cost per day at configured bounds: the adapter
+  caps downloads started per UTC day (`imagery.max_products_per_day`,
+  default 4) and bytes received per UTC day (`imagery.max_bytes_per_day`,
+  default 6 GB). Each download makes at most `max_redirects` + 1 requests
+  (default 4), so the default worst case is 16 download requests and 6 GB
+  per day, or 180 GB per 30 days against the 12 TB quota. The byte defaults
+  are provisional: the size of one L2A product is still **UNVERIFIED** and
+  must be measured before enabling. Monetary cost: none stated.
 - Storage rights (raw / derived / retention limit): the legal notice grants
   reproduction and modification of Sentinel data, so storing raw products
   and derived tiles is within its terms. No retention limit was found:
@@ -209,20 +214,30 @@ The fields:
   `download.dataspace.copernicus.eu`, `stac.dataspace.copernicus.eu` and
   `identity.dataspace.copernicus.eu` (documented). Redirect destinations
   of a download: **open, UNVERIFIED**.
-- Failure and outage behaviour: not yet designed (no adapter). The notice
-  allows access limits for "risk of service disruption", and quota breach
-  can cut service, so the layer must report coverage as unknown or stale,
-  never as clear sky or no change.
-- Redirect policy: **open, UNVERIFIED**. The documented curl examples pass
-  `--location-trusted`, which follows redirects and resends the bearer
-  token, but no page names where a download redirects. The adapter must
-  refuse any redirect off the listed egress hosts and must not forward the
-  token to an unlisted host.
-- Test fixture: none yet. Package 6 should use a synthetic SAFE-shaped
-  archive generated in the repository, not a real product.
-- Disable switch: none specific yet. `providers.enabled` already refuses
-  every non-synthetic source (`backend/eye/config.py`), and capture refuses
-  any source without an approved row.
+- Failure and outage behaviour: the adapter refuses with a stable reason
+  code. HTTP 401 and 403 give `provider_auth_refused`; HTTP 429, 5xx and a
+  failed connection give `provider_unavailable`; a broken transfer gives
+  `transfer_failed`. The partial file is always deleted. The notice allows
+  access limits for "risk of service disruption", and quota breach can cut
+  service, so the layer must report coverage as unknown or stale, never as
+  clear sky or no change. No layer or coverage record exists yet (later
+  slice).
+- Redirect policy: the real redirects are still **UNVERIFIED**. The
+  documented curl examples pass `--location-trusted`, which follows
+  redirects and resends the bearer token, but no page names where a
+  download redirects. The adapter sends the token only to
+  `download.dataspace.copernicus.eu` (exact network location, `https`, no
+  port or user information). A redirect may go to another path on that
+  host, at most `imagery.max_redirects` times. Any other destination is
+  refused before a request is made, including the catalogue, STAC and
+  identity hosts. A real redirect off the download host therefore fails
+  closed until it is measured and reviewed.
+- Test fixture: invented SAFE-shaped archives built in each test's
+  temporary directory by `tests/support/synthetic_safe.py`. Band files are
+  text placeholders, not imagery, and nothing is committed.
+- Disable switch: `imagery.enabled` must be false (true is refused), the
+  real transport always refuses (`source_disabled`), and `providers.enabled`
+  still refuses every non-synthetic source (`backend/eye/config.py`).
 - Approved by / date: **not approved**.
 
 **Other facts read (product).** 110 × 110 km tiles in UTM/WGS84; L2A at
@@ -231,7 +246,8 @@ mid-latitudes); SAFE format with JPEG2000 images; L2A pilot products from
 28 March 2017, operational from mid-March 2018 (Euro-Mediterranean) and
 global from 13 December 2018.
 
-**Still open before an adapter.**
+**Still open before real use.** The adapter is built and disabled. These
+remain open:
 
 1. The owner's imagery decision: whether EYE uses or publishes Sentinel
    imagery at all, and where (private install, public repo or neither).
@@ -239,8 +255,11 @@ global from 13 December 2018.
    server.
 3. A measured L2A product size, download redirect destinations and
    timeliness after sensing.
-4. Operating caps (products and bytes per day) and the worst case computed
-   from them.
+4. Operating caps: provisional defaults are set in `[imagery]` (ADR 0010);
+   the owner confirms them once a product size is measured.
+5. A private download transport and token handling, reviewed in their own
+   change. The AWS COG copy is a separate, unapproved alternative with its
+   own hosts and format.
 
 ## Row template
 

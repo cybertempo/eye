@@ -124,3 +124,39 @@ min_target_coverage_pct = 100
 # Hard bounds: a larger request is refused, never cut short.
 max_days = 92
 max_output_rows = 10000
+
+[imagery]
+# Package 6: one bounded imagery product, Copernicus Sentinel-2 Level-2A
+# (`copernicus-sentinel-2-l2a`, a disabled candidate in
+# docs/source-policy-register.md). Real imagery stays disabled: true is refused,
+# and this repository has no real download transport. These limits are
+# enforced by the adapter and its synthetic tests now, so they are explicit
+# before any real product is enabled. The byte defaults are provisional: no
+# real L2A product size has been measured yet (UNVERIFIED).
+enabled = false
+# Name of the environment variable holding the raster worker's scratch
+# directory. The path itself is never written in this file.
+scratch_dir_env = "EYE_IMAGERY_SCRATCH_DIR"
+# One downloaded archive. A larger declared or streamed body is refused.
+max_product_bytes = 1500000000
+# Everything on scratch: cached archives plus the download in progress. A new
+# download first evicts least recently used products; if that cannot make room,
+# it is refused and nothing is evicted.
+max_scratch_bytes = 4000000000
+max_cached_products = 2
+# Per UTC day: downloads started, and bytes received (admitted or not). The
+# worst case per day is max_bytes_per_day received.
+max_products_per_day = 4
+max_bytes_per_day = 6000000000
+# Redirects followed per download, each only to the allowed download host.
+max_redirects = 3
+# Archive checks (malformed-archive and zip-bomb bounds).
+max_archive_members = 1000
+max_uncompressed_bytes = 2000000000
+max_compression_ratio = 100
+max_metadata_bytes = 4000000
+# Read size for streaming; memory use does not grow with product size.
+chunk_bytes = 1048576
+# Freshness: a product sensed longer ago than this is shown as stale, with its
+# sensing date, never as the current state.
+stale_after_hours = 240
