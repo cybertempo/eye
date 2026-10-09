@@ -34,6 +34,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "providers",
         "retention",
         "research",
+        "imagery",
     },
     "runtime": {"mode"},
     "server": {
@@ -87,6 +88,22 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "min_target_coverage_pct",
         "max_days",
         "max_output_rows",
+    },
+    "imagery": {
+        "enabled",
+        "scratch_dir_env",
+        "max_product_bytes",
+        "max_scratch_bytes",
+        "max_cached_products",
+        "max_products_per_day",
+        "max_bytes_per_day",
+        "max_redirects",
+        "max_archive_members",
+        "max_uncompressed_bytes",
+        "max_compression_ratio",
+        "max_metadata_bytes",
+        "chunk_bytes",
+        "stale_after_hours",
     },
 }
 RESEARCH_BIN_HOURS = (1, 2, 3, 4, 6, 8, 12, 24)
@@ -170,6 +187,31 @@ class ResearchConfig:
 
 
 @dataclass(frozen=True)
+class ImageryConfig:
+    """Package 6 imagery limits. Real imagery stays disabled (``enabled`` must be false).
+
+    The defaults are provisional: no real Level-2A product size has been
+    measured (register row, UNVERIFIED). The worst case per UTC day is
+    ``max_bytes_per_day`` received and ``max_products_per_day`` started.
+    """
+
+    enabled: bool
+    scratch_dir_env: str
+    max_product_bytes: int
+    max_scratch_bytes: int
+    max_cached_products: int
+    max_products_per_day: int
+    max_bytes_per_day: int
+    max_redirects: int
+    max_archive_members: int
+    max_uncompressed_bytes: int
+    max_compression_ratio: int
+    max_metadata_bytes: int
+    chunk_bytes: int
+    stale_after_hours: int
+
+
+@dataclass(frozen=True)
 class EyeConfig:
     source: Path
     mode: str
@@ -186,6 +228,7 @@ class EyeConfig:
     enabled_providers: tuple[str, ...]
     retention: RetentionConfig
     research: ResearchConfig
+    imagery: ImageryConfig
 
 
 def is_loopback_host(host: str) -> bool:
@@ -270,6 +313,46 @@ def _view(table: dict) -> ViewConfig:
     ):
         raise ConfigError("view.layers must be a non-empty list of flight, vessel, road")
     return ViewConfig(name, tuple(float(v) for v in bbox), tuple(layers))  # type: ignore[arg-type]
+
+
+def _imagery(table: dict) -> ImageryConfig:
+    enabled = table.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ConfigError("imagery.enabled must be true or false")
+    if enabled:
+        # copernicus-sentinel-2-l2a is a disabled candidate and no real
+        # download transport exists in this repository.
+        raise ConfigError(
+            "imagery.enabled is refused: real imagery stays disabled until the owner's "
+            "imagery decision and an approved row in docs/source-policy-register.md"
+        )
+    scratch_dir_env = table.get("scratch_dir_env", "EYE_IMAGERY_SCRATCH_DIR")
+    if not isinstance(scratch_dir_env, str) or not re.fullmatch(
+        r"[A-Z][A-Z0-9_]{0,63}", scratch_dir_env
+    ):
+        raise ConfigError("imagery.scratch_dir_env must be an environment variable name")
+    gb = 1_000_000_000
+    imagery = ImageryConfig(
+        enabled=enabled,
+        scratch_dir_env=scratch_dir_env,
+        max_product_bytes=_int(table, "max_product_bytes", 1_500_000_000, 1024, 20 * gb),
+        max_scratch_bytes=_int(table, "max_scratch_bytes", 4 * gb, 1024, 500 * gb),
+        max_cached_products=_int(table, "max_cached_products", 2, 1, 100),
+        max_products_per_day=_int(table, "max_products_per_day", 4, 1, 100),
+        max_bytes_per_day=_int(table, "max_bytes_per_day", 6 * gb, 1024, 2000 * gb),
+        max_redirects=_int(table, "max_redirects", 3, 0, 5),
+        max_archive_members=_int(table, "max_archive_members", 1000, 3, 20_000),
+        max_uncompressed_bytes=_int(table, "max_uncompressed_bytes", 2 * gb, 1024, 40 * gb),
+        max_compression_ratio=_int(table, "max_compression_ratio", 100, 1, 1000),
+        max_metadata_bytes=_int(table, "max_metadata_bytes", 4_000_000, 1024, 67_108_864),
+        chunk_bytes=_int(table, "chunk_bytes", 1_048_576, 4096, 16_777_216),
+        stale_after_hours=_int(table, "stale_after_hours", 240, 1, 8760),
+    )
+    if imagery.max_scratch_bytes < imagery.max_product_bytes:
+        raise ConfigError("imagery.max_scratch_bytes must be at least imagery.max_product_bytes")
+    if imagery.max_bytes_per_day < imagery.max_product_bytes:
+        raise ConfigError("imagery.max_bytes_per_day must be at least imagery.max_product_bytes")
+    return imagery
 
 
 def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None) -> EyeConfig:
@@ -392,6 +475,8 @@ def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None)
     if research.min_history_bins > research.history_days:
         raise ConfigError("research.min_history_bins cannot exceed research.history_days")
 
+    imagery = _imagery(_table(raw, "imagery"))
+
     if allow_deletion and mode != "demo":
         # The only backup target in this repository is synthetic; production
         # retention needs the private, independently verified backup first.
@@ -449,6 +534,7 @@ def parse_config(raw: dict, source: Path, environ: dict[str, str] | None = None)
         enabled_providers=tuple(enabled),
         retention=retention,
         research=research,
+        imagery=imagery,
     )
 
 

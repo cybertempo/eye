@@ -5,7 +5,8 @@ application. This repository holds its public source. **Status: Packages 0
 to 3, the source-independent parts of 4c (world-event ledger) and 4d (news and
 media evidence), and Package 5: the lifecycle slice (rollups, manifests,
 checked retention and a synthetic backup and restore drill) and the research
-slice (coverage-weighted baselines and a backtester).**
+slice (coverage-weighted baselines and a backtester). Package 6 has a disabled
+Sentinel-2 L2A download adapter tested on synthetic archives only.**
 It contains the layout, tooling, CI, the
 versioned wire schema with validation on both sides, PostgreSQL/PostGIS storage
 for captures, evidence, observations and coverage, a synthetic vessel adapter
@@ -265,15 +266,40 @@ bounds are in the `[research]` table.)
 
 See [ADR 0008](docs/adr/0008-package-5-baselines-backtester.md).
 
+## Imagery: a disabled Sentinel-2 L2A adapter (Package 6, synthetic only)
+
+There is no command for this package: the adapter runs only inside the tests
+(**developer laptop** or CI, through `scripts/verify.sh`), on invented
+SAFE-shaped archives and an offline transport. No real imagery, token or
+provider host is used, and the repository has no real download transport.
+
+- **Disabled.** `copernicus-sentinel-2-l2a` is a disabled candidate in the
+  source-policy register. `imagery.enabled = true` is refused, and so is the
+  source in `providers.enabled`.
+- **Exact destination.** A bearer token goes only to
+  `https://download.dataspace.copernicus.eu`, and only after the URL passes
+  the destination check. A redirect anywhere else is refused before any
+  request.
+- **Bounded.** Product, scratch, cache, daily and archive limits are in the
+  `[imagery]` table, and bytes received never exceed the day's allowance. A
+  malformed or oversized archive, or one without the minimum L2A image
+  structure, is refused with a reason code and deleted. A cached archive is
+  checked again before it is returned.
+- **Dated and attributed.** Dates come from the product and are checked
+  against its name. A product older than `stale_after_hours` is stale.
+  Attribution reads "Copernicus Sentinel data [sensing year]".
+
+See [ADR 0010](docs/adr/0010-package-6-sentinel2-adapter.md).
+
 ## Layout
 
 ```text
 backend/eye/api/      HTTP and WebSocket API, feed queries, auth port
-backend/eye/ingest/   capture pipeline and synthetic AIS adapter
+backend/eye/ingest/   capture pipeline, synthetic AIS adapter, disabled Sentinel-2 download adapter
 backend/eye/storage/  database connection and migration runner
 backend/eye/wire/     wire-schema runtime validator
 backend/eye/worker/   tracks, line crossings, transit counts, rollups, retention, synthetic backup, baselines, backtester
-backend/eye/raster/   optional imagery pipeline (Package 6)
+backend/eye/raster/   imagery archive checks and bounded scratch cache (Package 6)
 config/               example configuration
 deploy/dev/           loopback synthetic demo container
 deploy/lab/           generic private-deployment templates (placeholder)
@@ -307,4 +333,7 @@ web/                  browser client: THEATRE globe and DESK panel
   Production refuses `retention.allow_deletion`; deleting real data still needs
   database role separation and a proven real backup and restore on the private
   server.
+- Package 6 checks Sentinel-2 archives but decodes no imagery and draws no
+  layer. Its archive checks follow the published SAFE layout and have not been
+  run on a real product.
 - Dependency and image pins are listed in [`docs/dependencies.md`](docs/dependencies.md).
