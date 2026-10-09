@@ -175,7 +175,8 @@ The fields:
 - Worst-case requests and cost per day at configured bounds: the adapter
   caps downloads started per UTC day (`imagery.max_products_per_day`,
   default 4) and bytes received per UTC day (`imagery.max_bytes_per_day`,
-  default 6 GB). Each download makes at most `max_redirects` + 1 requests
+  default 6 GB, never exceeded: no read asks for more than the day has
+  left). Each download makes at most `max_redirects` + 1 requests
   (default 4), so the default worst case is 16 download requests and 6 GB
   per day, or 180 GB per 30 days against the 12 TB quota. The byte defaults
   are provisional: the size of one L2A product is still **UNVERIFIED** and

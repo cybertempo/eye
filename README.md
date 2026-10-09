@@ -281,8 +281,10 @@ provider host is used, and the repository has no real download transport.
   the destination check. A redirect anywhere else is refused before any
   request.
 - **Bounded.** Product, scratch, cache, daily and archive limits are in the
-  `[imagery]` table. A malformed or oversized archive is refused with a
-  reason code and deleted.
+  `[imagery]` table, and bytes received never exceed the day's allowance. A
+  malformed or oversized archive, or one without the minimum L2A image
+  structure, is refused with a reason code and deleted. A cached archive is
+  checked again before it is returned.
 - **Dated and attributed.** Dates come from the product and are checked
   against its name. A product older than `stale_after_hours` is stale.
   Attribution reads "Copernicus Sentinel data [sensing year]".

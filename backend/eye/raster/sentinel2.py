@@ -18,6 +18,9 @@ What is checked (each refusal raises ``ImageryRefused`` with a ``code``):
 - the metadata files ``manifest.safe`` and ``MTD_MSIL2A.xml``: size cap, no
   DOCTYPE or entity declaration, required fields present exactly once;
 - every file the manifest lists exists and matches its MD5 or SHA3-256;
+- the minimum Level-2A image structure (``REQUIRED_IMAGES``): one granule
+  with its 10 m B02, B03, B04 and B08 bands and the 20 m scene
+  classification, each checksum-listed, non-empty and a JPEG 2000 file;
 - dates: sensing time agrees between name and metadata, product start is not
   after stop, generation is not before stop, nothing is in the future, and no
   sensing time precedes Level-2A availability.
@@ -62,6 +65,19 @@ PRODUCT_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 _METADATA_TIME = re.compile(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,6})?Z")
 _DECLARATION = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.IGNORECASE)
 _CHECKSUMS = {"MD5": "md5", "SHA3-256": "sha3_256"}
+# Minimum image structure for an archive to count as an L2A product: one
+# granule, its four 10 m bands (blue, green, red, near infrared) and the 20 m
+# scene classification layer that Level-2A processing adds. Each must be a
+# manifest-checked JPEG 2000 file. A real product has many more files; this is
+# the floor, not a full SAFE validation (real-product fit is UNVERIFIED).
+REQUIRED_IMAGES = (
+    ("R10m", "B02", "10m"),
+    ("R10m", "B03", "10m"),
+    ("R10m", "B04", "10m"),
+    ("R10m", "B08", "10m"),
+    ("R20m", "SCL", "20m"),
+)
+JP2_SIGNATURE = b"\x00\x00\x00\x0cjP  \r\n\x87\n"
 _MTD_FIELDS = (
     "PRODUCT_URI",
     "PRODUCT_TYPE",
@@ -321,6 +337,58 @@ def _resolve_href(href: str, top: str) -> str:
     return f"{top}/{path}"
 
 
+def _required_images(
+    by_name: dict[str, zipfile.ZipInfo],
+    listed: dict[str, tuple[str, str]],
+    top: str,
+    tile: str,
+) -> set[str]:
+    """Member names of the required images; refuse an archive without them."""
+    granules = {
+        name[len(top) + 1 :].split("/")[1]
+        for name in by_name
+        if name.startswith(f"{top}/GRANULE/") and name.count("/") >= 3
+    }
+    if len(granules) != 1:
+        raise ImageryRefused(
+            "image_structure", f"archive has {len(granules)} granule directories; needs one"
+        )
+    granule = granules.pop()
+    if not re.fullmatch(rf"L2A_T{tile}_A\d{{6}}_\d{{8}}T\d{{6}}", granule):
+        raise ImageryRefused("image_structure", f"granule {granule!r} is not an L2A granule")
+    folder = f"{top}/GRANULE/{granule}/IMG_DATA"
+    found: dict[tuple[str, str], list[str]] = {(r, band): [] for r, band, _ in REQUIRED_IMAGES}
+    for name in by_name:
+        for resolution, band, suffix in REQUIRED_IMAGES:
+            pattern = (
+                rf"{re.escape(folder)}/{resolution}/T{tile}_(\d{{8}}T\d{{6}})_{band}_{suffix}\.jp2"
+            )
+            if re.fullmatch(pattern, name):
+                found[(resolution, band)].append(name)
+    images: set[str] = set()
+    stamps: set[str] = set()
+    for (resolution, band), names in found.items():
+        if len(names) != 1:
+            raise ImageryRefused(
+                "image_structure",
+                f"needs exactly one {band} image in {resolution}; found {len(names)}",
+            )
+        name = names[0]
+        if name not in listed:
+            raise ImageryRefused(
+                "image_structure", f"{name} is not checksum-listed in the manifest"
+            )
+        if by_name[name].file_size <= len(JP2_SIGNATURE):
+            raise ImageryRefused("image_structure", f"{name} is empty")
+        stamp = name.rsplit("/", 1)[1].split("_")[1]
+        _name_time(stamp, "image time")
+        stamps.add(stamp)
+        images.add(name)
+    if len(stamps) != 1:
+        raise ImageryRefused("image_structure", "required images carry different sensing times")
+    return images
+
+
 def _hash_file(path: Path, chunk_bytes: int) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -428,15 +496,23 @@ def _inspect(
             raise ImageryRefused("manifest_reference", f"manifest lists {href!r} twice")
         expected_digests[member] = (algorithm, digest)
 
+    images = _required_images(by_name, expected_digests, top, expected.tile)
+
     # One streaming pass over every file: zipfile checks each CRC at the end of
-    # the member, and listed files are hashed against the manifest.
+    # the member, listed files are hashed against the manifest, and each
+    # required image must start with the JPEG 2000 signature.
     for name, info in by_name.items():
         listed = expected_digests.get(name)
         digest = hashlib.new(_CHECKSUMS[listed[0]], usedforsecurity=False) if listed else None
+        head = b""
         with archive.open(info) as handle:
             while chunk := handle.read(limits.chunk_bytes):
+                if len(head) < len(JP2_SIGNATURE):
+                    head += chunk[: len(JP2_SIGNATURE) - len(head)]
                 if digest is not None:
                     digest.update(chunk)
+        if name in images and head != JP2_SIGNATURE:
+            raise ImageryRefused("image_structure", f"{name} is not a JPEG 2000 file")
         if listed and digest is not None and digest.hexdigest() != listed[1]:
             raise ImageryRefused(
                 "checksum_mismatch", f"{name} does not match its manifest checksum"

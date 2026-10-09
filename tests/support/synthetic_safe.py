@@ -17,7 +17,7 @@ from pathlib import Path
 PRODUCT_ID = "0e7e5000-0000-4000-8000-000000000001"
 NAME = "S2B_MSIL2A_20260214T103029_N0511_R108_T31NAA_20260214T125512.SAFE"
 TOKEN = "synthetic-bearer-token-6c2f"
-GRANULE = "GRANULE/L2A_T31NAA_A000001_20260214T103029"
+JP2_SIGNATURE = b"\x00\x00\x00\x0cjP  \r\n\x87\n"
 PLACEHOLDER = b"EYE synthetic placeholder, not imagery\n"
 
 MTD_DEFAULTS = {
@@ -95,12 +95,33 @@ def manifest_xml(
     ).encode()
 
 
-def data_files(band_bytes: int = len(PLACEHOLDER) * 4) -> dict[str, bytes]:
-    band = (PLACEHOLDER * (band_bytes // len(PLACEHOLDER) + 1))[:band_bytes]
+def image_files(tile: str = "31NAA", band_bytes: int = len(PLACEHOLDER) * 4) -> dict[str, bytes]:
+    """The minimum L2A image set: B02, B03, B04, B08 at 10 m and SCL at 20 m.
+
+    Each starts with the 12-byte JPEG 2000 signature box and is otherwise an
+    invented text placeholder, not imagery.
+    """
+    granule = f"GRANULE/L2A_T{tile}_A000001_20260214T103029"
+    files = {}
+    for resolution, band, suffix in (
+        ("R10m", "B02", "10m"),
+        ("R10m", "B03", "10m"),
+        ("R10m", "B04", "10m"),
+        ("R10m", "B08", "10m"),
+        ("R20m", "SCL", "20m"),
+    ):
+        filler = band.encode() + b" " + PLACEHOLDER
+        body = (filler * (band_bytes // len(filler) + 1))[:band_bytes]
+        path = f"{granule}/IMG_DATA/{resolution}/T{tile}_20260214T103029_{band}_{suffix}.jp2"
+        files[path] = JP2_SIGNATURE + body
+    return files
+
+
+def data_files(band_bytes: int = len(PLACEHOLDER) * 4, tile: str = "31NAA") -> dict[str, bytes]:
+    """The required images plus one quality file: a complete synthetic product."""
     return {
-        f"{GRANULE}/IMG_DATA/R10m/T31NAA_20260214T103029_B04_10m.jp2": band,
-        f"{GRANULE}/IMG_DATA/R10m/T31NAA_20260214T103029_B08_10m.jp2": band[::-1],
-        f"{GRANULE}/QI_DATA/MSK_CLDPRB_20m.jp2": PLACEHOLDER,
+        **image_files(tile, band_bytes),
+        f"GRANULE/L2A_T{tile}_A000001_20260214T103029/QI_DATA/MSK_CLDPRB_20m.jp2": PLACEHOLDER,
     }
 
 
@@ -110,9 +131,16 @@ def safe_members(
     fields: Mapping[str, str | None] | None = None,
     files: Mapping[str, bytes] | None = None,
     algorithm: str = "MD5",
+    images: bool = True,
 ) -> dict[str, bytes]:
-    """Members of a valid synthetic archive, keyed by full member name."""
-    files = dict(data_files() if files is None else files)
+    """Members of a valid synthetic archive, keyed by full member name.
+
+    The required images for the name's tile are always included (and listed
+    in the manifest) unless ``images`` is false; ``files`` adds to them.
+    """
+    tile = name.split("_")[5][1:] if name.count("_") >= 6 else "31NAA"
+    extra = dict(data_files(tile=tile) if files is None else files)
+    files = {**(image_files(tile) if images else {}), **extra}
     fields = {"PRODUCT_URI": name, **(fields or {})}
     members = {f"{name}/{path}": data for path, data in files.items()}
     members[f"{name}/MTD_MSIL2A.xml"] = mtd_xml(fields)

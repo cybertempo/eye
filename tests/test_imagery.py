@@ -33,6 +33,7 @@ from eye.raster.sentinel2 import (
     parse_product_name,
 )
 from synthetic_safe import (
+    JP2_SIGNATURE,
     NAME,
     PRODUCT_ID,
     TOKEN,
@@ -41,6 +42,7 @@ from synthetic_safe import (
     build_safe,
     data_files,
     download_url,
+    image_files,
     manifest_xml,
     mtd_xml,
     product_name,
@@ -148,7 +150,7 @@ def test_known_product_gives_exact_record(tmp_path: Path) -> None:
     assert record.product_stop == datetime(2026, 2, 14, 10, 30, 29, 24000, tzinfo=UTC)
     assert record.generation_time == datetime(2026, 2, 14, 12, 55, 12, tzinfo=UTC)
     assert record.attribution == "Copernicus Sentinel data 2026"
-    assert record.verified_files == 3 and record.members == 5
+    assert record.verified_files == 6 and record.members == 8
     assert record.to_json()["sensing_start"] == "2026-02-14T10:30:29.024000Z"
 
 
@@ -419,9 +421,10 @@ def test_unsupported_compression_is_refused(tmp_path: Path) -> None:
 
 
 def test_member_count_limit(tmp_path: Path) -> None:
-    files = {f"extra/{i}.txt": b"x" for i in range(45)}
-    assert inspect(build_safe(tmp_path / "ok.zip", files=files)).members == 47
-    files = {f"extra/{i}.txt": b"x" for i in range(49)}
+    # 5 required images and 2 metadata files, plus the extras.
+    files = {f"extra/{i}.txt": b"x" for i in range(43)}
+    assert inspect(build_safe(tmp_path / "ok.zip", files=files)).members == 50
+    files = {f"extra/{i}.txt": b"x" for i in range(44)}
     with refused("member_count"):
         inspect(build_safe(tmp_path / "p.zip", files=files))
 
@@ -768,7 +771,7 @@ def test_undeclared_body_is_cut_off_at_the_cap(
     with store_for(scratch_root, clock) as store:
         with refused("product_too_large"):
             acquire(store, SyntheticTransport({download_url(): endless}), download=limits)
-        assert endless.bytes_served <= limits.max_product_bytes + limits.chunk_bytes
+        assert endless.bytes_served == limits.max_product_bytes
         assert store.budget_today()["bytes"] == endless.bytes_served
         assert partial_files(scratch_root) == []
         exact = SyntheticResponse(200, archive_bytes, content_length=False)
@@ -784,17 +787,32 @@ def test_reads_never_exceed_the_chunk_size(
     assert response.read_sizes and max(response.read_sizes) <= DOWNLOAD.chunk_bytes
 
 
-@pytest.mark.parametrize("declared_delta", [1, -1])
-def test_body_not_matching_its_declared_length_is_refused(
-    scratch_root: Path, clock: Clock, archive_bytes: bytes, declared_delta: int
+def test_body_shorter_than_its_declared_length_is_refused(
+    scratch_root: Path, clock: Clock, archive_bytes: bytes
 ) -> None:
-    headers = {"Content-Length": str(len(archive_bytes) + declared_delta)}
+    headers = {"Content-Length": str(len(archive_bytes) + 1)}
     response = SyntheticResponse(200, archive_bytes, headers)
     with store_for(scratch_root, clock) as store:
         with refused("length_mismatch"):
             acquire(store, SyntheticTransport({download_url(): response}))
         assert store.cached() == [] and partial_files(scratch_root) == []
-    assert response.bytes_served <= len(archive_bytes) + DOWNLOAD.chunk_bytes
+    assert response.bytes_served == len(archive_bytes)
+
+
+def test_declared_body_is_read_only_to_its_declared_length(
+    scratch_root: Path, clock: Clock, archive_bytes: bytes
+) -> None:
+    # Bytes after the declared length are never read; the cut archive then
+    # fails the archive check. The exact declared length is the control.
+    short = SyntheticResponse(200, archive_bytes, {"Content-Length": str(len(archive_bytes) - 1)})
+    exact = SyntheticResponse(200, archive_bytes)
+    with store_for(scratch_root, clock) as store:
+        with pytest.raises(ImageryRefused) as caught:
+            acquire(store, SyntheticTransport({download_url(): short}))
+        assert caught.value.code in ("not_a_zip", "archive_corrupt")
+        assert short.bytes_served == len(archive_bytes) - 1
+        assert acquire(store, SyntheticTransport({download_url(pid(2)): exact}), product_id=pid(2))
+    assert exact.bytes_served == len(archive_bytes)
 
 
 class FailingResponse(SyntheticResponse):
@@ -1071,3 +1089,206 @@ def test_adapter_has_no_network_code() -> None:
 
     source = Path(urllib.request.__file__).read_text(encoding="utf-8")
     assert any(forbidden in source for forbidden in NETWORK_IMPORTS)
+
+
+# -- audit repairs: O76 (cache re-check), O77 (image structure), O78 (daily cap) --
+
+
+def _flip_middle_byte(path: Path) -> None:
+    data = bytearray(path.read_bytes())
+    data[len(data) // 2] ^= 0xFF
+    path.write_bytes(bytes(data))
+
+
+def test_o76_corrupted_cache_hit_is_refused_and_evicted(
+    scratch_root: Path, clock: Clock, archive_bytes: bytes
+) -> None:
+    with store_for(scratch_root, clock) as store:
+        acquire(store, SyntheticTransport({download_url(): SyntheticResponse(200, archive_bytes)}))
+        # Control: an intact cache hit passes the re-check with no request.
+        hit = acquire(store, SyntheticTransport())
+        assert hit.from_cache and hit.transferred_bytes == 0
+        _flip_middle_byte(store.archive_path(PRODUCT_ID))
+        quiet = SyntheticTransport()
+        with refused("cache_corrupt"):
+            acquire(store, quiet)
+        assert quiet.requests == [] and store.cached() == []
+        # The next request downloads and checks the product again.
+        again = acquire(
+            store, SyntheticTransport({download_url(): SyntheticResponse(200, archive_bytes)})
+        )
+        assert not again.from_cache and again.product.record["name"] == NAME
+
+
+def test_o76_cache_hit_must_match_its_stored_record(
+    scratch_root: Path, clock: Clock, tmp_path: Path, archive_bytes: bytes
+) -> None:
+    # A different but valid archive swapped in passes the archive check, so
+    # only the stored record (with its SHA-256) can catch it.
+    other = write_zip(
+        tmp_path / "other.zip",
+        safe_members(files=data_files(band_bytes=20_001)),
+        zipfile.ZIP_STORED,
+    )
+    with store_for(scratch_root, clock) as store:
+        acquire(store, SyntheticTransport({download_url(): SyntheticResponse(200, archive_bytes)}))
+        assert inspect(other).name == NAME
+        store.archive_path(PRODUCT_ID).write_bytes(other.read_bytes())
+        with refused("cache_corrupt"):
+            acquire(store, SyntheticTransport())
+        assert store.cached() == []
+
+
+def test_o76_cache_hit_with_another_name_is_refused_without_eviction(
+    scratch_root: Path, clock: Clock, archive_bytes: bytes
+) -> None:
+    with store_for(scratch_root, clock) as store:
+        acquire(store, SyntheticTransport({download_url(): SyntheticResponse(200, archive_bytes)}))
+        with refused("name_mismatch"):
+            acquire(store, SyntheticTransport(), name=product_name(tile="T31NAB"))
+        assert [item.product_id for item in store.cached()] == [PRODUCT_ID]
+
+
+def test_o77_metadata_without_imagery_is_refused(tmp_path: Path) -> None:
+    junk = {"junk.txt": b"not imagery\n"}
+    with refused("image_structure"):
+        inspect(build_safe(tmp_path / "junk.zip", files=junk, images=False))
+    assert inspect(build_safe(tmp_path / "ok.zip", files=junk)).name == NAME
+
+
+@pytest.mark.parametrize("band", ["B02", "B03", "B04", "B08", "SCL"])
+def test_o77_each_required_image_is_needed(tmp_path: Path, band: str) -> None:
+    files = {k: v for k, v in image_files().items() if f"_{band}_" not in k}
+    with refused("image_structure"):
+        inspect(build_safe(tmp_path / "p.zip", files=files, images=False))
+    assert inspect(build_safe(tmp_path / "ok.zip", files=image_files(), images=False))
+
+
+def _with_image_change(path: str, data: bytes | None = None, rename: str | None = None) -> dict:
+    files = image_files()
+    target = next(k for k in files if path in k)
+    content = files.pop(target)
+    files[rename or target] = content if data is None else data
+    return files
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        _with_image_change("_B04_", data=b"PLACEHOLDER, not a JPEG 2000 file"),
+        _with_image_change("_B04_", data=JP2_SIGNATURE),
+        _with_image_change(
+            "_B04_",
+            rename="GRANULE/L2A_T31NAB_A000001_20260214T103029/IMG_DATA/R10m/"
+            "T31NAA_20260214T103029_B04_10m.jp2",
+        ),
+        _with_image_change(
+            "_B04_",
+            rename="GRANULE/L2A_T31NAA_A000001_20260214T103029/IMG_DATA/R10m/"
+            "T31NAA_20260214T103030_B04_10m.jp2",
+        ),
+        _with_image_change(
+            "_SCL_",
+            rename="GRANULE/L2A_T31NAA_A000001_20260214T103029/IMG_DATA/R10m/"
+            "T31NAA_20260214T103029_SCL_20m.jp2",
+        ),
+        {
+            **image_files(),
+            "GRANULE/L2A_T31NAA_A000001_20260214T103029/IMG_DATA/R20m/"
+            "T31NAA_20260214T103029_B05_20m.jp2": JP2_SIGNATURE + b"x",
+        },
+    ],
+    ids=["not-jp2", "empty", "two-granules", "mixed-times", "scl-wrong-folder", "control-extra"],
+)
+def test_o77_image_structure_details(tmp_path: Path, request, files: dict) -> None:
+    path = build_safe(tmp_path / "p.zip", files=files, images=False)
+    if request.node.callspec.id == "control-extra":
+        # An extra file whose name does not match a required image is allowed.
+        assert inspect(path).name == NAME
+        return
+    with refused("image_structure"):
+        inspect(path)
+
+
+def test_o77_required_image_must_be_checksum_listed(tmp_path: Path) -> None:
+    files = image_files()
+    members = safe_members(files=files, images=False)
+    listed = {k: v for k, v in files.items() if "_B03_" not in k}
+    members[f"{NAME}/manifest.safe"] = manifest_xml(listed)
+    with refused("image_structure"):
+        inspect(write_zip(tmp_path / "p.zip", members))
+
+
+@pytest.mark.parametrize("left", [1, 4095, 4096, 4097])
+def test_o78_unknown_length_never_exceeds_the_daily_allowance(
+    scratch_root: Path, clock: Clock, archive_bytes: bytes, left: int
+) -> None:
+    size = len(archive_bytes)
+    limits = ScratchLimits(10_000_000, 10, 10, size + left)
+    with store_for(scratch_root, clock, limits) as store:
+        acquire(
+            store,
+            SyntheticTransport({download_url(pid(1)): SyntheticResponse(200, archive_bytes)}),
+            product_id=pid(1),
+        )
+        body = SyntheticResponse(200, archive_bytes, content_length=False)
+        with refused("daily_byte_cap"):
+            acquire(store, SyntheticTransport({download_url(pid(2)): body}), product_id=pid(2))
+        assert body.bytes_served == left and max(body.read_sizes) <= left
+        assert store.budget_today()["bytes"] == limits.max_bytes_per_day
+        assert store.remaining_bytes_today() == 0 and partial_files(scratch_root) == []
+
+
+def test_o78_unknown_length_within_the_allowance_is_accepted(
+    scratch_root: Path, clock: Clock, archive_bytes: bytes
+) -> None:
+    size = len(archive_bytes)
+    # The body must end before the cap, so one spare byte is the tightest fit.
+    limits = ScratchLimits(10_000_000, 10, 10, 2 * size + 1)
+    with store_for(scratch_root, clock, limits) as store:
+        acquire(
+            store,
+            SyntheticTransport({download_url(pid(1)): SyntheticResponse(200, archive_bytes)}),
+            product_id=pid(1),
+        )
+        body = SyntheticResponse(200, archive_bytes, content_length=False)
+        result = acquire(store, SyntheticTransport({download_url(pid(2)): body}), product_id=pid(2))
+        assert result.transferred_bytes == size
+        assert store.remaining_bytes_today() == 1
+
+
+def test_o78_declared_length_equal_to_the_allowance_is_accepted(
+    scratch_root: Path, clock: Clock, archive_bytes: bytes
+) -> None:
+    size = len(archive_bytes)
+    limits = ScratchLimits(10_000_000, 10, 10, 2 * size)
+    with store_for(scratch_root, clock, limits) as store:
+        acquire(
+            store,
+            SyntheticTransport({download_url(pid(1)): SyntheticResponse(200, archive_bytes)}),
+            product_id=pid(1),
+        )
+        assert acquire(
+            store,
+            SyntheticTransport({download_url(pid(2)): SyntheticResponse(200, archive_bytes)}),
+            product_id=pid(2),
+        )
+        assert store.remaining_bytes_today() == 0
+        late = SyntheticResponse(200, archive_bytes)
+        with refused("daily_byte_cap"):
+            acquire(store, SyntheticTransport({download_url(pid(3)): late}), product_id=pid(3))
+        assert late.read_sizes == []
+
+
+def test_o78_transport_returning_more_than_asked_is_refused(
+    scratch_root: Path, clock: Clock, archive_bytes: bytes
+) -> None:
+    class Greedy(SyntheticResponse):
+        def read(self, size: int) -> bytes:
+            return super().read(size * 2)
+
+    greedy = Greedy(200, archive_bytes, content_length=False)
+    with store_for(scratch_root, clock) as store:
+        with refused("transfer_failed"):
+            acquire(store, SyntheticTransport({download_url(): greedy}))
+        assert partial_files(scratch_root) == []

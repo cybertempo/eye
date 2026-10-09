@@ -29,11 +29,14 @@ this adapter only downloads. Where CDSE really redirects a download is
 UNVERIFIED (register row), so any redirect off the download host fails closed
 until a measured redirect is recorded and reviewed.
 
-Size rules: a ``Content-Length`` above the cap is refused before the body is
-read; the body is streamed in ``chunk_bytes`` pieces and stopped as soon as it
-passes the smaller of ``max_product_bytes`` and the bytes left in today's
-budget; a body shorter or longer than its ``Content-Length`` is refused.
-Every byte received counts against the daily budget, admitted or not.
+Size rules: the cap is the smaller of ``max_product_bytes`` and the bytes
+left in today's budget. A ``Content-Length`` above the cap is refused before
+the body is read, and a declared body is read only up to its declared
+length; a shorter one is refused. A body without ``Content-Length`` is read
+in pieces of at most ``chunk_bytes`` and never past the cap: one that has
+not ended before the cap is refused without reading further. Bytes received
+therefore never exceed the cap, and every byte received counts against the
+daily budget, admitted or not.
 """
 
 from __future__ import annotations
@@ -214,22 +217,29 @@ def _stream(response: Response, sink: Path, cap: int, chunk_bytes: int) -> tuple
         declared = int(declared_text)
         if declared > cap:
             return 0, "product_too_large"
-    # A body may not run past its own declared length, nor past the cap.
+    # Never ask for a byte past the limit: a declared body is read to its
+    # declared length, and a body of unknown length must end before the cap.
+    # Reaching the cap without seeing its end is refused without reading on,
+    # so bytes received never exceed the cap (the daily allowance included).
     limit = cap if declared is None else declared
     received = 0
     with sink.open("xb") as out:
-        while True:
+        while received < limit:
+            want = min(chunk_bytes, limit - received)
             try:
-                chunk = response.read(chunk_bytes)
+                chunk = response.read(want)
             except OSError:
                 return received, "transfer_failed"
             if not chunk:
                 break
             received += len(chunk)
-            if received > limit:
-                return received, "product_too_large" if declared is None else "length_mismatch"
+            if len(chunk) > want:
+                return received, "transfer_failed"
             out.write(chunk)
-    if declared is not None and received != declared:
+    if declared is None:
+        if received >= limit:
+            return received, "product_too_large"
+    elif received != declared:
         return received, "length_mismatch"
     return received, None
 
@@ -247,15 +257,15 @@ def acquire_product(
 ) -> AcquireResult:
     """Fetch, check and cache one named Level-2A product, or refuse.
 
-    A product already in the cache is returned without any request. Any
-    refusal leaves no partial file behind.
+    A product already in the cache is re-checked from its bytes and returned
+    without any request; one that fails the re-check is evicted and refused
+    (``cache_corrupt``), and the next call downloads it again. Any refusal
+    leaves no partial file behind.
     """
     check_product_id(product_id)
     parse_product_name(product_name)
-    cached = store.get(product_id)
+    cached = store.get_checked(product_id, product_name, archive, now())
     if cached is not None:
-        if cached.record.get("name") != product_name:
-            raise ImageryRefused("name_mismatch", "cached product has a different name")
         return AcquireResult(cached, (), True, 0)
 
     partial, evicted = store.reserve(product_id, download.max_product_bytes)

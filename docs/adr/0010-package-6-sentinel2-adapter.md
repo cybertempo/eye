@@ -8,7 +8,8 @@ Scope:
   rules, streamed size caps, archive and metadata checks, product-date
   handling, attribution, a bounded scratch cache with eviction, and an
   `[imagery]` configuration table. Synthetic SAFE-shaped archives and an
-  offline transport drive 142 tests.
+  offline transport drive 165 tests. Audit findings O76 to O78 are repaired
+  here (decisions 4, 5 and 8).
 - **Not built:** any real network transport, token request or credential;
   catalogue or STAC search; JPEG2000 decoding, tiling or any derived raster;
   a database ledger for imagery; wire or browser changes. The wire schema
@@ -51,13 +52,22 @@ Scope:
    still UNVERIFIED (register row), so a redirect off the download host fails
    closed until a measured redirect is recorded and reviewed.
 
-4. **Size is capped while streaming.** A `Content-Length` above the cap is
-   refused before the body is read. The body is read in `chunk_bytes` pieces
-   and stopped as soon as it passes the smaller of `max_product_bytes` and
-   the bytes left in today's budget. A body longer or shorter than its
-   declared length is refused. Every byte received counts against the daily
-   budget, whether the product is admitted or not. A refusal deletes the
-   partial file.
+4. **Bytes received never exceed the cap (O78).** The cap is the smaller of
+   `max_product_bytes` and the bytes left in today's budget.
+   - A `Content-Length` above the cap is refused before the body is read.
+   - A declared body is read only up to its declared length. A shorter body
+     is refused, and bytes after the declared length are never read.
+   - A body without `Content-Length` is read in pieces of at most
+     `chunk_bytes`, and no read asks for more than the cap leaves. A body
+     that has not ended before the cap is refused without reading further,
+     so it may use at most the cap minus one byte.
+   - A transport that returns more than it was asked for is refused.
+
+   Every byte received counts against the daily budget, whether the product
+   is admitted or not, and the total for a UTC day never exceeds
+   `max_bytes_per_day`. A refusal deletes the partial file. (Before O78, an
+   unknown-length body could overrun the daily allowance by up to
+   `chunk_bytes` minus one byte.)
 
 5. **A malformed archive is refused, never repaired.** Each check has a
    stable reason code. The archive must be a zip whose members all sit under
@@ -71,7 +81,16 @@ Scope:
    - a bad CRC (every member is streamed once);
    - a missing `manifest.safe` or `MTD_MSIL2A.xml`, one larger than
      `max_metadata_bytes`, or XML with a DOCTYPE or ENTITY declaration;
-   - any manifest-listed file that is missing or fails its MD5 or SHA3-256.
+   - any manifest-listed file that is missing or fails its MD5 or SHA3-256;
+   - an archive without the minimum Level-2A image structure (O77): exactly
+     one granule directory `GRANULE/L2A_T<tile>_A<6 digits>_<time>`, and in
+     its `IMG_DATA` exactly one each of the 10 m B02, B03, B04 and B08 bands
+     and the 20 m scene classification (`SCL`), named
+     `T<tile>_<time>_<band>_<resolution>.jp2`. They must share one time,
+     carry the product's tile, be listed with a checksum in the manifest, be
+     non-empty and start with the JPEG 2000 signature. This is a floor, not
+     a full SAFE validation. Metadata with any other files and no imagery is
+     not a product.
 
 6. **Dates come from the product, never from EYE's clock.** These must hold:
    - the name's sensing time equals `DATATAKE_SENSING_START` to the second;
@@ -103,7 +122,12 @@ Scope:
    bytes received reset at UTC midnight. One process holds the scratch root
    (file lock). A partial file left by a stopped process is deleted on open.
    A damaged `record.json` or `budget.json` stops the store rather than being
-   guessed at.
+   guessed at. A cache hit is never taken on trust (O76): the cached archive
+   is inspected again with the full archive check, and its fresh record,
+   including the archive's SHA-256 and size, must equal the stored record.
+   A cached product that fails is evicted and refused with `cache_corrupt`,
+   and the next request downloads it again. A request under another product
+   name is refused with `name_mismatch` and evicts nothing.
 
 ## Limits and their defaults
 
@@ -117,13 +141,13 @@ has been measured.
 | `max_scratch_bytes` | 4,000,000,000 | all cached archives plus the download in progress |
 | `max_cached_products` | 2 | archives kept on scratch |
 | `max_products_per_day` | 4 | downloads started per UTC day |
-| `max_bytes_per_day` | 6,000,000,000 | bytes received per UTC day; the daily worst case |
+| `max_bytes_per_day` | 6,000,000,000 | bytes received per UTC day, never exceeded; the daily worst case |
 | `max_redirects` | 3 | redirects per download, on the download host only |
 | `max_archive_members` | 1000 | zip members |
 | `max_uncompressed_bytes` | 2,000,000,000 | total expanded size |
 | `max_compression_ratio` | 100 | per member |
 | `max_metadata_bytes` | 4,000,000 | each of `manifest.safe` and `MTD_MSIL2A.xml` |
-| `chunk_bytes` | 1,048,576 | read size; memory does not grow with product size |
+| `chunk_bytes` | 1,048,576 | largest read; memory does not grow with product size |
 | `stale_after_hours` | 240 | after this, the product is shown as stale |
 
 The loader refuses `max_scratch_bytes` or `max_bytes_per_day` below

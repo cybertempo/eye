@@ -19,6 +19,9 @@ products and bytes started per UTC day. A download reserves its full
 only when that makes room; if evicting everything would not, nothing is
 evicted and the request is refused. A damaged ``record.json`` or
 ``budget.json`` stops the store (fail closed) rather than being guessed at.
+A cache hit is re-checked (``get_checked``): the archive must pass the full
+archive check again and match its stored record, or it is evicted and
+refused.
 """
 
 from __future__ import annotations
@@ -32,7 +35,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from eye.raster.sentinel2 import ImageryRefused, ProductRecord, check_product_id
+from eye.raster.sentinel2 import (
+    ArchiveLimits,
+    ImageryRefused,
+    ProductRecord,
+    check_product_id,
+    inspect_archive,
+)
 
 RECORD = "record.json"
 ARCHIVE = "product.zip"
@@ -172,15 +181,72 @@ class ScratchStore:
 
     # -- reservation, admission and eviction -----------------------------
 
-    def get(self, product_id: str) -> CachedProduct | None:
-        """A cached product (and mark it used), or None."""
+    def get(self, product_id: str, *, touch: bool = True) -> CachedProduct | None:
+        """A cached product (marked used unless ``touch`` is false), or None.
+
+        This trusts what is on disk; ``get_checked`` re-checks the archive.
+        """
         self._require_open()
         check_product_id(product_id)
         for item in self.cached():
             if item.product_id == product_id:
-                self._touch(item)
+                if touch:
+                    self._touch(item)
                 return item
         return None
+
+    def archive_path(self, product_id: str) -> Path:
+        check_product_id(product_id)
+        return self.root / "products" / product_id / ARCHIVE
+
+    def get_checked(
+        self,
+        product_id: str,
+        expected_name: str,
+        limits: ArchiveLimits,
+        now: datetime,
+    ) -> CachedProduct | None:
+        """A cached product whose bytes pass the full archive check again, or None.
+
+        The archive is re-inspected and its fresh record must equal the stored
+        one (which includes the archive's SHA-256 and size). A cached product
+        that fails is evicted and refused with ``cache_corrupt``: scratch can
+        be damaged or altered after admission, so a cache hit is never taken
+        on trust. Only a product that passes is marked used and returned.
+        """
+        item = self.get(product_id, touch=False)
+        if item is None:
+            return None
+        if item.record.get("name") != expected_name:
+            raise ImageryRefused("name_mismatch", "cached product has a different name")
+        try:
+            fresh = inspect_archive(
+                self.archive_path(product_id),
+                product_id=product_id,
+                expected_name=expected_name,
+                limits=limits,
+                now=now,
+            ).to_json()
+        except ImageryRefused as exc:
+            self.evict(product_id)
+            raise ImageryRefused(
+                "cache_corrupt", f"cached {product_id} failed its re-check ({exc.code}); evicted"
+            ) from exc
+        if fresh != item.record:
+            self.evict(product_id)
+            raise ImageryRefused(
+                "cache_corrupt", f"cached {product_id} no longer matches its record; evicted"
+            )
+        self._touch(item)
+        return self.get(product_id, touch=False)
+
+    def evict(self, product_id: str) -> None:
+        """Remove one cached product (re-fetchable scratch only)."""
+        self._require_open()
+        check_product_id(product_id)
+        folder = self.root / "products" / product_id
+        if folder.is_dir() and not folder.is_symlink():
+            shutil.rmtree(folder)
 
     def _touch(self, item: CachedProduct) -> None:
         folder = self.root / "products" / item.product_id
