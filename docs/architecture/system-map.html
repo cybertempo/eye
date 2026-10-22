@@ -66,7 +66,22 @@ button { cursor: pointer; }
 .brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
 .brand h1 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 20px; letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap; }
 .brand h1 b { color: var(--accent); font-weight: 700; }
-.brand .meta { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand .meta { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: none; border: 1px solid var(--line-2); border-radius: 12px; padding: 3px 10px; max-width: 100%; }
+.brand .meta::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin-right: 7px; vertical-align: 1px; }
+.brand .meta.live { color: var(--fg); }
+.brand .meta.live::before { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.brand .meta:hover { border-color: var(--accent); }
+.src-menu { left: 0; right: auto; width: min(420px, calc(100vw - 32px)); box-sizing: border-box; padding: 12px; }
+.src-status { margin: 0 6px 6px; font-size: 13px; }
+.src-status.live b { color: var(--green); }
+.src-note { display: block; margin: 0 6px 8px; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+a.src-note { color: var(--accent); }
+.src-changes { display: grid; gap: 4px; max-height: 260px; overflow: auto; margin: 0 0 10px; }
+.src-change { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: start; text-align: left; background: none; border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; font-size: 12px; line-height: 1.45; }
+.src-change:hover { border-color: var(--accent); }
+.src-change .op { font-family: var(--mono); font-size: 9.5px; padding: 1px 5px; border-radius: 2px; color: var(--bg); margin-top: 2px; }
+.src-change .op.add { background: var(--amber); } .src-change .op.remove { background: var(--red); } .src-change .op.change { background: var(--blue); }
+.src-menu .actions { margin: 4px 6px 6px; }
 .hud .spacer { flex: 1 1 0; }
 .search { position: relative; flex: 0 1 300px; min-width: 180px; }
 .search input {
@@ -87,6 +102,7 @@ button { cursor: pointer; }
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg); white-space: nowrap;
 }
 .btn:hover { border-color: var(--accent); color: var(--accent); }
+.short { display: none; }
 .btn.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .btn.ghost { background: transparent; }
 .btn.danger { border-color: var(--red); color: var(--red); }
@@ -167,6 +183,11 @@ button { cursor: pointer; }
 .node.s-proposed .n-flag, .node.s-proposed-change .n-flag, .node.s-proposed-remove .n-flag { color: var(--bg); background: var(--magenta); }
 .node.s-proposed-remove .n-title { text-decoration: line-through; text-decoration-color: var(--magenta); }
 
+.node.s-detected { border: 1px dashed var(--amber); }
+.node.s-detected .n-flag { color: var(--bg); background: var(--amber); }
+.node.s-gone { opacity: 0.5; border: 1px dashed var(--red); }
+.node.s-gone .n-title { text-decoration: line-through; text-decoration-color: var(--red); }
+.node.s-gone .n-flag, .node.unverified .n-flag { color: var(--bg); background: var(--red); }
 .node.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 30px rgba(62, 230, 255, 0.35), 0 10px 26px var(--shadow); }
 .node.up { border-color: color-mix(in srgb, var(--blue) 80%, transparent); }
 .node.down { border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
@@ -365,15 +386,21 @@ path.edge.st-proposed-remove { stroke: var(--magenta); stroke-dasharray: 2 6; op
 
 @media (max-width: 760px) {
   :root { --panel-w: 100%; }
-  .brand .meta, .minimap, .search kbd, .hud .spacer { display: none; }
+  .minimap, .search kbd, .hud .spacer { display: none; }
   .hud { gap: 8px; }
   .brand { flex: 1 1 auto; }
   .brand h1 { font-size: 16px; letter-spacing: 0.1em; }
-  #btn-claude { order: 1; }
-  #wrap-layers { order: 2; }
-  #wrap-tours { order: 3; }
-  .hud .seg { order: 4; margin-left: auto; }
+  .brand { flex: 1 1 100%; }
   .btn, .seg button { padding: 6px 9px; font-size: 11.5px; }
+  .hud .long { display: none; }
+  .hud .short { display: inline; }
+  .brand { flex-wrap: nowrap; }
+  #wrap-source { min-width: 0; flex: 1 1 auto; }
+  .brand .meta .m-repo { display: none; }
+  #btn-claude { order: 2; }
+  #wrap-layers { order: 3; }
+  #wrap-tours { order: 4; }
+  .hud .seg { order: 5; }
   .search { order: 10; flex: 1 1 100%; }
   #panel { top: auto; height: 62%; width: 100%; border-left: 0; border-top: 1px solid var(--line-2); }
   .has-panel .tourbar { left: 50%; width: calc(100% - 32px); bottom: calc(62% + 10px); }
@@ -391,7 +418,10 @@ path.edge.st-proposed-remove { stroke: var(--magenta); stroke-dasharray: 2 6; op
   <header class="hud">
     <div class="brand">
       <h1>EYE <b>◆</b> System Map</h1>
-      <span class="meta" id="meta">cybertempo/eye · main @ f53afbc</span>
+      <div class="menu-wrap" id="wrap-source">
+        <button class="meta" id="meta" aria-haspopup="true" aria-expanded="false" title="Where this map comes from"><span class="m-repo">cybertempo/eye · </span>snapshot @ f53afbc</button>
+        <div class="menu src-menu" id="menu-source" hidden></div>
+      </div>
     </div>
     <div class="search">
       <label class="sr" for="search">Find a component</label>
@@ -409,10 +439,10 @@ path.edge.st-proposed-remove { stroke: var(--magenta); stroke-dasharray: 2 6; op
       <div class="menu" id="menu-tours" hidden></div>
     </div>
     <div class="seg" role="group" aria-label="Mode">
-      <button id="mode-explore" aria-pressed="true">Explore</button>
-      <button id="mode-redesign" class="redesign" aria-pressed="false">Redesign</button>
+      <button id="mode-explore" aria-pressed="true"><span class="long">Explore</span><span class="short">View</span></button>
+      <button id="mode-redesign" class="redesign" aria-pressed="false"><span class="long">Redesign</span><span class="short">Edit</span></button>
     </div>
-    <button class="btn primary" id="btn-claude">Ask Claude</button>
+    <button class="btn primary" id="btn-claude"><span class="long">Ask Claude</span><span class="short">Claude</span></button>
   </header>
 
   <div id="main">
@@ -532,6 +562,10 @@ const NODES = [
     about: "The implementation brief, nine architecture decision records and the agent rules. They define the public/private boundary, the accuracy-first release priority and the acceptance gate of every work package.",
     rules: ["Deterministic facts stay separate from AI prose", "Real adapters stay off until their source-policy row is approved", "Production never falls back to fake auth", "A failed query or test instrument is UNVERIFIED, never evidence of absence"],
     items: ["0001 foundation", "0002 contracts", "0003 synthetic AIS", "0004 browser + API", "0005 event ledger", "0006 news + media", "0007 lifecycle", "0008 backtester", "0009 database identity"] },
+  { id: "ctl.map", zone: "control", col: 2, kind: "doc", label: "This system map", path: "docs/architecture/system-map.html · scripts/gen_system_map.py", pkg: "Tooling",
+    sub: "Hand-written descriptions plus facts the generator reads from GitHub main every day.",
+    about: "The page you are looking at. Descriptions, layout and tours are written by hand. Line counts, tables, commands, routes, new files and deleted files come from scripts/gen_system_map.py run on GitHub main by a daily scheduled check.",
+    rules: ["The generator reads files only: no network, no model, no guessing", "A file it cannot parse is shown UNVERIFIED, never dropped", "A new file appears as a detected block until someone describes it"] },
   { id: "ctl.policy", zone: "control", col: 3, kind: "doc", label: "Source-policy register", path: "docs/source-policy-register.md", src: "docs/source-policy-register.md", pkg: "Package 0, 6",
     sub: "One row per data source. Without an approved row, an adapter stays disabled.",
     about: "Each row records the endpoint, terms URL and review date, permitted purpose, quota arithmetic, storage and redistribution rights, attribution, credential handling, egress and the disable switch. Four synthetic sources are approved for demo and tests. Copernicus Sentinel-2 L2A is a disabled candidate.",
@@ -643,7 +677,7 @@ const NODES = [
     sub: "Manifests, rollups, ledger seals, backup proofs and retention decisions.",
     about: "A manifest records one derivation of one partition day: its input batch set and checksum, watermark, lateness deadline, versions, output checksum and coverage summary. The database itself guards pruning.",
     rules: ["The database refuses pruning before the lateness window closes by its own clock", "…or without current manifests checked valid in the same transaction", "…or when a batch's ledger rows no longer match its seal"],
-    items: ["derivation_manifest", "rollup_value", "manifest_validation", "batch_seal", "backup_proof", "retention_decision", "current_manifest (view)", "current_rollup (view)"] },
+    items: ["derivation_manifest", "rollup_value", "manifest_validation", "batch_seal", "backup_proof", "retention_decision", "current_manifest (view)", "current_rollup (view)", "manifest_retention_proof (view)"] },
   { id: "st.research", zone: "storage", col: 3, kind: "sql", label: "Backtest records", path: "migrations/0008 · 0009", src: "migrations/0008_backtest_runs.sql", pkg: "Package 5",
     sub: "Each run names the exact manifests it read.",
     about: "A run records its parameters and input manifest ids, so a replay re-reads those manifests rather than whatever is current.",
@@ -727,7 +761,7 @@ const NODES = [
     about: "One versioned schema for both directions. v1 to v3 are kept unchanged beside it.",
     rules: ["A new message shape is a new schema version"],
     items: ["Snapshot", "Delta", "Transits", "Subscribe", "ResyncRequired", "Error", "Health", "Track", "Coverage", "EventCase", "MediaItem"] },
-  { id: "wire.py", zone: "wire", col: 6, kind: "py", label: "Python validator", path: "backend/eye/wire/validate.py", src: "backend/eye/wire/validate.py", loc: 335, pkg: "Package 1",
+  { id: "wire.py", zone: "wire", col: 6, kind: "py", label: "Python validator", path: "backend/eye/wire/validate.py · __init__.py", src: "backend/eye/wire/validate.py", loc: 335, pkg: "Package 1",
     sub: "A deliberately small keyword subset. Unknown keywords are refused at load.",
     about: "Standard library only. It supports exactly the JSON Schema keywords it lists, so a keyword can never be silently ignored.",
     rules: ["Every outgoing body and frame is validated before it is sent"] },
@@ -783,7 +817,7 @@ const NODES = [
     about: "No network. Database tests use a disposable loopback PostGIS. Fails, never skips, if no database is available. --container adds an image build and smoke test.",
     items: ["boundary", "ruff", "wire types", "AIS fixtures", "tsc build", "dist check", "check-config", "pytest ×4", "--container"] },
   { id: "ops.tests", zone: "build", col: 3, kind: "py", label: "Test suite", path: "tests/ · scripts/test-db.sh", src: "tests/conftest.py", pkg: "Packages 0–5",
-    sub: "24 test modules. Each test gets a fresh database; browser tests run headless.",
+    sub: "25 test modules. Each test gets a fresh database; browser tests run headless.",
     about: "pytest-xdist runs four workers against one disposable PostGIS container. Headless browser tests are invoked only by the test command and open no window." },
   { id: "ops.boundary", zone: "build", col: 4, kind: "py", label: "Boundary checks", path: "scripts/check_repo_boundary.py · check_web_dist.py", src: "scripts/check_repo_boundary.py", loc: 188, pkg: "Package 0",
     sub: "Scans publishable files for keys, private addresses, browser launch and licence claims.",
@@ -792,10 +826,10 @@ const NODES = [
     sub: "verify with container smoke, gitleaks over full history, dependency audits.",
     about: "Synthetic data only: no secrets, no provider calls, no deployment. Third-party actions and images are pinned by commit or digest.",
     items: ["verify", "secret-scan", "dependency-scan"] },
-  { id: "ops.demo", zone: "build", col: 6, kind: "docker", label: "Demo launcher", path: "scripts/demo.sh · deploy/dev/compose.yaml", src: "deploy/dev/compose.yaml", pkg: "Package 0",
+  { id: "ops.demo", zone: "build", col: 6, kind: "docker", label: "Demo launcher", path: "scripts/demo.sh · deploy/dev/compose.yaml · eye.container.toml", src: "deploy/dev/compose.yaml", pkg: "Package 0",
     sub: "PostGIS plus the demo with a one-run password. Only the web port, only on loopback.",
     about: "The demo shares the database's network namespace, so the database has no published port. Ctrl-C stops and removes everything." },
-  { id: "ops.image", zone: "build", col: 6, kind: "docker", label: "Demo image", path: "deploy/dev/Dockerfile", src: "deploy/dev/Dockerfile", pkg: "Package 0",
+  { id: "ops.image", zone: "build", col: 6, kind: "docker", label: "Demo image", path: "deploy/dev/Dockerfile · scripts/container-smoke.sh", src: "deploy/dev/Dockerfile", pkg: "Package 0",
     sub: "python:3.12-slim by digest, offline hash-checked wheels, uid 65534, read-only.",
     about: "Runs db-prepare-demo, then serve. All capabilities dropped, no-new-privileges, memory and pid limits." },
   { id: "ops.drill", zone: "build", col: 7, kind: "sh", label: "Restore drill", path: "scripts/restore-drill.sh · restore_drill.py", src: "scripts/restore_drill.py", pkg: "Package 5",
@@ -1032,8 +1066,10 @@ const edgeKey = (e) => e.from + "→" + e.to;
 
 function computeGraph() {
   const nodes = new Map();
-  for (const n of NODES) nodes.set(n.id, { ...n, st: n.status || "base", notes: [] });
+  for (const n of NODES) nodes.set(n.id, { ...n, items: n.items ? [...n.items] : [], st: n.status || "base", notes: [] });
   const edges = EDGES.map(([from, to, kind, label]) => ({ from, to, kind, label, st: "base" }));
+  FACT_CHANGES = [];
+  if (FACTS) applyFacts(nodes, edges);
   const apply = (ops, origin) => {
     for (const op of ops) {
       const pv = origin === "preview";
@@ -1047,7 +1083,7 @@ function computeGraph() {
         if (op.label) n.label = op.label;
         if (op.about) { n.about = op.about; n.sub = op.about; }
         if (op.path) n.path = op.path;
-        if (n.st === "base" || n.st === "planned" || n.st === "ext") n.st = pv ? "proposed-change" : "changed";
+        if (["base", "planned", "ext", "detected"].includes(n.st)) n.st = pv ? "proposed-change" : "changed";
       } else if (op.op === "note" && nodes.has(op.id)) {
         nodes.get(op.id).notes.push(op.text);
       } else if (op.op === "add_edge" && nodes.has(op.from) && nodes.has(op.to)) {
@@ -1062,11 +1098,188 @@ function computeGraph() {
   if (state.preview) apply(state.preview.ops, "preview");
   for (const e of edges) {
     const a = nodes.get(e.from), b = nodes.get(e.to);
-    if (e.st === "base" && ((a && a.st === "removed") || (b && b.st === "removed"))) e.st = "removed";
+    const gone = (n) => n && (n.st === "removed" || n.st === "gone");
+    if (e.st === "base" && (gone(a) || gone(b))) e.st = "removed";
   }
   G = { nodes, edges };
 }
 const nodeVisible = (n) => n && (state.layers.planned || n.st !== "planned");
+
+/* ===================================================================
+   LIVE SOURCE: facts that scripts/gen_system_map.py derives from GitHub
+   main. A daily scheduled check writes them to this map's database
+   (source/latest); until then the map is the hand-checked snapshot.
+   Descriptions stay hand-written; only derived facts are merged.
+   =================================================================== */
+const FACTS_FORMAT = "eye.system-map-facts/1";
+const TRIGGER_ID = "trig_01J1g1WcHNipQypG6BPyfVji";
+const MIGRATION_NODE = { "0001": "st.evidence", "0002": "st.transits", "0003": "st.feed", "0004": "st.evidence", "0005": "st.events", "0006": "st.media", "0007": "st.lifecycle", "0008": "st.research", "0009": "st.research", "0010": "st.identity" };
+const SCANNED = /^(backend\/eye\/|web\/src\/|migrations\/|schemas\/|scripts\/|\.github\/workflows\/|deploy\/|config\/|reference\/lines\/)/;
+const PATH_RE = /^[A-Za-z0-9_.\-/]{1,300}$/;
+let FACTS = null, FACTS_BAD = false, FACT_CHANGES = [];
+
+function sanitizeFacts(d) {
+  if (!d || d.format !== FACTS_FORMAT || typeof d.commit !== "string" || !/^[0-9a-f]{7,40}$/.test(d.commit) || !Array.isArray(d.files)) return null;
+  const str = (v, n) => (typeof v === "string" ? v.slice(0, n) : "");
+  const names = (a, re, n) => (Array.isArray(a) ? a.filter((x) => typeof x === "string" && re.test(x)).slice(0, n) : []);
+  const files = [];
+  for (const f of d.files.slice(0, 3000)) {
+    if (!f || typeof f.path !== "string" || !PATH_RE.test(f.path) || f.path.includes("..")) continue;
+    files.push({
+      path: f.path, kind: str(f.kind, 12), doc: str(f.doc, 200), parse_error: f.parse_error === true,
+      loc: Number.isInteger(f.loc) && f.loc >= 0 && f.loc < 1e6 ? f.loc : null,
+      imports: names(f.imports, PATH_RE, 200),
+      tables: names(f.tables, /^[a-z_][a-z0-9_]{0,62}$/, 200), views: names(f.views, /^[a-z_][a-z0-9_]{0,62}$/, 200),
+    });
+  }
+  return {
+    commit: d.commit, commit_date: str(d.commit_date, 40), generated_at: str(d.generated_at, 40), files,
+    cli: names(d.cli_commands, /^[a-z][a-z0-9-]{0,40}$/, 100), routes: names(d.routes, /^\/[a-z0-9_/-]{1,80}$/, 50),
+    wire: Array.isArray(d.wire_versions) ? d.wire_versions.filter((v) => Number.isInteger(v) && v > 0 && v < 1000).slice(0, 100) : [],
+    tests: Number.isInteger(d.test_modules) && d.test_modules >= 0 ? d.test_modules : null,
+  };
+}
+function nodeFiles(n) {
+  const out = []; let dir = "";
+  for (const raw of (n.path || "").split(" · ")) {
+    const t = raw.trim();
+    if (!t || /\s/.test(t)) continue;
+    if (t.includes("/")) { out.push(t); dir = t.slice(0, t.lastIndexOf("/") + 1); }
+    else if (/\.[a-z]+$/.test(t) && dir) out.push(dir + t);
+  }
+  if (n.src && !out.includes(n.src)) out.push(n.src);
+  return out;
+}
+function zoneForPath(p) {
+  const m = p.match(/^backend\/eye\/([a-z_]+)\//);
+  if (m) return { ingest: "ingest", storage: "storage", worker: "workers", raster: "workers", api: "api", wire: "wire" }[m[1]] || "control";
+  if (p.startsWith("backend/eye/")) return "control";
+  if (p.startsWith("web/src/")) return "browser";
+  if (p.startsWith("migrations/")) return "storage";
+  if (p.startsWith("schemas/")) return "wire";
+  if (p.startsWith("config/")) return "control";
+  return "build";
+}
+const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
+function applyFacts(nodes, edges) {
+  const F = FACTS, idx = new Map(F.files.map((f) => [f.path, f]));
+  const change = (type, id, text) => FACT_CHANGES.push({ type, id, text });
+  const owner = new Map();
+  for (const n of nodes.values()) for (const p of nodeFiles(n)) if (!owner.has(p)) owner.set(p, n.id);
+  for (const f of F.files) {
+    if (/^schemas\/eye-wire\.v\d+\.schema\.json$/.test(f.path)) owner.set(f.path, "wire.schema");
+    else if (f.path.startsWith("reference/lines/")) owner.set(f.path, "src.lines");
+    const m = f.path.match(/^migrations\/(\d{4})_/);
+    if (m && MIGRATION_NODE[m[1]]) owner.set(f.path, MIGRATION_NODE[m[1]]);
+  }
+  // sizes, deletions, parse failures of described files
+  for (const n of nodes.values()) {
+    if (n.st === "planned" || n.st === "ext" || !n.src || !SCANNED.test(n.src)) continue;
+    const f = idx.get(n.src);
+    if (!f) { n.st = "gone"; change("gone", n.id, `${n.src} is no longer in the repository`); continue; }
+    if (f.parse_error) { n.unverified = true; change("unverified", n.id, `${n.src} could not be parsed (UNVERIFIED)`); }
+    if (n.loc && f.loc != null && f.loc !== n.loc) { change("size", n.id, `${n.label}: ${n.loc} → ${f.loc} lines`); n.loc = f.loc; }
+  }
+  // tables and views per storage block, from the migrations that create them
+  const tablesBy = new Map(), known = new Set(nodes.get("st.migrate").items.map((t) => t.slice(0, 4)));
+  for (const f of F.files) {
+    const m = f.path.match(/^migrations\/(\d{4})_(.+)\.sql$/);
+    if (!m) continue;
+    if (!known.has(m[1])) { nodes.get("st.migrate").items.push(`${m[1]} ${m[2].split("_").slice(0, 2).join(" ")}`); change("new", "st.migrate", `New migration ${m[1]}_${m[2]}.sql`); }
+    const id = owner.get(f.path);
+    if (!id || !nodes.has(id)) continue;
+    if (!tablesBy.has(id)) tablesBy.set(id, []);
+    const list = tablesBy.get(id);
+    for (const t of f.tables) if (!list.includes(t)) list.push(t);
+    for (const v of f.views) if (!list.includes(v + " (view)")) list.push(v + " (view)");
+  }
+  for (const [id, list] of tablesBy) {
+    const n = nodes.get(id);
+    if (sameSet(list, n.items)) continue;
+    const added = list.filter((t) => !n.items.includes(t)), removed = n.items.filter((t) => !list.includes(t));
+    change("tables", id, `${n.label}: ${[...added.map((t) => "+" + t), ...removed.map((t) => "−" + t)].join(", ")}`);
+    n.items = list;
+  }
+  const cli = nodes.get("ctl.cli");
+  if (F.cli.length && !sameSet(F.cli, cli.items)) { change("commands", "ctl.cli", `Commands: ${[...F.cli.filter((c) => !cli.items.includes(c)).map((c) => "+" + c), ...cli.items.filter((c) => !F.cli.includes(c)).map((c) => "−" + c)].join(", ")}`); cli.items = [...F.cli]; }
+  const srv = nodes.get("api.server"), routes = F.routes.map((r) => `GET ${r}${r.endsWith("/stream") ? " (WS)" : ""}`);
+  if (routes.length && !sameSet(routes, srv.items)) { change("routes", "api.server", `Routes: ${routes.filter((r) => !srv.items.includes(r)).map((r) => "+" + r).concat(srv.items.filter((r) => !routes.includes(r)).map((r) => "−" + r)).join(", ")}`); srv.items = routes; }
+  const wv = F.wire.length ? Math.max(...F.wire) : null, ws = nodes.get("wire.schema");
+  if (wv && !ws.label.endsWith("/" + wv)) { ws.label = `Wire schema eye.wire/${wv}`; ws.path = ws.src = `schemas/eye-wire.v${wv}.schema.json`; change("schema", "wire.schema", `Wire schema is now eye.wire/${wv}`); }
+  const tests = nodes.get("ops.tests"), tm = (tests.sub.match(/^(\d+) test modules/) || [])[1];
+  if (F.tests != null && tm && +tm !== F.tests) { tests.sub = tests.sub.replace(/^\d+ test modules/, `${F.tests} test modules`); change("size", "ops.tests", `Test modules: ${tm} → ${F.tests}`); }
+  // files nobody has described yet become detected blocks, linked by their imports
+  const autoIds = new Map();
+  for (const f of F.files) {
+    if (owner.has(f.path) || !SCANNED.test(f.path) || /\.(md|toml|json)$/.test(f.path)) continue;
+    if (f.path.endsWith("/__init__.py") && (f.loc || 0) < 10) continue;
+    const zone = zoneForPath(f.path), z = ZONE_BY_ID[zone];
+    const id = "auto." + f.path.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
+    const ext = (f.path.match(/\.([a-z]+)$/) || [])[1] || "";
+    const kind = { py: "py", ts: "ts", sql: "sql", sh: "sh", yml: "yml", yaml: "docker" }[ext] || (f.path.includes("Dockerfile") ? "docker" : "new");
+    nodes.set(id, {
+      id, zone, col: zone === "storage" ? (kind === "sql" ? 3 : 2) : z.cols[0], kind, label: f.path.split("/").pop(), path: f.path, src: f.path, loc: f.loc || undefined, pkg: "Detected",
+      sub: f.doc || "New file. Not described on the map yet.",
+      about: `${f.doc ? f.doc + " " : ""}Found in the repository at ${F.commit.slice(0, 7)}. Nobody has described it on the map yet, so this block shows only what the generator can read from the file.`,
+      rules: [], items: kind === "sql" ? [...f.tables, ...f.views.map((v) => v + " (view)")] : [], st: "detected", notes: [], unverified: f.parse_error,
+    });
+    autoIds.set(f.path, id); owner.set(f.path, id);
+    change("new", id, `${f.path} is new`);
+  }
+  const have = new Set(edges.map(edgeKey));
+  for (const f of F.files) for (const imp of f.imports) {
+    if (!autoIds.has(f.path) && !autoIds.has(imp)) continue;
+    const from = owner.get(f.path), to = owner.get(imp);
+    if (!from || !to || from === to || have.has(from + "→" + to)) continue;
+    have.add(from + "→" + to); edges.push({ from, to, kind: "call", label: "imports", st: "base" });
+  }
+}
+function updateSource() {
+  const meta = $("meta");
+  meta.textContent = "";
+  meta.append(el("span", { class: "m-repo", text: `${REPO} · ` }), FACTS ? `live @ ${FACTS.commit.slice(0, 7)}` : `snapshot @ ${COMMIT}`);
+  meta.classList.toggle("live", !!FACTS);
+  if (!$("menu-source").hidden) renderSourceMenu();
+}
+function ago(iso) {
+  const t = Date.parse(iso); if (!isFinite(t)) return "at an unknown time";
+  const m = Math.round((Date.now() - t) / 60000);
+  return m < 2 ? "just now" : m < 90 ? `${m} minutes ago` : m < 48 * 60 ? `${Math.round(m / 60)} hours ago` : `${Math.round(m / 1440)} days ago`;
+}
+let mcpNs = null, checkState = "";
+function renderSourceMenu() {
+  const menu = $("menu-source"); menu.textContent = "";
+  menu.append(el("h3", { text: "Where this map comes from" }));
+  if (FACTS) {
+    menu.append(el("p", { class: "src-status live" }, el("b", { text: "Following GitHub main" }), ` · ${FACTS.commit.slice(0, 7)}`),
+      el("p", { class: "src-note", text: `Checked ${ago(FACTS.generated_at)}; that commit is from ${FACTS.commit_date ? FACTS.commit_date.slice(0, 10) : "an unknown date"}. Descriptions are hand-written as of ${COMMIT}; sizes, tables, commands, routes and files are read from the code.` }),
+      el("a", { class: "src-note", href: `https://github.com/${REPO}/commit/${FACTS.commit}`, target: "_blank", rel: "noopener", text: "Open that commit on GitHub" }));
+    menu.append(el("h3", { text: FACT_CHANGES.length ? `Changed since the snapshot (${FACT_CHANGES.length})` : "No structural changes since the snapshot" }));
+    if (FACT_CHANGES.length) menu.append(el("div", { class: "src-changes" }, ...FACT_CHANGES.slice(0, 60).map((c) => el("button", { class: "src-change", onclick: () => { closeMenus(); if (G.nodes.has(c.id)) select(c.id, { fly: true }); } },
+      el("span", { class: `op ${c.type === "new" ? "add" : c.type === "gone" || c.type === "unverified" ? "remove" : "change"}`, text: c.type.toUpperCase() }), el("span", { text: c.text })))));
+  } else {
+    menu.append(el("p", { class: "src-status" }, el("b", { text: "Snapshot" }), ` · ${REPO} @ ${COMMIT}`),
+      el("p", { class: "src-note", text: FACTS_BAD ? "A refresh arrived in a format this page does not accept, so the map stays on its snapshot." : "The map shows the hand-checked snapshot. A scheduled check looks at GitHub main every day at 05:40 UTC; once scripts/gen_system_map.py is merged there, the map follows main by itself." }));
+  }
+  const btn = el("button", { class: "btn", disabled: !mcpNs || checkState === "running" }, "Check GitHub now");
+  const note = el("p", { class: "src-note", text: checkState || (mcpNs ? "Runs the same check immediately in a fresh Claude Code session. It uses a little of your Claude usage." : "Checking on demand works when this map is open on claude.ai.") });
+  btn.onclick = async () => {
+    checkState = "running"; renderSourceMenu();
+    try {
+      await mcpNs.callTool("Claude Code Remote", "fire_trigger", { trigger_id: TRIGGER_ID }, { cache: false });
+      checkState = "Started. If main changed and the generator is there, the map updates here in a few minutes.";
+    } catch (e) {
+      const c = e && e.code;
+      checkState = c === "server_not_connected" ? "The Claude Code Remote connector isn't available for you here."
+        : c === "not_in_manifest" ? "The map isn't allowed to use Claude Code Remote. Allow it from the map's permissions, then try again."
+        : c === "approval_required" ? "The check needs your approval. Press the button again and approve it."
+        : c === "tool_error" ? "The scheduled check refused to start. It may have been paused or deleted."
+        : "Couldn't start the check. Try again later.";
+    }
+    renderSourceMenu();
+  };
+  menu.append(el("div", { class: "actions" }, btn), note);
+}
 
 /* ===================================================================
    RENDER: zones and nodes (DOM), then measure and lay out
@@ -1078,7 +1291,8 @@ let zoneRects = [];
 let worldBounds = { x: 0, y: 0, w: 3000, h: 2200 };
 
 function flagFor(n) {
-  return { planned: "PLANNED", added: "NEW", changed: "CHANGED", removed: "REMOVED", proposed: "PROPOSED", "proposed-change": "PROPOSED", "proposed-remove": "REMOVE?" }[n.st] || (n.st === "ext" ? "OUTSIDE" : "");
+  if (n.unverified) return "UNVERIFIED";
+  return { planned: "PLANNED", detected: "DETECTED", gone: "GONE", added: "NEW", changed: "CHANGED", removed: "REMOVED", proposed: "PROPOSED", "proposed-change": "PROPOSED", "proposed-remove": "REMOVE?" }[n.st] || (n.st === "ext" ? "OUTSIDE" : "");
 }
 function renderNodes() {
   nodesEl.textContent = "";
@@ -1087,7 +1301,7 @@ function renderNodes() {
     const z = ZONE_BY_ID[n.zone];
     const flag = flagFor(n);
     const node = el("div", {
-      class: `node s-${n.st}`, id: domId(n.id), "data-id": n.id, tabindex: "0", role: "button",
+      class: `node s-${n.st}${n.unverified ? " unverified" : ""}`, id: domId(n.id), "data-id": n.id, tabindex: "0", role: "button",
       "aria-label": `${n.label}. ${z.label}. ${n.sub || ""}`,
       style: `--zc: var(--z-${z.id})`,
     },
@@ -1768,6 +1982,17 @@ async function initDb() {
   try { const local = store("eye-map-draft"); if (local) { state.draft = sanitizeDraft(JSON.parse(local)); rebuild(); } } catch (_) { /* ignore */ }
   db = await use("db");
   if (!db) { saveState = "local"; setSaveText(); return; }
+  try {
+    let lastSig = "";
+    db.doc("source/latest").onSnapshot((snap) => {
+      const raw = snap.exists ? snap.data() : null;
+      const f = raw ? sanitizeFacts(raw) : null;
+      const sig = f ? f.commit + f.generated_at : raw ? "bad" : "";
+      if (sig === lastSig) return;
+      lastSig = sig; FACTS = f; FACTS_BAD = !!raw && !f;
+      rebuild(); updateSource();
+    }, () => { /* the snapshot stays on screen */ });
+  } catch (_) { /* the snapshot stays on screen */ }
   try { draftRef = db.doc("drafts/main"); } catch (_) { draftRef = null; return; }
   let first = true;
   draftRef.onSnapshot((snap) => {
@@ -1882,6 +2107,7 @@ function rulesTurn() {
     "Project rules every design must keep:",
     ...INVARIANTS.map((t) => "- " + t),
     "",
+    FACTS ? `Sizes, tables, commands, routes and detected or gone files below are read from GitHub main at ${FACTS.commit.slice(0, 7)}; descriptions are hand-written as of ${COMMIT}. Blocks with status 'detected' are new files nobody has described; 'gone' means the file was deleted.` : `The map is a hand-checked snapshot of ${COMMIT}.`,
     "The map, as JSON (nodes with id, zone, files, what they do and their guarantees; edges as [from, to, kind, label, status]). Kinds: data, write, read, http, trigger, danger, call, contract, cli, build, planned. Status 'planned' means not built yet; 'added', 'removed', 'changed' are the viewer's draft:",
     factsForPrompt(),
     "",
@@ -2176,7 +2402,8 @@ function toggleMenu(btn, menu) {
   const open = menu.hidden; closeMenus();
   if (open) { menu.hidden = false; btn.setAttribute("aria-expanded", "true"); }
 }
-function closeMenus() { for (const [b, m] of [["btn-layers", "menu-layers"], ["btn-tours", "menu-tours"]]) { $(m).hidden = true; $(b).setAttribute("aria-expanded", "false"); } }
+function closeMenus() { for (const [b, m] of [["btn-layers", "menu-layers"], ["btn-tours", "menu-tours"], ["meta", "menu-source"]]) { $(m).hidden = true; $(b).setAttribute("aria-expanded", "false"); } }
+$("meta").onclick = (ev) => { ev.stopPropagation(); const open = $("menu-source").hidden; toggleMenu($("meta"), $("menu-source")); if (open) renderSourceMenu(); };
 $("btn-layers").onclick = (ev) => { ev.stopPropagation(); toggleMenu($("btn-layers"), $("menu-layers")); };
 $("btn-tours").onclick = (ev) => { ev.stopPropagation(); toggleMenu($("btn-tours"), $("menu-tours")); };
 document.addEventListener("pointerdown", (ev) => { if (!ev.target.closest(".menu-wrap")) closeMenus(); });
@@ -2204,7 +2431,7 @@ function updateReadout() {
   const loc = NODES.reduce((s, n) => s + (n.kind === "py" || n.kind === "ts" ? n.loc || 0 : 0), 0);
   const r = $("readout"); if (!r) return; r.textContent = "";
   const row = (k, v, cls) => el("div", null, el("b", { text: k }), cls ? el("span", { class: cls, text: v }) : v);
-  r.append(row("REF", `${REPO} @ ${COMMIT}`), row("BUILD", "Packages 0–5 · 6 source review"), row("MAP", `${NODES.filter((n) => n.status !== "planned").length} parts · ${EDGES.length} links · ${tables} tables`),
+  r.append(row("REF", FACTS ? `${REPO} · live @ ${FACTS.commit.slice(0, 7)}` : `${REPO} · snapshot @ ${COMMIT}`), row("BUILD", "Packages 0–5 · 6 source review"), row("MAP", `${NODES.filter((n) => n.status !== "planned").length} parts · ${EDGES.length} links · ${tables} tables`),
     row("CODE", `≈${(loc / 1000).toFixed(1)}k lines Python + TypeScript`),
     row("MODE", state.mode === "redesign" ? `REDESIGN · ${state.draft.ops.length} change${state.draft.ops.length === 1 ? "" : "s"}` : state.tour ? "TOUR" : "EXPLORE", state.mode === "redesign" ? "mode-edit" : null));
 }
@@ -2256,6 +2483,7 @@ addEventListener("resize", () => { drawMinimap(); });
 
 use("sample").then((s) => { sample = s; sampleReady = true; if (state.tab === "claude") renderChat(); });
 use("comments").then((c) => { comments = c; refreshPanel(); });
+use("mcp").then((m) => { mcpNs = m; if (!$("menu-source").hidden) renderSourceMenu(); });
 initDb();
 setTimeout(() => { if (!sampleReady) { sampleReady = true; renderChat(); } }, 11000);
 })();
