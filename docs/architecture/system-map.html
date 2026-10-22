@@ -1,0 +1,2263 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>EYE System Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a full-screen HUD. Swimlanes run left to right in the order data moves,
+   with the control plane above and build/deploy below; a console docks on the right. */
+:root {
+  color-scheme: dark;
+  --bg: #03070c;
+  --bg-2: #07101b;
+  --panel: rgba(8, 17, 29, 0.94);
+  --panel-hi: rgba(13, 27, 44, 0.96);
+  --line: #14304a;
+  --line-2: #21486b;
+  --fg: #d8e9f7;
+  --muted: #7f99b0;
+  --faint: #4a6479;
+  --accent: #3ee6ff;
+  --accent-soft: rgba(62, 230, 255, 0.14);
+  --blue: #73a9ff;
+  --violet: #a68cff;
+  --amber: #ffb547;
+  --red: #ff5a76;
+  --green: #5effb1;
+  --magenta: #ff66d9;
+  --grid-minor: rgba(62, 230, 255, 0.045);
+  --grid-major: rgba(62, 230, 255, 0.095);
+  --shadow: rgba(0, 0, 0, 0.45);
+  --z-control: #9fb4c9;
+  --z-access: #ff8fa3;
+  --z-sources: #5fdcc4;
+  --z-ingest: #3ee6ff;
+  --z-storage: #73a9ff;
+  --z-workers: #ffb547;
+  --z-api: #48f0d8;
+  --z-wire: #a68cff;
+  --z-browser: #78ffae;
+  --z-build: #8796a8;
+  --display: "Chakra Petch", "Bahnschrift", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --panel-w: 410px;
+}
+html, body { height: 100%; }
+html { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 14px; overflow: hidden; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+#app { height: 100%; display: grid; grid-template-rows: auto 1fr; }
+#main { position: relative; overflow: hidden; min-height: 0; }
+
+/* ---------- header HUD ---------- */
+.hud {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+  padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: linear-gradient(180deg, var(--bg-2), var(--bg));
+  border-bottom: 1px solid var(--line);
+  position: relative; z-index: 30;
+}
+.brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.brand h1 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 20px; letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap; }
+.brand h1 b { color: var(--accent); font-weight: 700; }
+.brand .meta { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud .spacer { flex: 1 1 0; }
+.search { position: relative; flex: 0 1 300px; min-width: 180px; }
+.search input {
+  width: 100%; box-sizing: border-box; background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 4px;
+  padding: 7px 34px 7px 10px; font-family: var(--mono); font-size: 12px;
+}
+.search input::placeholder { color: var(--faint); }
+.search kbd { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-family: var(--mono); font-size: 10px; color: var(--muted); border: 1px solid var(--line-2); border-radius: 3px; padding: 0 5px; }
+.results { position: absolute; left: 0; right: 0; top: calc(100% + 4px); background: var(--panel-hi); border: 1px solid var(--line-2); border-radius: 4px; max-height: 340px; overflow: auto; z-index: 40; box-shadow: 0 12px 30px var(--shadow); }
+.results button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.results button:hover, .results button[aria-selected="true"] { background: var(--accent-soft); }
+.results .r-t { font-family: var(--display); font-weight: 600; font-size: 13px; }
+.results .r-p { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; background: var(--bg-2); border: 1px solid var(--line-2);
+  border-radius: 4px; padding: 6px 11px; font-family: var(--display); font-weight: 600; font-size: 12.5px;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg); white-space: nowrap;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.btn.ghost { background: transparent; }
+.btn.danger { border-color: var(--red); color: var(--red); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; border-color: var(--line-2); color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 4px; overflow: hidden; }
+.seg button { background: var(--bg-2); border: 0; padding: 6px 12px; font-family: var(--display); font-weight: 600; font-size: 12.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.seg button.redesign[aria-pressed="true"] { background: rgba(255, 102, 217, 0.14); color: var(--magenta); }
+.menu-wrap { position: relative; }
+.menu { position: absolute; right: 0; top: calc(100% + 6px); background: var(--panel-hi); border: 1px solid var(--line-2); border-radius: 5px; padding: 8px; min-width: 250px; z-index: 40; box-shadow: 0 14px 34px var(--shadow); }
+.menu h3 { margin: 4px 6px 8px; font-family: var(--display); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.menu label { display: flex; align-items: center; gap: 9px; padding: 6px; border-radius: 3px; cursor: pointer; font-size: 13px; }
+.menu label:hover { background: var(--accent-soft); }
+.menu label small { color: var(--muted); display: block; font-size: 11.5px; }
+.menu input[type="checkbox"] { accent-color: var(--accent); }
+.menu .tour-item { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 3px; padding: 8px 8px; }
+.menu .tour-item:hover { background: var(--accent-soft); }
+.menu .tour-item b { font-family: var(--display); font-weight: 600; font-size: 13.5px; display: block; }
+.menu .tour-item span { color: var(--muted); font-size: 12px; }
+
+/* ---------- stage ---------- */
+#stage {
+  position: absolute; inset: 0; overflow: hidden; touch-action: none; cursor: grab;
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(var(--grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
+    linear-gradient(var(--grid-minor) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-minor) 1px, transparent 1px);
+}
+#stage.panning { cursor: grabbing; }
+#stage { user-select: none; -webkit-user-select: none; }
+#stage::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(0, 0, 0, 0.55) 100%); z-index: 2; }
+#world { position: absolute; left: 0; top: 0; transform-origin: 0 0; --inv: 1; --zinv: 1; }
+#edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+#labels { position: absolute; left: 0; top: 0; pointer-events: none; }
+
+.zone { position: absolute; border: 1px solid color-mix(in srgb, var(--zc) 30%, transparent); border-radius: 8px; background: linear-gradient(180deg, color-mix(in srgb, var(--zc) 7%, transparent), color-mix(in srgb, var(--zc) 2%, transparent) 240px); }
+.zone-head { position: absolute; left: 18px; top: 14px; right: 18px; transform-origin: 0 0; }
+.zone-title { font-family: var(--display); font-weight: 700; font-size: 17px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--zc); white-space: nowrap; }
+.zone-title .step { color: var(--faint); margin-right: 8px; letter-spacing: 0.05em; }
+.zone-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zone-mark { position: absolute; left: 0; right: 0; top: 45%; text-align: center; font-family: var(--display); font-weight: 700; font-size: 110px; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in srgb, var(--zc) 6%, transparent); pointer-events: none; opacity: 0; transition: opacity 0.3s; white-space: nowrap; overflow: hidden; }
+
+.node {
+  position: absolute; width: 270px; box-sizing: border-box; padding: 11px 13px 12px;
+  background: linear-gradient(180deg, var(--panel-hi), var(--panel));
+  border: 1px solid color-mix(in srgb, var(--zc) 42%, transparent); border-radius: 4px;
+  box-shadow: 0 10px 26px var(--shadow); cursor: pointer; user-select: none; -webkit-user-select: none;
+  transition: opacity 0.22s, border-color 0.2s, box-shadow 0.2s;
+  overflow: hidden;
+}
+.node::before, .node::after { content: ""; position: absolute; width: 10px; height: 10px; border-color: var(--zc); border-style: solid; opacity: 0.85; }
+.node::before { left: 0; top: 0; border-width: 2px 0 0 2px; }
+.node::after { right: 0; bottom: 0; border-width: 0 2px 2px 0; }
+.node:hover { border-color: color-mix(in srgb, var(--zc) 80%, transparent); }
+.node:focus-visible { outline-offset: 3px; }
+.n-head { display: flex; align-items: flex-start; gap: 8px; }
+.n-tag { flex: none; font-family: var(--mono); font-size: 9.5px; font-weight: 500; letter-spacing: 0.06em; color: var(--zc); border: 1px solid color-mix(in srgb, var(--zc) 55%, transparent); border-radius: 2px; padding: 1px 4px; margin-top: 2px; }
+.n-title { font-family: var(--display); font-weight: 600; font-size: 16px; line-height: 1.2; text-wrap: balance; }
+.n-flag { margin-left: auto; flex: none; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em; padding: 1px 5px; border-radius: 2px; }
+.n-path { font-family: var(--mono); font-size: 10.5px; color: var(--muted); margin-top: 5px; overflow-wrap: anywhere; }
+.n-sub { font-size: 12.5px; line-height: 1.42; color: color-mix(in srgb, var(--fg) 86%, transparent); margin-top: 6px; }
+.n-items { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 0; padding: 0; list-style: none; }
+.n-items li { font-family: var(--mono); font-size: 10px; color: color-mix(in srgb, var(--zc) 85%, var(--fg)); border: 1px solid var(--line-2); border-radius: 2px; padding: 1px 5px; background: rgba(0, 0, 0, 0.25); }
+.n-notes { margin-top: 8px; font-size: 12px; color: var(--amber); border-left: 2px solid var(--amber); padding-left: 7px; }
+
+.node.s-planned { border-style: dashed; opacity: 0.6; background: rgba(8, 17, 29, 0.6); }
+.node.s-planned .n-flag { color: var(--muted); border: 1px solid var(--line-2); }
+.node.s-ext { border-style: dotted; }
+.node.s-added { border: 1px dashed var(--green); }
+.node.s-added .n-flag { color: var(--bg); background: var(--green); }
+.node.s-changed .n-flag { color: var(--bg); background: var(--amber); }
+.node.s-removed { opacity: 0.5; border-color: var(--red); }
+.node.s-removed .n-title { text-decoration: line-through; text-decoration-color: var(--red); }
+.node.s-removed .n-flag { color: var(--bg); background: var(--red); }
+.node.s-proposed, .node.s-proposed-change, .node.s-proposed-remove { border: 1px dashed var(--magenta); box-shadow: 0 0 0 1px rgba(255, 102, 217, 0.3), 0 0 26px rgba(255, 102, 217, 0.25); }
+.node.s-proposed .n-flag, .node.s-proposed-change .n-flag, .node.s-proposed-remove .n-flag { color: var(--bg); background: var(--magenta); }
+.node.s-proposed-remove .n-title { text-decoration: line-through; text-decoration-color: var(--magenta); }
+
+.node.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 30px rgba(62, 230, 255, 0.35), 0 10px 26px var(--shadow); }
+.node.up { border-color: color-mix(in srgb, var(--blue) 80%, transparent); }
+.node.down { border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
+.node.dim { opacity: 0.14; }
+.node.s-planned.dim { opacity: 0.08; }
+.node.picking { outline: 2px dashed var(--magenta); outline-offset: 4px; }
+.node.dragging { cursor: grabbing; box-shadow: 0 0 0 1px var(--magenta), 0 18px 40px var(--shadow); transition: none; }
+.edit .node { cursor: grab; }
+
+/* semantic zoom: far away, details hide and titles hold a readable screen size */
+#world.far .n-path, #world.far .n-sub, #world.far .n-items, #world.far .n-notes, #world.far .n-tag { visibility: hidden; }
+#world.far .n-head { position: absolute; inset: 0; align-items: center; justify-content: center; text-align: center; padding: 8px 12px; }
+#world.far .n-title { font-size: min(calc(13px * var(--inv)), 30px); line-height: 1.05; }
+#world.far .n-flag { display: none; }
+#world.far .zone-head { transform: scale(var(--zinv)); }
+#world.far .zone-sub { visibility: hidden; }
+#world.far .zone-mark { opacity: 1; }
+
+/* edges */
+path.edge { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; opacity: 0.5; transition: opacity 0.2s; }
+.arrow { opacity: 0.6; transition: opacity 0.2s; }
+path.flow { fill: none; stroke-width: 2; vector-effect: non-scaling-stroke; stroke-dasharray: 3 14; opacity: 0; animation: march 1.1s linear infinite; }
+@keyframes march { to { stroke-dashoffset: -17; } }
+.k-data { stroke: var(--accent); fill: var(--accent); }
+.k-write { stroke: #39c8e8; fill: #39c8e8; }
+.k-read { stroke: var(--blue); fill: var(--blue); }
+.k-http { stroke: var(--accent); fill: var(--accent); }
+path.edge.k-http { stroke-width: 2.4; }
+.k-trigger { stroke: var(--amber); fill: var(--amber); }
+path.edge.k-trigger { stroke-dasharray: 2 5; }
+.k-call { stroke: #8fa6bb; fill: #8fa6bb; }
+path.edge.k-call { opacity: 0.32; }
+.k-contract { stroke: var(--violet); fill: var(--violet); }
+path.edge.k-contract { stroke-dasharray: 7 5; }
+.k-cli { stroke: #9fd8b0; fill: #9fd8b0; }
+path.edge.k-cli { stroke-dasharray: 3 6; opacity: 0.35; }
+.k-build { stroke: #8796a8; fill: #8796a8; }
+path.edge.k-build { stroke-dasharray: 5 6; opacity: 0.35; }
+.k-planned { stroke: #5c7891; fill: #5c7891; }
+path.edge.k-planned { stroke-dasharray: 4 7; opacity: 0.4; }
+.k-danger { stroke: var(--red); fill: var(--red); }
+.flow.k-data, .flow.k-write, .flow.k-read, .flow.k-http { opacity: 0.35; }
+path.edge.st-added { stroke: var(--green); stroke-dasharray: 6 4; opacity: 0.85; }
+.arrow.st-added { fill: var(--green); }
+path.edge.st-removed { stroke: var(--red); stroke-dasharray: 2 6; opacity: 0.6; }
+.arrow.st-removed { fill: var(--red); }
+path.edge.st-proposed { stroke: var(--magenta); stroke-dasharray: 6 4; opacity: 0.95; }
+.arrow.st-proposed { fill: var(--magenta); }
+path.edge.st-proposed-remove { stroke: var(--magenta); stroke-dasharray: 2 6; opacity: 0.8; }
+.has-focus path.edge, .has-focus .arrow { opacity: 0.05; }
+.has-focus .flow { opacity: 0; }
+.has-focus path.edge.hl { opacity: 1; stroke-width: 2.2; }
+.has-focus .arrow.hl { opacity: 1; }
+.has-focus .flow.hl { opacity: 0.95; stroke-width: 2.6; }
+.has-focus .flow.hl.k-call, .has-focus .flow.hl.k-cli, .has-focus .flow.hl.k-build { opacity: 0.6; }
+.edge-label {
+  position: absolute; transform: translate(-50%, -50%) scale(var(--inv)); font-family: var(--mono); font-size: 10.5px;
+  white-space: nowrap; background: rgba(3, 7, 12, 0.86); border: 1px solid var(--line-2); border-radius: 3px; padding: 1px 6px; color: var(--fg);
+}
+.particle { fill: var(--accent); filter: drop-shadow(0 0 4px var(--accent)); }
+
+/* overlays on the stage */
+.ui { position: absolute; z-index: 5; }
+.readout { font-family: var(--mono); font-size: 11px; color: var(--muted); line-height: 1.7; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.readout b { color: var(--accent); font-weight: 500; display: inline-block; width: 48px; }
+.readout .mode-edit { color: var(--magenta); }
+.zoombar { left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 6px; align-items: center; }
+.zoombar .btn { padding: 6px 9px; }
+.zoombar .pct { font-family: var(--mono); font-size: 11px; color: var(--muted); min-width: 44px; text-align: center; }
+.legend { left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(60px + env(safe-area-inset-bottom, 0px)); background: var(--panel); border: 1px solid var(--line-2); border-radius: 5px; padding: 10px 12px; width: 290px; max-height: calc(100% - 90px); overflow: auto; box-sizing: border-box; font-size: 12px; }
+.legend h3 { margin: 0 0 6px; font-family: var(--display); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+.legend ul { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 4px; }
+.legend li { display: flex; align-items: center; gap: 9px; }
+.legend svg { flex: none; }
+.legend .sw { width: 18px; height: 12px; border-radius: 2px; flex: none; }
+.minimap { right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); width: 210px; height: 150px; background: rgba(3, 7, 12, 0.85); border: 1px solid var(--line-2); border-radius: 4px; cursor: crosshair; }
+.has-panel .minimap { right: calc(var(--panel-w) + 16px); }
+.toolbar { left: 50%; top: 14px; transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; align-items: center; background: rgba(12, 5, 14, 0.88); border: 1px solid var(--magenta); border-radius: 6px; padding: 7px; max-width: calc(100% - 32px); box-shadow: 0 0 30px rgba(255, 102, 217, 0.18); }
+.toolbar .btn { border-color: rgba(255, 102, 217, 0.5); }
+.toolbar .btn:hover { color: var(--magenta); border-color: var(--magenta); }
+.toolbar .hint { font-family: var(--mono); font-size: 11px; color: var(--magenta); padding: 0 6px; }
+.toast { left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--panel-hi); border: 1px solid var(--accent); border-radius: 5px; padding: 8px 14px; font-size: 13px; max-width: min(520px, calc(100% - 32px)); box-shadow: 0 10px 30px var(--shadow); }
+.intro { left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(520px, calc(100% - 32px)); box-sizing: border-box; background: var(--panel-hi); border: 1px solid var(--accent); border-radius: 6px; padding: 20px 22px; box-shadow: 0 0 60px rgba(62, 230, 255, 0.15), 0 20px 50px var(--shadow); z-index: 20; }
+.intro h2 { margin: 0 0 8px; font-family: var(--display); font-size: 20px; letter-spacing: 0.08em; text-transform: uppercase; }
+.intro p { margin: 0 0 10px; line-height: 1.55; color: color-mix(in srgb, var(--fg) 88%, transparent); }
+.intro ul { margin: 0 0 14px; padding-left: 18px; line-height: 1.7; }
+.intro .row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.tourbar { left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); width: min(640px, calc(100% - 32px)); box-sizing: border-box; background: var(--panel-hi); border: 1px solid var(--accent); border-radius: 6px; padding: 14px 16px; box-shadow: 0 0 40px rgba(62, 230, 255, 0.16), 0 14px 34px var(--shadow); }
+.has-panel .tourbar { left: calc((100% - var(--panel-w)) / 2); width: min(640px, calc(100% - var(--panel-w) - 32px)); }
+.tourbar .t-top { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); }
+.tourbar .t-top .count { color: var(--muted); margin-left: auto; font-family: var(--mono); letter-spacing: 0; }
+.tourbar .progress { height: 2px; background: var(--line); margin: 8px 0 10px; }
+.tourbar .progress i { display: block; height: 100%; background: var(--accent); transition: width 0.3s; }
+.tourbar p { margin: 0 0 12px; line-height: 1.55; font-size: 14px; }
+.tourbar .row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.modal-back { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.55); z-index: 50; display: grid; place-items: center; padding: 16px; }
+.modal { width: min(440px, 100%); box-sizing: border-box; background: var(--panel-hi); border: 1px solid var(--magenta); border-radius: 6px; padding: 18px; box-shadow: 0 20px 50px var(--shadow); }
+.modal h2 { margin: 0 0 12px; font-family: var(--display); font-size: 16px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--magenta); }
+.field { display: grid; gap: 5px; margin-bottom: 12px; }
+.field label { font-family: var(--display); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.field input, .field select, .field textarea, .composer textarea, .handoff textarea {
+  background: var(--bg); border: 1px solid var(--line-2); border-radius: 4px; padding: 8px 10px; width: 100%; box-sizing: border-box; font-size: 13px;
+}
+.field textarea { min-height: 70px; resize: vertical; }
+.modal .row { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ---------- console panel ---------- */
+#panel {
+  position: absolute; right: 0; top: 0; bottom: 0; width: var(--panel-w); z-index: 10; box-sizing: border-box;
+  background: rgba(5, 11, 19, 0.97); border-left: 1px solid var(--line-2); display: flex; flex-direction: column;
+  box-shadow: -20px 0 40px var(--shadow);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+.p-tabs { display: flex; align-items: stretch; border-bottom: 1px solid var(--line); flex: none; }
+.p-tabs button[role="tab"] { flex: 1; background: none; border: 0; border-bottom: 2px solid transparent; padding: 11px 6px 9px; font-family: var(--display); font-weight: 600; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.p-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.p-tabs .badge { display: inline-block; min-width: 16px; padding: 0 4px; margin-left: 4px; border-radius: 8px; background: var(--magenta); color: var(--bg); font-family: var(--mono); font-size: 10px; letter-spacing: 0; }
+.p-close { background: none; border: 0; border-left: 1px solid var(--line); padding: 0 14px; color: var(--muted); font-size: 18px; }
+.p-close:hover { color: var(--accent); }
+.pane { flex: 1; overflow: auto; padding: 16px 18px 24px; min-height: 0; }
+.pane[hidden] { display: none !important; }
+#pane-claude { display: flex; flex-direction: column; padding: 0; }
+.eyebrow { font-family: var(--display); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; }
+.i-title { margin: 4px 0 6px; font-family: var(--display); font-weight: 600; font-size: 22px; line-height: 1.15; text-wrap: balance; }
+.i-path { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.i-path a { color: var(--accent); }
+.badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 12px; }
+.bdg { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line-2); border-radius: 3px; padding: 2px 6px; color: var(--muted); }
+.bdg.hot { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.bdg.mag { color: var(--magenta); border-color: color-mix(in srgb, var(--magenta) 50%, transparent); }
+.i-about { line-height: 1.6; margin: 0 0 14px; max-width: 65ch; }
+.i-sec { margin: 18px 0 8px; font-family: var(--display); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.i-sec::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.rules { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.rules li { position: relative; padding-left: 16px; line-height: 1.5; font-size: 13px; }
+.rules li::before { content: ""; position: absolute; left: 2px; top: 0.55em; width: 6px; height: 6px; border: 1px solid var(--accent); transform: rotate(45deg); }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chips span { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line-2); border-radius: 3px; padding: 2px 6px; }
+.links { display: grid; gap: 4px; }
+.link-row { display: grid; grid-template-columns: 14px 1fr; gap: 8px; align-items: start; background: none; border: 1px solid transparent; border-radius: 4px; padding: 6px 6px; text-align: left; }
+.link-row:hover { border-color: var(--line-2); background: var(--accent-soft); }
+.link-row .dot { width: 10px; height: 2px; margin-top: 8px; border-radius: 1px; }
+.link-row b { font-family: var(--display); font-weight: 600; font-size: 13.5px; display: block; }
+.link-row span { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.trace-toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); margin-left: auto; cursor: pointer; }
+.handoff { border: 1px solid var(--line-2); border-radius: 5px; padding: 12px; background: rgba(0, 0, 0, 0.25); }
+.handoff p { margin: 0 0 8px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.handoff textarea { min-height: 64px; resize: vertical; margin-bottom: 8px; }
+.handoff .status { font-size: 12px; margin-top: 8px; line-height: 1.5; }
+.ok { color: var(--green); } .warn { color: var(--amber); } .bad { color: var(--red); }
+.copybox { width: 100%; box-sizing: border-box; min-height: 90px; margin-top: 8px; background: var(--bg); border: 1px solid var(--line-2); border-radius: 4px; padding: 8px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+.chat-ctx { flex: none; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.ctx-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--accent); color: var(--accent); border-radius: 12px; padding: 2px 4px 2px 10px; font-family: var(--display); font-weight: 600; font-size: 12px; }
+.ctx-chip button { background: none; border: 0; color: inherit; padding: 0 5px; font-size: 14px; line-height: 1; }
+.chat-log { flex: 1; overflow: auto; padding: 14px 16px; display: grid; align-content: start; gap: 14px; min-height: 0; }
+.msg { line-height: 1.58; font-size: 13.5px; max-width: 100%; min-width: 0; }
+.msg.user { justify-self: end; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 8px 8px 2px 8px; padding: 8px 12px; max-width: 88%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.user .about { display: block; font-family: var(--mono); font-size: 10px; color: var(--muted); margin-bottom: 3px; }
+.msg.ai { border-left: 2px solid var(--accent); padding: 2px 0 2px 12px; }
+.msg.ai p { margin: 0 0 8px; }
+.msg.ai ul, .msg.ai ol { margin: 0 0 8px; padding-left: 20px; }
+.msg.ai li { margin-bottom: 3px; }
+.msg.ai h4 { margin: 10px 0 6px; font-family: var(--display); font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.msg.ai code { font-family: var(--mono); font-size: 12px; background: rgba(62, 230, 255, 0.08); border-radius: 3px; padding: 0 4px; }
+.msg.ai pre { font-family: var(--mono); font-size: 11.5px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 8px; overflow: auto; }
+.msg.ai .thinking { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+.msg.ai .thinking::after { content: "▍"; animation: blink 1s steps(2) infinite; color: var(--accent); }
+@keyframes blink { 50% { opacity: 0; } }
+.msg .err { color: var(--amber); font-size: 12.5px; }
+.nchip { display: inline; background: none; border: 0; border-bottom: 1px dashed var(--accent); color: var(--accent); padding: 0; font-family: var(--display); font-weight: 600; font-size: 13px; }
+.proposal { margin-top: 8px; border: 1px dashed var(--magenta); border-radius: 5px; padding: 10px; background: rgba(255, 102, 217, 0.05); }
+.proposal h5 { margin: 0 0 6px; font-family: var(--display); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--magenta); }
+.proposal ul { margin: 0 0 8px; padding-left: 18px; font-size: 12.5px; }
+.proposal .row { display: flex; flex-wrap: wrap; gap: 6px; }
+.suggest { display: flex; flex-wrap: wrap; gap: 6px; }
+.suggest button { background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 14px; padding: 4px 11px; font-size: 12.5px; }
+.suggest button:hover { border-color: var(--accent); color: var(--accent); }
+.composer { flex: none; border-top: 1px solid var(--line); padding: 10px 16px calc(12px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 8px; }
+.composer textarea { min-height: 54px; max-height: 160px; resize: vertical; }
+.composer .row { display: flex; gap: 8px; align-items: center; }
+.composer .note { font-size: 11.5px; color: var(--muted); margin-right: auto; }
+.unavail { margin: 16px; padding: 12px; border: 1px solid var(--line-2); border-radius: 5px; font-size: 13px; line-height: 1.55; color: var(--muted); }
+
+.ops { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.ops li { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: start; border: 1px solid var(--line); border-radius: 4px; padding: 7px 8px; font-size: 12.5px; line-height: 1.45; }
+.ops .op { font-family: var(--mono); font-size: 10px; padding: 1px 5px; border-radius: 2px; color: var(--bg); margin-top: 2px; }
+.ops .op.add { background: var(--green); } .ops .op.remove { background: var(--red); } .ops .op.change { background: var(--amber); } .ops .op.note { background: var(--blue); } .ops .op.link { background: var(--accent); }
+.ops button { background: none; border: 0; color: var(--muted); font-size: 15px; padding: 0 4px; }
+.ops button:hover { color: var(--red); }
+.empty { color: var(--muted); font-size: 13px; line-height: 1.55; }
+.save-state { font-size: 12px; color: var(--muted); margin: 6px 0 12px; line-height: 1.5; }
+
+@media (max-width: 760px) {
+  :root { --panel-w: 100%; }
+  .brand .meta, .minimap, .search kbd, .hud .spacer { display: none; }
+  .hud { gap: 8px; }
+  .brand { flex: 1 1 auto; }
+  .brand h1 { font-size: 16px; letter-spacing: 0.1em; }
+  #btn-claude { order: 1; }
+  #wrap-layers { order: 2; }
+  #wrap-tours { order: 3; }
+  .hud .seg { order: 4; margin-left: auto; }
+  .btn, .seg button { padding: 6px 9px; font-size: 11.5px; }
+  .search { order: 10; flex: 1 1 100%; }
+  #panel { top: auto; height: 62%; width: 100%; border-left: 0; border-top: 1px solid var(--line-2); }
+  .has-panel .tourbar { left: 50%; width: calc(100% - 32px); bottom: calc(62% + 10px); }
+  .has-panel .zoombar, .has-panel .legend { display: none; }
+  .toolbar { top: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow { animation: none; }
+  .node, .edge, .arrow, .zone-mark { transition: none; }
+  .msg.ai .thinking::after { animation: none; }
+}
+</style>
+
+<div id="app">
+  <header class="hud">
+    <div class="brand">
+      <h1>EYE <b>◆</b> System Map</h1>
+      <span class="meta" id="meta">cybertempo/eye · main @ f53afbc</span>
+    </div>
+    <div class="search">
+      <label class="sr" for="search">Find a component</label>
+      <input id="search" type="search" autocomplete="off" spellcheck="false" placeholder="Find a component, file or table" aria-controls="results" aria-autocomplete="list">
+      <kbd>/</kbd>
+      <div class="results" id="results" role="listbox" hidden></div>
+    </div>
+    <div class="spacer"></div>
+    <div class="menu-wrap" id="wrap-layers">
+      <button class="btn" id="btn-layers" aria-haspopup="true" aria-expanded="false">Layers</button>
+      <div class="menu" id="menu-layers" hidden></div>
+    </div>
+    <div class="menu-wrap" id="wrap-tours">
+      <button class="btn" id="btn-tours" aria-haspopup="true" aria-expanded="false">Tours</button>
+      <div class="menu" id="menu-tours" hidden></div>
+    </div>
+    <div class="seg" role="group" aria-label="Mode">
+      <button id="mode-explore" aria-pressed="true">Explore</button>
+      <button id="mode-redesign" class="redesign" aria-pressed="false">Redesign</button>
+    </div>
+    <button class="btn primary" id="btn-claude">Ask Claude</button>
+  </header>
+
+  <div id="main">
+  <div id="stage">
+    <div id="world">
+      <div id="zones"></div>
+      <svg id="edges" xmlns="http://www.w3.org/2000/svg"><g id="edge-g"></g><g id="flow-g"></g><g id="particle-g"></g></svg>
+      <div id="nodes"></div>
+      <div id="labels"></div>
+    </div>
+
+    <div class="ui toolbar" id="toolbar" hidden>
+      <button class="btn" id="tb-add">+ Component</button>
+      <button class="btn" id="tb-link">Link</button>
+      <button class="btn" id="tb-note">Note</button>
+      <button class="btn" id="tb-remove">Remove</button>
+      <button class="btn" id="tb-undo">Undo</button>
+      <span class="hint" id="tb-hint">Drag blocks to rearrange · select one to edit it</span>
+    </div>
+    <div class="ui legend" id="legend" hidden></div>
+    <div class="ui zoombar">
+      <button class="btn" id="z-out" aria-label="Zoom out">−</button>
+      <span class="pct" id="z-pct">100%</span>
+      <button class="btn" id="z-in" aria-label="Zoom in">+</button>
+      <button class="btn" id="z-fit">Fit</button>
+      <button class="btn ghost" id="z-legend" aria-expanded="false">Legend</button>
+    </div>
+    <canvas class="ui minimap" id="minimap" width="420" height="300" aria-label="Minimap: click to move the view"></canvas>
+    <div class="ui tourbar" id="tourbar" hidden></div>
+    <div class="ui toast" id="toast" role="status" hidden></div>
+    <div class="ui intro" id="intro" hidden>
+      <h2>EYE, laid out</h2>
+      <p>This is the whole public EYE codebase as one map. Data moves left to right: synthetic sources are captured, stored as evidence in PostgreSQL, turned into tracks and counts by workers, and served through a bounded API to the THEATRE and DESK views.</p>
+      <ul>
+        <li>Scroll or pinch to zoom. Drag the background to pan.</li>
+        <li>Click any block to see what it does, what feeds it and what it feeds.</li>
+        <li><b>Ask Claude</b> about anything on the map, or switch to <b>Redesign</b> to change it.</li>
+      </ul>
+      <div class="row">
+        <button class="btn primary" id="intro-tour">Follow one capture</button>
+        <button class="btn" id="intro-close">Explore on my own</button>
+      </div>
+    </div>
+  </div>
+
+    <aside id="panel" hidden aria-label="Console">
+      <div class="p-tabs" role="tablist">
+        <button role="tab" id="tab-node" aria-selected="true" aria-controls="pane-node">Component</button>
+        <button role="tab" id="tab-claude" aria-selected="false" aria-controls="pane-claude">Claude</button>
+        <button role="tab" id="tab-draft" aria-selected="false" aria-controls="pane-draft">Draft<span class="badge" id="draft-badge" hidden>0</span></button>
+        <button class="p-close" id="p-close" aria-label="Close console">×</button>
+      </div>
+      <section class="pane" id="pane-node" role="tabpanel" aria-labelledby="tab-node"></section>
+      <section class="pane" id="pane-claude" role="tabpanel" aria-labelledby="tab-claude" hidden>
+        <div class="chat-ctx" id="chat-ctx"></div>
+        <div class="chat-log" id="chat-log" aria-live="polite"></div>
+        <div class="composer" id="composer">
+          <label class="sr" for="chat-input">Message Claude</label>
+          <textarea id="chat-input" placeholder="Ask about the architecture, or describe a change you want…"></textarea>
+          <div class="row">
+            <span class="note" id="chat-note">Enter sends · Shift+Enter for a new line</span>
+            <button class="btn" id="chat-clear">Clear</button>
+            <button class="btn" id="chat-stop" hidden>Stop</button>
+            <button class="btn primary" id="chat-send">Send</button>
+          </div>
+        </div>
+      </section>
+      <section class="pane" id="pane-draft" role="tabpanel" aria-labelledby="tab-draft" hidden></section>
+    </aside>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+/* ===================================================================
+   DATA: the EYE repository at main @ f53afbc, read from its source.
+   Every component, file, table and link below exists in that commit,
+   except blocks marked planned (named packages with no code yet).
+   =================================================================== */
+const REPO = "cybertempo/eye";
+const COMMIT = "f53afbc";
+const GH = (p) => `https://github.com/${REPO}/blob/${COMMIT}/${p}`;
+
+const ZONES = [
+  { id: "control", band: "top", cols: [0, 3], label: "Control plane", sub: "one config file · one command line · the rules" },
+  { id: "access", band: "top", cols: [5, 7], label: "Edge", sub: "what sits in front of the API: you, the private gateway, optional AI" },
+  { id: "sources", band: "main", cols: [0, 0], step: "01", label: "Sources", sub: "synthetic fixtures only; real feeds stay off" },
+  { id: "ingest", band: "main", cols: [1, 1], step: "02", label: "Ingest", sub: "archive → commit → replay" },
+  { id: "storage", band: "main", cols: [2, 3], step: "03", label: "Storage", sub: "PostgreSQL 17 + PostGIS 3.5 · schema eye · 10 forward-only migrations" },
+  { id: "workers", band: "main", cols: [4, 4], step: "04", label: "Workers", sub: "derivations · lifecycle · research" },
+  { id: "api", band: "main", cols: [5, 5], step: "05", label: "API", sub: "loopback · bounded · authenticated" },
+  { id: "wire", band: "main", cols: [6, 6], step: "06", label: "Wire contract", sub: "eye.wire/4 · one schema, both sides" },
+  { id: "browser", band: "main", cols: [7, 7], step: "07", label: "Browser", sub: "THEATRE globe · DESK panel" },
+  { id: "build", band: "bottom", cols: [0, 7], label: "Build · verify · deploy", sub: "developer laptop and CI · synthetic data only · nothing opens a browser" },
+];
+const ZONE_BY_ID = Object.fromEntries(ZONES.map((z) => [z.id, z]));
+
+// kind -> tag shown on the block
+const TAGS = { py: "PY", ts: "TS", sql: "SQL", json: "JSON", toml: "TOML", sh: "SH", yml: "CI", doc: "DOC", ext: "EXT", planned: "PLAN", docker: "OCI", new: "NEW" };
+
+const NODES = [
+  // ---- control plane
+  { id: "ctl.config", zone: "control", col: 0, kind: "toml", label: "Configuration", path: "config/eye.example.toml · backend/eye/config.py", src: "backend/eye/config.py", loc: 464, pkg: "Package 0",
+    sub: "Every setting in one TOML file; unsafe combinations stop the process before a socket opens.",
+    about: "One TOML file holds every setting: runtime mode, bind address, API bounds, the default view, the auth adapter, fixture paths, the name of the database URL variable, providers, retention and research parameters. The loader rejects unknown keys and any combination that would weaken the public/private boundary.",
+    rules: ["Demo mode refuses a non-loopback bind_host (exit 2)", "providers.enabled must stay empty: no real source has an approved policy row", "Production without the private auth adapter is refused (exit 2 or 3)", "api.ws_max_buffer_bytes must be at least server.max_response_bytes", "No secret lives in the file, only variable names: EYE_DATABASE_URL, EYE_BACKUP_DIR, EYE_RESTORE_DATABASE_URL"],
+    items: ["runtime", "server", "api", "view", "auth", "data", "database", "providers", "retention", "research"] },
+  { id: "ctl.cli", zone: "control", col: 1, kind: "py", label: "Command line", path: "python -m eye · backend/eye/__main__.py", src: "backend/eye/__main__.py", loc: 536, pkg: "Packages 0–5",
+    sub: "The single entry point: 16 commands, each checks config, auth and database identity first.",
+    about: "Every command loads configuration, resolves the auth port and checks the database's identity claim before it runs one job: serve, migrate, load fixtures, derive transits, replay, roll up, back up, plan or execute retention, or backtest.",
+    rules: ["Exit codes: 0 ok · 2 configuration refused · 3 auth refused · 4 startup refused · 5 database failed", "Only db-migrate and db-prepare-demo may claim a database; db-status only reads", "A failed identity check is UNVERIFIED (exit 5), never a pass", "Prints the URL for you to open; never opens a browser"],
+    items: ["check-config", "serve", "db-migrate", "db-status", "db-load-fixtures", "db-derive-transits", "db-prepare-demo", "db-replay", "db-rollup", "db-manifest-check", "db-backup", "db-restore-drill", "db-retention-plan", "db-retention-execute", "db-backtest", "db-backtest-replay"] },
+  { id: "ctl.docs", zone: "control", col: 2, kind: "doc", label: "Brief, ADRs and agent rules", path: "docs/public-repo-build-brief.md · docs/adr/ · CLAUDE.md", src: "docs/public-repo-build-brief.md", pkg: "Packages 0–5",
+    sub: "The design brief and nine decision records that bound what every part may do.",
+    about: "The implementation brief, nine architecture decision records and the agent rules. They define the public/private boundary, the accuracy-first release priority and the acceptance gate of every work package.",
+    rules: ["Deterministic facts stay separate from AI prose", "Real adapters stay off until their source-policy row is approved", "Production never falls back to fake auth", "A failed query or test instrument is UNVERIFIED, never evidence of absence"],
+    items: ["0001 foundation", "0002 contracts", "0003 synthetic AIS", "0004 browser + API", "0005 event ledger", "0006 news + media", "0007 lifecycle", "0008 backtester", "0009 database identity"] },
+  { id: "ctl.policy", zone: "control", col: 3, kind: "doc", label: "Source-policy register", path: "docs/source-policy-register.md", src: "docs/source-policy-register.md", pkg: "Package 0, 6",
+    sub: "One row per data source. Without an approved row, an adapter stays disabled.",
+    about: "Each row records the endpoint, terms URL and review date, permitted purpose, quota arithmetic, storage and redistribution rights, attribution, credential handling, egress and the disable switch. Four synthetic sources are approved for demo and tests. Copernicus Sentinel-2 L2A is a disabled candidate.",
+    rules: ["Unknown rights or no enforceable quota → disabled", "No paid request or global bulk download in any default command or CI run"],
+    items: ["synthetic-fixture ✓", "synthetic-ais ✓", "synthetic-events ✓", "synthetic-news ✓", "sentinel-2-l2a · candidate"] },
+  { id: "ext.viewer", zone: "access", col: 7, kind: "ext", status: "ext", label: "You, in a browser", path: "http://127.0.0.1:8765/", pkg: "Package 3",
+    sub: "The demo is reachable only on loopback. You open the URL yourself.",
+    about: "The synthetic demo binds to 127.0.0.1 and needs no account. In the private deployment, people will instead reach EYE through the lab gateway over HTTPS.",
+    rules: ["No anonymous internet route and no public demo backed by the owner's server"] },
+  { id: "plan.gateway", zone: "access", col: 5, kind: "planned", status: "planned", label: "Private lab gateway and shared login", path: "Package 8 · private server only", pkg: "Package 8",
+    sub: "Checks every request with /_auth and forwards only on 204. Not in this repository.",
+    about: "In the private deployment the lab gateway calls /_auth for every path except the exact /login and /invite routes and forwards only on 204. The lablogin and lab-eligible code supplies the private auth adapter. None of it is in the public repository.",
+    rules: ["Fails closed on helper error or timeout", "Every open socket rechecks its session; revocation stops delivery within 60 seconds", "Proved from a tunnel client on the owner's server, never by CI"] },
+  { id: "plan.brain", zone: "access", col: 6, kind: "planned", status: "planned", label: "eye-brain model gateway", path: "Package 7 · disabled by default", pkg: "Package 7",
+    sub: "Optional AI that summarizes validated evidence packets. It never creates facts.",
+    about: "Every runtime model call would go through this gateway: a versioned task-to-model policy, evidence validation, budget refusal before any call, an append-only request ledger and visible failure states. The core application works when it is off.",
+    rules: ["Cannot create observed positions, dimensions, event outcomes, crowd counts or eclipse times", "Answers carry their evidence ids, time, scope and uncertainty", "The public demo uses recorded or mock responses only"] },
+
+  // ---- sources
+  { id: "src.captures", zone: "sources", col: 0, kind: "json", label: "Synthetic capture batches", path: "tests/fixtures/synthetic/captures/", src: "tests/fixtures/synthetic/captures/001-flight-ok.json", pkg: "Package 1",
+    sub: "Eight invented batches for flights, vessels and roads, one per coverage case.",
+    about: "Each batch exercises a coverage case: a full capture, a partial one, a timeout, a late correction, a duplicate delivery, an indeterminate road, a measured zero and an all-rejected batch.",
+    rules: ["Source synthetic-fixture: approved for demo and tests only", "Loaded only in demo mode"],
+    items: ["flight ok", "vessel partial", "vessel timeout", "vessel correction", "flight duplicate", "road indeterminate", "measured zero", "all rejected"] },
+  { id: "src.ais", zone: "sources", col: 0, kind: "json", label: "Synthetic AIS reports", path: "tests/fixtures/synthetic/ais/ · scripts/gen_ais_fixtures.py", src: "scripts/gen_ais_fixtures.py", loc: 413, pkg: "Package 2",
+    sub: "Invented vessel positions, generated by script. 17 scenario folders.",
+    about: "Invented vessel position reports in format synthetic-ais/1, with vessel ids prefixed SYNV-. A script generates them and verify fails if the committed files drift from its output. Scenarios cover crossings, reversals, gaps, outages, late arrivals, duplicates and retries.",
+    rules: ["Never a real MMSI", "verify fails if generated fixtures are out of date"],
+    items: ["demo", "transit", "reversal", "gap-near", "gap-far", "gap-straddle", "outage", "late", "duplicate", "retry", "jump", "ambiguous", "boundary", "band-dwell", "quality", "quiet", "wrong-area"] },
+  { id: "src.events", zone: "sources", col: 0, kind: "json", label: "Synthetic event reports", path: "tests/fixtures/synthetic/events/demo/", src: "tests/fixtures/synthetic/events/demo/01-vessel-12.json", pkg: "Package 4c",
+    sub: "Invented report claims for vessel, flight and road cases, with corrections.",
+    about: "Report claims in format eye.synthetic-event-claims/1 for a vessel, a flight and a road case, each published at 12:00 and corrected at 13:00.",
+    rules: ["Source synthetic-events: approved for demo and tests only"] },
+  { id: "src.media", zone: "sources", col: 0, kind: "json", label: "Synthetic news and media", path: "tests/fixtures/synthetic/media/demo/", src: "tests/fixtures/synthetic/media/demo/01-news-12.json", pkg: "Package 4d",
+    sub: "Invented news items: two reports, a late one, a repeat delivery and an outage.",
+    about: "News and media items in format eye.synthetic-media-items/1, built to test repeat deliveries, a late item and a source outage.",
+    rules: ["Source synthetic-news: approved for demo and tests only"] },
+  { id: "src.lines", zone: "sources", col: 0, kind: "json", label: "Versioned count lines", path: "reference/lines/synthetic-golden-gate.v1.json", src: "reference/lines/synthetic-golden-gate.v1.json", pkg: "Package 2",
+    sub: "The line vessels are counted across. A new geometry is a new version.",
+    about: "A count line is immutable per line id and version. Every crossing and count names the line version and algorithm version it used. The real Golden Gate line is a later gate.",
+    rules: ["Synthetic geometry near 0N 0E, open ocean, no real features"] },
+  { id: "plan.providers", zone: "sources", col: 0, kind: "planned", status: "planned", label: "Real provider adapters", path: "Packages 4, 4a–4f · none enabled", pkg: "Package 4",
+    sub: "OpenSky, NOAA AIS, Horizons, CelesTrak, GDELT, NWS, USGS and more. Candidates only.",
+    about: "Each candidate stays disabled until its policy row records terms, storage rights, quotas, provenance, egress and failure controls. Every enabled adapter needs a positive fixture and a false-precision or absence control.",
+    rules: ["No external request in default CI", "A feed outage is unknown coverage, never zero"] },
+  { id: "plan.sentinel", zone: "sources", col: 0, kind: "planned", status: "planned", label: "Sentinel-2 L2A imagery", path: "copernicus-sentinel-2-l2a · candidate, disabled", pkg: "Package 6",
+    sub: "Terms read on 2026-10-08. No imagery code exists.",
+    about: "The first source reviewed for the optional raster pipeline. It is a disabled candidate in the source-policy register.",
+    rules: ["Stays disabled until its policy row is approved"] },
+
+  // ---- ingest
+  { id: "ing.capture", zone: "ingest", col: 1, kind: "py", label: "Capture pipeline", path: "backend/eye/ingest/capture.py", src: "backend/eye/ingest/capture.py", loc: 1584, pkg: "Package 1",
+    sub: "Archive the exact bytes first, then commit what was parsed from them. A crash in between is replayable.",
+    about: "Every source goes through here. archive stores the exact bytes and a pending batch in one transaction. commit_batch re-reads those stored bytes (never the caller's copy), checks the checksum, derives observations, receipts and coverage, and writes them in a second transaction. A crash between the two steps leaves a pending batch that replay_pending completes.",
+    rules: ["Three times are kept apart: observed (source event), source_published (orders corrections) and received (stamped by EYE)", "One derive function is used both to commit and to verify, so verify_replay compares every stored value", "A news capture is validated in full before anything is archived, and refused whole on any failure", "A feed outage records failed or unknown coverage, never zero"],
+    items: ["1 · archive", "2 · commit_batch", "replay_pending", "verify_replay", "load_fixtures"] },
+  { id: "ing.ais", zone: "ingest", col: 1, kind: "py", label: "Synthetic AIS adapter", path: "backend/eye/ingest/synthetic_ais.py", src: "backend/eye/ingest/synthetic_ais.py", loc: 84, pkg: "Package 2",
+    sub: "Maps synthetic-ais/1 messages into observation records.",
+    about: "Interprets the archived provider payload. Low-accuracy reports keep a low_position_accuracy flag and are left out of crossing geometry.",
+    rules: ["A message may not carry an EYE receipt time; EYE stamps it", "Only SYNV- vessel ids"] },
+  { id: "ing.events", zone: "ingest", col: 1, kind: "py", label: "Event-claim parser", path: "backend/eye/ingest/event_claims.py", src: "backend/eye/ingest/event_claims.py", loc: 277, pkg: "Package 4c",
+    sub: "One version of one source's case: reported location, precision, time and evidence.",
+    about: "Any event adapter maps its provider's shape to these claim fields; ids, versions, corrections, conflicts and links are then the same for every source. The only geometry in a claim is the reported event location: a point, a road segment with direction, or an area.",
+    rules: ["Motion inference (lost signal, AIS gap, stopped vessel, slowdown) is only a review candidate", "Only a sourced report citing evidence can name an accident, casualty or collision"] },
+  { id: "ing.media", zone: "ingest", col: 1, kind: "py", label: "Media-item parser", path: "backend/eye/ingest/media_items.py", src: "backend/eye/ingest/media_items.py", loc: 361, pkg: "Package 4d",
+    sub: "Metadata and a link only. Never an article body, image or video.",
+    about: "One version of one article, image or video. Headlines, bylines, publishers and URLs are untrusted input: bounded, stored as given and only ever rendered as text.",
+    rules: ["Refuses control and bidirectional-override characters", "Unknown reuse rights: link only, and the headline is never stored", "No model reads these fields on the way in"] },
+
+  // ---- storage (two columns)
+  { id: "st.db", zone: "storage", col: 2, kind: "py", label: "Connections", path: "backend/eye/storage/db.py", src: "backend/eye/storage/db.py", loc: 73, pkg: "Package 1",
+    sub: "pg8000 connections from a URL held in an environment variable.",
+    about: "Connection details come from the environment variable that configuration names. Nothing here hardcodes a host, port, user or password.",
+    rules: ["Demo accepts only a loopback database host"] },
+  { id: "st.evidence", zone: "storage", col: 2, kind: "sql", label: "Evidence core", path: "migrations/0001 · 0004", src: "migrations/0001_capture_coverage_observation_evidence.sql", pkg: "Package 1",
+    sub: "What was asked for, exactly what arrived, and what was parsed from it.",
+    about: "Capture batches with their requested area and interval, the raw evidence bytes with checksums, parsed observations, a receipt per delivery and coverage per capture. Triggers make every table append-only.",
+    rules: ["Source event time and EYE receipt time are separate NOT NULL columns in separate rows", "A record is identified by source, layer and record id (0004)", "Raw bytes can be pruned only by the checked retention path, and the row stays"],
+    items: ["capture_batch", "raw_evidence", "observation", "observation_receipt", "coverage", "observation_version (view)"] },
+  { id: "st.events", zone: "storage", col: 2, kind: "sql", label: "Event-claim ledger", path: "migrations/0005", src: "migrations/0005_event_claim_ledger.sql", pkg: "Package 4c",
+    sub: "Every version of every case, exactly as published, with receipts.",
+    about: "Claims keep their source, case id, basis, kind, status, event time and uncertainty, publication time and reported location. Duplicate deliveries add receipts, not claims.",
+    rules: ["A database constraint refuses an accident or casualty claimed from motion data"],
+    items: ["event_claim", "event_claim_receipt", "event_claim_version (view)"] },
+  { id: "st.media", zone: "storage", col: 2, kind: "sql", label: "Media ledger", path: "migrations/0006", src: "migrations/0006_media_item_ledger.sql", pkg: "Package 4d",
+    sub: "News and media evidence, kept apart from event claims.",
+    about: "One row per version of one article, image or video with its source times, link, rights and optional place. Exact repeat deliveries add receipts.",
+    items: ["media_item", "media_item_receipt", "media_item_version (view)"] },
+  { id: "st.feed", zone: "storage", col: 2, kind: "sql", label: "Feed change log", path: "migrations/0003", src: "migrations/0003_feed_change_log.sql", pkg: "Package 3",
+    sub: "Triggers append a row whenever a batch commits or a derivation run is recorded.",
+    about: "eye.feed_epoch holds one random id per database, so a cursor from another or a rebuilt database reads as expired instead of being misread. eye.feed_change is the append-only log the live hub polls.",
+    items: ["feed_epoch", "feed_change"] },
+  { id: "st.migrate", zone: "storage", col: 3, kind: "py", label: "Migration runner", path: "backend/eye/storage/migrate.py · migrations/", src: "backend/eye/storage/migrate.py", loc: 256, pkg: "Package 1",
+    sub: "Forward-only, one transaction per file, checksummed after it runs.",
+    about: "Each migrations/NNNN_name.sql file runs in its own transaction with its version row, under an advisory lock. Applied files are checksummed; editing one after it ran is refused.",
+    rules: ["A failing migration leaves schema and data exactly as they were", "Transaction-control statements are refused before anything runs"],
+    items: ["0001 evidence", "0002 transits", "0003 feed", "0004 identity key", "0005 events", "0006 media", "0007 lifecycle", "0008 backtests", "0009 series check", "0010 db identity"] },
+  { id: "st.identity", zone: "storage", col: 3, kind: "py", label: "Database identity", path: "backend/eye/storage/identity.py · migrations/0010", src: "backend/eye/storage/identity.py", loc: 138, pkg: "ADR 0009",
+    sub: "The database says once whether it is the demo or a private installation.",
+    about: "The configured mode and a loopback connection do not prove which database is on the other end, so the database records its own kind. The demo refuses a database claimed private or holding real evidence; production refuses one not claimed private.",
+    rules: ["The claim is permanent", "Every check only reads, and works before migrating"],
+    items: ["database_identity"] },
+  { id: "st.transits", zone: "storage", col: 3, kind: "sql", label: "Derived transits", path: "migrations/0002", src: "migrations/0002_ais_tracks_crossings_counts.sql", pkg: "Package 2",
+    sub: "Current tracks, gaps, crossings and counts, plus an immutable record of each run.",
+    about: "The current rows are a derivation the worker replaces per scope. Each derivation run is also recorded immutably with its input batches, evidence fingerprint and every crossing, gap and count it produced.",
+    rules: ["Every derived row names its line version and algorithm version", "Original and revised counts both stay auditable"],
+    items: ["count_line", "vessel_track", "track_gap", "line_crossing", "transit_count", "derivation_run", "run_crossing", "run_gap", "run_count"] },
+  { id: "st.lifecycle", zone: "storage", col: 3, kind: "sql", label: "Lifecycle records", path: "migrations/0007", src: "migrations/0007_lifecycle_manifests_retention.sql", pkg: "Package 5",
+    sub: "Manifests, rollups, ledger seals, backup proofs and retention decisions.",
+    about: "A manifest records one derivation of one partition day: its input batch set and checksum, watermark, lateness deadline, versions, output checksum and coverage summary. The database itself guards pruning.",
+    rules: ["The database refuses pruning before the lateness window closes by its own clock", "…or without current manifests checked valid in the same transaction", "…or when a batch's ledger rows no longer match its seal"],
+    items: ["derivation_manifest", "rollup_value", "manifest_validation", "batch_seal", "backup_proof", "retention_decision", "current_manifest (view)", "current_rollup (view)"] },
+  { id: "st.research", zone: "storage", col: 3, kind: "sql", label: "Backtest records", path: "migrations/0008 · 0009", src: "migrations/0008_backtest_runs.sql", pkg: "Package 5",
+    sub: "Each run names the exact manifests it read.",
+    about: "A run records its parameters and input manifest ids, so a replay re-reads those manifests rather than whatever is current.",
+    rules: ["A run may cite only current manifests (0008)", "…and only rollups of its own series (0009)"],
+    items: ["backtest_run", "backtest_result"] },
+
+  // ---- workers
+  { id: "wk.transits", zone: "workers", col: 4, kind: "py", label: "Tracks, crossings and counts", path: "backend/eye/worker/transits.py · transit-counter/2", src: "backend/eye/worker/transits.py", loc: 1043, pkg: "Package 2",
+    sub: "Splits observations into tracks and counts crossings of each line per hour.",
+    about: "A pure function of stored evidence (the observations and coverage of a set of batches), so rebuilding the database or replaying evidence reproduces the same track, gap, crossing and count ids and values.",
+    rules: ["An outage makes the count unknown, never 0", "Crash, retry and late arrival never double-count", "audit_run re-derives any past run from exactly the batches it used"],
+    items: ["derive", "store", "verify", "audit_run"] },
+  { id: "wk.rollups", zone: "workers", col: 4, kind: "py", label: "Rollups and manifests", path: "backend/eye/worker/rollups.py", src: "backend/eye/worker/rollups.py", loc: 1080, pkg: "Package 5",
+    sub: "Per source, layer and UTC day: hourly coverage, observations and transits.",
+    about: "Computes coverage-hourly, observations-hourly and transit-daily rollups for each partition and records each as an append-only manifest with its inputs, versions and outputs.",
+    rules: ["An hour lacking usable coverage has no value, never 0; a partial hour is a lower bound", "A late arrival makes a manifest stale; the next rollup adds a new one and keeps the old"],
+    items: ["coverage-hourly", "observations-hourly", "transit-daily"] },
+  { id: "wk.retention", zone: "workers", col: 4, kind: "py", label: "Checked retention", path: "backend/eye/worker/retention.py", src: "backend/eye/worker/retention.py", loc: 305, pkg: "Package 5",
+    sub: "Prunes raw bytes of one partition only after every check passes. Off by default.",
+    about: "Eligible only when the lateness window has closed, no batch is pending, checksums match, every derivation has a valid manifest, the partition's bytes reproduce every ledger row, and a verified backup holds the same bytes and is re-read just before pruning.",
+    rules: ["retention.allow_deletion = false by default; production refuses it", "A check that cannot run is UNVERIFIED and blocks", "Rows are never deleted, only raw bytes"] },
+  { id: "wk.backup", zone: "workers", col: 4, kind: "py", label: "Backup and restore drill", path: "backend/eye/worker/backup.py", src: "backend/eye/worker/backup.py", loc: 448, pkg: "Package 5",
+    sub: "Synthetic code test: export, verify by independent read-back, restore and compare.",
+    about: "Writes content-addressed evidence copies and a generation manifest to a disposable directory, verifies it by an independent read-back, then restores into an empty database and compares every named metric.",
+    rules: ["Proves nothing about an off-site Google Drive backup, restic or any recovery objective"] },
+  { id: "wk.baselines", zone: "workers", col: 4, kind: "py", label: "Coverage-weighted baselines", path: "backend/eye/worker/baselines.py", src: "backend/eye/worker/baselines.py", loc: 296, pkg: "Package 5",
+    sub: "Pure functions: no database, clock, randomness or model.",
+    about: "Compares a target bin with the same bin on earlier days, counting only hours that were exactly covered.",
+    rules: ["Each bin is detected, not_detected or abstained, with a fixed reason code", "Results are numbers and verdicts, never prose", "A detection means unusually high against its own history, not a cause or forecast"] },
+  { id: "wk.backtest", zone: "workers", col: 4, kind: "py", label: "Backtester", path: "backend/eye/worker/backtest.py", src: "backend/eye/worker/backtest.py", loc: 506, pkg: "Package 5",
+    sub: "Checks every manifest it cites, runs the baselines and records the run.",
+    about: "Re-derives every manifest it is about to cite and refuses if any is stale. Checking and recording share one transaction that locks the input tables, so nothing can arrive between the check and the commit. Replays recompute and compare.",
+    rules: ["Bounded by max_days and max_output_rows; larger requests are refused, never cut short"] },
+  { id: "ext.backupdir", zone: "workers", col: 4, kind: "ext", status: "ext", label: "Synthetic backup directory", path: "$EYE_BACKUP_DIR", pkg: "Package 5",
+    sub: "A disposable local directory. Files are written atomically and never edited.",
+    about: "Layout: evidence/<sha256>.json (exact raw bytes of one batch), lines/<sha256>.json and generations/<id>.json (canonical generation manifests).",
+    items: ["evidence/", "lines/", "generations/"] },
+  { id: "plan.raster", zone: "workers", col: 4, kind: "planned", status: "planned", label: "Raster worker", path: "backend/eye/raster/ · empty", src: "backend/eye/raster/__init__.py", pkg: "Package 6",
+    sub: "Optional isolated imagery pipeline with its own memory and scratch budget.",
+    about: "Would process one permitted scientific product at a time, with no model or login secrets, and prove attribution and eviction.",
+    rules: ["Malformed archives refused; memory and scratch limits enforced"] },
+  { id: "plan.drive", zone: "workers", col: 4, kind: "planned", status: "planned", label: "Off-site backup", path: "restic → Google Drive · Package 8", pkg: "Package 8",
+    sub: "Encrypted restic repository pulled by a client; restored from the downloaded copy.",
+    about: "The real backup destination for irreplaceable records. A removable SSD can be enrolled later as a second target.",
+    rules: ["An unreachable server or full Drive makes backup age stale and alerts independently"] },
+
+  // ---- API
+  { id: "api.auth", zone: "api", col: 5, kind: "py", label: "Auth port", path: "backend/eye/api/auth.py", src: "backend/eye/api/auth.py", loc: 71, pkg: "Package 0",
+    sub: "An interface plus a demo implementation. The real adapter is private.",
+    about: "The public repository ships only the AuthPort interface and DemoAuth for loopback synthetic use. Production loads the private adapter by module name from private configuration.",
+    rules: ["Demo auth is never a production fallback"] },
+  { id: "api.server", zone: "api", col: 5, kind: "py", label: "HTTP and WebSocket server", path: "backend/eye/api/server.py", src: "backend/eye/api/server.py", loc: 533, pkg: "Package 3",
+    sub: "Standard-library server: checks Host and Origin, authenticates, bounds everything.",
+    about: "Serves bounded, database-backed eye.wire/4 messages. It checks the Host header and WebSocket Origin, authenticates every data request, sets restrictive browser headers, bounds connections, sockets, request and query time and response size, and validates every JSON body against the wire schema before it is sent.",
+    rules: ["Static files come from a fixed allowlist; request paths never map onto the filesystem", "Needs the database's identity claim for its mode before it serves"],
+    items: ["GET /api/v0/health", "GET /api/v0/snapshot", "GET /api/v0/transits", "GET /api/v0/stream (WS)"] },
+  { id: "api.feed", zone: "api", col: 5, kind: "py", label: "Bounded feed queries", path: "backend/eye/api/feed.py", src: "backend/eye/api/feed.py", loc: 936, pkg: "Package 3",
+    sub: "Snapshot, delta and transit messages from read-only, time-limited sessions.",
+    about: "Every query is bounded by area, interval, layer and row limits. A request that would exceed a limit is refused with QueryRefused rather than silently truncated.",
+    rules: ["Cursor format e<epoch>:<change_seq>", "Nothing here writes"] },
+  { id: "api.events", zone: "api", col: 5, kind: "py", label: "Event cases", path: "backend/eye/api/events.py", src: "backend/eye/api/events.py", loc: 448, pkg: "Package 4c",
+    sub: "Every version of each case. Links to a track only when exactly one fits.",
+    about: "Standing comes only from the current version: sourced report, review candidate, retracted, or unresolved when versions conflict. A linked track's last observed position is returned separately from the reported location.",
+    rules: ["No event source covered the view → coverage unknown, never \"no events\""] },
+  { id: "api.media", zone: "api", col: 5, kind: "py", label: "News and media items", path: "backend/eye/api/media.py", src: "backend/eye/api/media.py", loc: 318, pkg: "Package 4d",
+    sub: "Every version of each item. Cross-publisher matches are only suggestions.",
+    about: "An item is in view when first published in the interval and its place is in the area, or it states no place and a capture that delivered it asked about the area.",
+    rules: ["Unknown rights → served as a link only (headline_withheld)", "Nothing is merged or counted as independent confirmation"] },
+  { id: "api.stream", zone: "api", col: 5, kind: "py", label: "Live hub", path: "backend/eye/api/stream.py", src: "backend/eye/api/stream.py", loc: 421, pkg: "Package 3",
+    sub: "One snapshot with a cursor, then sequenced deltas. A gap means a fresh snapshot.",
+    about: "Polls the change log every poll_interval_ms. Each delta names the cursor it follows; a client that sees a different one has missed an update and subscribes again. A reconnect is told whether its cursor is still valid and always gets a fresh snapshot.",
+    rules: ["Hard per-client byte cap (ws_max_buffer_bytes); a slow client is disconnected", "More than max_pending_changes behind → fresh snapshot instead of deltas"] },
+  { id: "api.ws", zone: "api", col: 5, kind: "py", label: "WebSocket framing", path: "backend/eye/api/websocket.py", src: "backend/eye/api/websocket.py", loc: 93, pkg: "Package 3",
+    sub: "Minimal RFC 6455: text, ping, pong and close frames.",
+    about: "Client frames must be masked, unfragmented and bounded in size; anything else is a protocol error that closes the connection.",
+    rules: ["Server frames are never masked"] },
+
+  // ---- wire
+  { id: "wire.schema", zone: "wire", col: 6, kind: "json", label: "Wire schema eye.wire/4", path: "schemas/eye-wire.v4.schema.json", src: "schemas/eye-wire.v4.schema.json", pkg: "Packages 1–4d",
+    sub: "The single source of truth for every REST and WebSocket message.",
+    about: "One versioned schema for both directions. v1 to v3 are kept unchanged beside it.",
+    rules: ["A new message shape is a new schema version"],
+    items: ["Snapshot", "Delta", "Transits", "Subscribe", "ResyncRequired", "Error", "Health", "Track", "Coverage", "EventCase", "MediaItem"] },
+  { id: "wire.py", zone: "wire", col: 6, kind: "py", label: "Python validator", path: "backend/eye/wire/validate.py", src: "backend/eye/wire/validate.py", loc: 335, pkg: "Package 1",
+    sub: "A deliberately small keyword subset. Unknown keywords are refused at load.",
+    about: "Standard library only. It supports exactly the JSON Schema keywords it lists, so a keyword can never be silently ignored.",
+    rules: ["Every outgoing body and frame is validated before it is sent"] },
+  { id: "wire.gen", zone: "wire", col: 6, kind: "py", label: "Type generator", path: "scripts/gen_wire_types.py", src: "scripts/gen_wire_types.py", loc: 138, pkg: "Package 1",
+    sub: "Generates the browser's schema constant and TypeScript types.",
+    about: "Reads the schema file and writes web/src/generated. verify runs it with --check and fails if the output is stale.",
+    rules: ["Generated files are never edited by hand"] },
+  { id: "wire.ts", zone: "wire", col: 6, kind: "ts", label: "Generated browser types", path: "web/src/generated/wire-schema.ts · wire-types.ts", src: "web/src/generated/wire-types.ts", pkg: "Package 1",
+    sub: "The same schema, compiled into the browser bundle." },
+  { id: "wire.corpus", zone: "wire", col: 6, kind: "json", label: "Shared message corpus", path: "tests/fixtures/wire-v1 … wire-v4/", src: "tests/fixtures/wire-v2/valid/snapshot.json", pkg: "Package 1",
+    sub: "Valid and invalid messages both validators must agree on.",
+    about: "Tests run the Python validator, the browser validator and a reference implementation over the same corpus and compare all three.",
+    items: ["valid/", "invalid/"] },
+
+  // ---- browser
+  { id: "web.static", zone: "browser", col: 7, kind: "ts", label: "Page and styles", path: "web/index.html · web/app.css", src: "web/index.html", pkg: "Package 3",
+    sub: "Synthetic-data banner, live status, view form, THEATRE and DESK tabs.",
+    about: "Served from the server's static allowlist with restrictive headers. Says on every load that nothing describes a real aircraft, vessel, road or event." },
+  { id: "web.app", zone: "browser", col: 7, kind: "ts", label: "App shell", path: "web/src/app.ts", src: "web/src/app.ts", loc: 348, pkg: "Package 3",
+    sub: "Loads the view over REST, then follows it live over WebSocket.",
+    about: "Every response is validated against the wire schema before use. An unavailable or invalid response is shown as unknown, never as zero or as an empty result.",
+    rules: ["fetch() with same-origin credentials only"] },
+  { id: "web.live", zone: "browser", col: 7, kind: "ts", label: "Live feed client", path: "web/src/live.ts", src: "web/src/live.ts", loc: 259, pkg: "Package 3",
+    sub: "Applies deltas in order. A gap or reconnect rebuilds from a fresh snapshot.",
+    about: "A delta whose previous_cursor or sequence does not follow the last one applied is a gap: the client stops applying deltas and subscribes again with its last good cursor. A dropped connection retries with capped backoff.",
+    rules: ["Nothing is queued on the client", "A new view is not \"live\" until its snapshot is applied"] },
+  { id: "web.validate", zone: "browser", col: 7, kind: "ts", label: "Browser validator", path: "web/src/wire-validate.ts", src: "web/src/wire-validate.ts", loc: 201, pkg: "Package 1",
+    sub: "Mirrors the Python validator over the same keyword subset." },
+  { id: "web.globe", zone: "browser", col: 7, kind: "ts", label: "THEATRE globe", path: "web/src/globe.ts", src: "web/src/globe.ts", loc: 367, pkg: "Package 3",
+    sub: "Token-free orthographic globe on a 2D canvas. Illustrative, not a measurement surface.",
+    about: "Draws a graticule, the requested area, the count line, synthetic tracks, reported event locations and media places. Presets change only how much is drawn, never a stored position, count or fact.",
+    rules: ["No basemap, imagery or map service", "Last observed position and reported location are separate marks"] },
+  { id: "web.desk", zone: "browser", col: 7, kind: "ts", label: "DESK panel", path: "web/src/desk.ts", src: "web/src/desk.ts", loc: 400, pkg: "Package 3",
+    sub: "Observed transits per hour, with the coverage and evidence behind each count.",
+    about: "An outage shows Unknown, never 0. A partial count shows at least n with its reason. Every count shows coverage, crossings, evidence batches, bracketing observations, timestamps and source label.",
+    rules: ["Values are inserted with textContent only, never as HTML"] },
+  { id: "web.facts", zone: "browser", col: 7, kind: "ts", label: "Measured facts", path: "web/src/facts.ts", src: "web/src/facts.ts", loc: 640, pkg: "Package 3",
+    sub: "Pure functions from validated messages to text, independent of the preset.",
+    about: "The same message always gives the same facts, whatever the rendering settings are." },
+  { id: "plan.cesium", zone: "browser", col: 7, kind: "planned", status: "planned", label: "CesiumJS renderer", path: "later package", pkg: "Package 4b",
+    sub: "3D globe with a floating origin and logarithmic depth on every preset.",
+    about: "Would replace the canvas globe. 64-bit world positions are converted to camera-relative GPU coordinates so a 1 m object does not jitter at Neptune's distance.",
+    rules: ["All presets give the same measured facts and evidence ids"] },
+
+  // ---- build, verify, deploy
+  { id: "ops.deps", zone: "build", col: 0, kind: "doc", label: "Pins and locks", path: "requirements/*.lock · web/package-lock.json · docs/dependencies.md", src: "docs/dependencies.md", pkg: "Package 0",
+    sub: "Hash-locked Python tools, npm lock, images and actions pinned by digest." },
+  { id: "ops.setup", zone: "build", col: 1, kind: "sh", label: "setup.sh", path: "scripts/setup.sh", src: "scripts/setup.sh", loc: 67, pkg: "Package 0",
+    sub: "Creates .venv, runs npm ci, builds web/dist, pulls the pinned PostGIS image.",
+    about: "Runs on the developer laptop and in CI. Downloads from PyPI, npm, Playwright's browser CDN and Docker Hub only." },
+  { id: "ops.verify", zone: "build", col: 2, kind: "sh", label: "verify.sh", path: "scripts/verify.sh", src: "scripts/verify.sh", loc: 68, pkg: "Package 0",
+    sub: "One command: boundary scan, lint, generated-file checks, web build, config, tests.",
+    about: "No network. Database tests use a disposable loopback PostGIS. Fails, never skips, if no database is available. --container adds an image build and smoke test.",
+    items: ["boundary", "ruff", "wire types", "AIS fixtures", "tsc build", "dist check", "check-config", "pytest ×4", "--container"] },
+  { id: "ops.tests", zone: "build", col: 3, kind: "py", label: "Test suite", path: "tests/ · scripts/test-db.sh", src: "tests/conftest.py", pkg: "Packages 0–5",
+    sub: "24 test modules. Each test gets a fresh database; browser tests run headless.",
+    about: "pytest-xdist runs four workers against one disposable PostGIS container. Headless browser tests are invoked only by the test command and open no window." },
+  { id: "ops.boundary", zone: "build", col: 4, kind: "py", label: "Boundary checks", path: "scripts/check_repo_boundary.py · check_web_dist.py", src: "scripts/check_repo_boundary.py", loc: 188, pkg: "Package 0",
+    sub: "Scans publishable files for keys, private addresses, browser launch and licence claims.",
+    about: "A backstop for human review, not a replacement. Exit 2 means the check itself could not run (UNVERIFIED)." },
+  { id: "ops.ci", zone: "build", col: 5, kind: "yml", label: "GitHub Actions", path: ".github/workflows/ci.yml", src: ".github/workflows/ci.yml", pkg: "Package 0",
+    sub: "verify with container smoke, gitleaks over full history, dependency audits.",
+    about: "Synthetic data only: no secrets, no provider calls, no deployment. Third-party actions and images are pinned by commit or digest.",
+    items: ["verify", "secret-scan", "dependency-scan"] },
+  { id: "ops.demo", zone: "build", col: 6, kind: "docker", label: "Demo launcher", path: "scripts/demo.sh · deploy/dev/compose.yaml", src: "deploy/dev/compose.yaml", pkg: "Package 0",
+    sub: "PostGIS plus the demo with a one-run password. Only the web port, only on loopback.",
+    about: "The demo shares the database's network namespace, so the database has no published port. Ctrl-C stops and removes everything." },
+  { id: "ops.image", zone: "build", col: 6, kind: "docker", label: "Demo image", path: "deploy/dev/Dockerfile", src: "deploy/dev/Dockerfile", pkg: "Package 0",
+    sub: "python:3.12-slim by digest, offline hash-checked wheels, uid 65534, read-only.",
+    about: "Runs db-prepare-demo, then serve. All capabilities dropped, no-new-privileges, memory and pid limits." },
+  { id: "ops.drill", zone: "build", col: 7, kind: "sh", label: "Restore drill", path: "scripts/restore-drill.sh · restore_drill.py", src: "scripts/restore_drill.py", pkg: "Package 5",
+    sub: "The whole synthetic backup and restore in two disposable databases." },
+];
+
+// [from, to, kind, label]
+const EDGES = [
+  // sources → ingest
+  ["src.captures", "ing.capture", "data", "capture envelopes"],
+  ["src.ais", "ing.capture", "data", "synthetic-ais/1"],
+  ["src.events", "ing.capture", "data", "event claims"],
+  ["src.media", "ing.capture", "data", "media items"],
+  ["ing.capture", "ing.ais", "call", "parse"],
+  ["ing.capture", "ing.events", "call", "parse"],
+  ["ing.capture", "ing.media", "call", "parse"],
+  ["src.lines", "wk.transits", "data", "load_line"],
+  // ingest → storage
+  ["ing.capture", "st.evidence", "write", "archive, then commit"],
+  ["ing.capture", "st.events", "write", "claims + receipts"],
+  ["ing.capture", "st.media", "write", "items + receipts"],
+  ["st.evidence", "st.feed", "trigger", "on batch commit"],
+  ["st.transits", "st.feed", "trigger", "on derivation run"],
+  ["st.evidence", "st.lifecycle", "trigger", "seal on settle"],
+  ["st.migrate", "st.db", "call", "connect"],
+  ["st.identity", "st.db", "call", "connect"],
+  // workers
+  ["st.evidence", "wk.transits", "read", "observations + coverage"],
+  ["wk.transits", "st.transits", "write", "store run"],
+  ["st.evidence", "wk.rollups", "read", "coverage, observations"],
+  ["st.transits", "wk.rollups", "read", "transit runs"],
+  ["wk.rollups", "wk.transits", "call", "ensure_transit_runs"],
+  ["wk.rollups", "st.lifecycle", "write", "manifests + rollups"],
+  ["st.lifecycle", "wk.retention", "read", "manifests, proofs"],
+  ["wk.retention", "wk.rollups", "call", "check manifests"],
+  ["wk.retention", "wk.backup", "call", "recheck backup"],
+  ["wk.retention", "ing.capture", "call", "ledger replay"],
+  ["wk.retention", "st.evidence", "danger", "prune raw bytes only"],
+  ["wk.retention", "st.lifecycle", "write", "retention decision"],
+  ["st.evidence", "wk.backup", "read", "raw bytes"],
+  ["wk.backup", "ext.backupdir", "write", "generation"],
+  ["wk.backup", "st.lifecycle", "write", "backup proof"],
+  ["st.lifecycle", "wk.backtest", "read", "manifests + rollups"],
+  ["wk.backtest", "wk.baselines", "call", "evaluate bins"],
+  ["wk.backtest", "st.research", "write", "run + results"],
+  // API
+  ["api.server", "api.auth", "call", "authenticate"],
+  ["api.server", "st.identity", "call", "require claim"],
+  ["api.server", "api.feed", "call", "snapshot, transits"],
+  ["api.server", "api.stream", "call", "upgrade"],
+  ["api.stream", "api.feed", "call", "changes_after, delta"],
+  ["api.stream", "api.ws", "call", "frames"],
+  ["api.feed", "api.events", "call", "cases in view"],
+  ["api.feed", "api.media", "call", "items in view"],
+  ["st.evidence", "api.feed", "read", "tracks, coverage"],
+  ["st.transits", "api.feed", "read", "counts, crossings"],
+  ["st.feed", "api.feed", "read", "cursor e<epoch>:<seq>"],
+  ["st.events", "api.events", "read", "claim versions"],
+  ["st.media", "api.media", "read", "item versions"],
+  // wire contract
+  ["api.server", "wire.py", "contract", "validate every body"],
+  ["api.stream", "wire.py", "contract", "validate every frame"],
+  ["wire.schema", "wire.py", "contract", "loads"],
+  ["wire.schema", "wire.gen", "contract", "reads"],
+  ["wire.gen", "wire.ts", "contract", "generates"],
+  ["wire.ts", "web.validate", "contract", "schema + types"],
+  ["wire.corpus", "wire.py", "contract", "shared tests"],
+  ["wire.corpus", "web.validate", "contract", "shared tests"],
+  // browser
+  ["api.server", "web.app", "http", "REST snapshot, transits"],
+  ["api.ws", "web.live", "http", "snapshot → deltas"],
+  ["api.server", "web.static", "http", "static allowlist"],
+  ["web.app", "web.live", "call", "follow view"],
+  ["web.app", "web.globe", "call", "draw"],
+  ["web.app", "web.desk", "call", "render"],
+  ["web.app", "web.validate", "contract", "parse"],
+  ["web.live", "web.validate", "contract", "parse"],
+  ["web.globe", "web.facts", "call", "facts"],
+  ["web.desk", "web.facts", "call", "facts"],
+  ["ext.viewer", "web.static", "http", "opens 127.0.0.1:8765"],
+  // control plane
+  ["ctl.config", "ctl.cli", "call", "load_config"],
+  ["ctl.docs", "ctl.config", "contract", "boundary rules"],
+  ["ctl.policy", "ctl.config", "contract", "providers stay off"],
+  ["ctl.policy", "plan.providers", "contract", "gates"],
+  ["ctl.cli", "api.auth", "cli", "resolve_auth"],
+  ["ctl.cli", "st.migrate", "cli", "db-migrate"],
+  ["ctl.cli", "st.identity", "cli", "claim"],
+  ["ctl.cli", "ing.capture", "cli", "load, replay"],
+  ["ctl.cli", "wk.transits", "cli", "derive-transits"],
+  ["ctl.cli", "wk.rollups", "cli", "rollup"],
+  ["ctl.cli", "wk.retention", "cli", "retention-*"],
+  ["ctl.cli", "wk.backup", "cli", "backup, drill"],
+  ["ctl.cli", "wk.backtest", "cli", "backtest"],
+  ["ctl.cli", "api.server", "cli", "serve"],
+  ["st.migrate", "st.evidence", "write", "applies 0001–0010"],
+  // planned
+  ["plan.providers", "ing.capture", "planned", "after policy approval"],
+  ["plan.sentinel", "plan.raster", "planned", "one product"],
+  ["plan.raster", "st.evidence", "planned", "imagery evidence"],
+  ["wk.backup", "plan.drive", "planned", "restic export"],
+  ["ext.viewer", "plan.gateway", "planned", "private HTTPS"],
+  ["plan.gateway", "api.server", "planned", "/_auth → 204"],
+  ["api.feed", "plan.brain", "planned", "evidence packets"],
+  ["plan.cesium", "web.globe", "planned", "replaces"],
+  // build
+  ["ops.deps", "ops.setup", "build", "hash locks"],
+  ["ops.setup", "ops.verify", "build", "then"],
+  ["ops.verify", "ops.boundary", "build", "boundary scan"],
+  ["ops.verify", "wire.gen", "build", "--check"],
+  ["ops.verify", "src.ais", "build", "gen --check"],
+  ["ops.verify", "web.app", "build", "rebuild web/dist"],
+  ["ops.verify", "ops.tests", "build", "pytest ×4"],
+  ["ops.verify", "ops.image", "build", "--container"],
+  ["ops.ci", "ops.setup", "build", "step 1"],
+  ["ops.ci", "ops.verify", "build", "step 2"],
+  ["ops.demo", "ops.image", "build", "compose up"],
+  ["ops.image", "ctl.cli", "build", "prepare-demo, serve"],
+  ["ops.drill", "wk.backup", "build", "restore drill"],
+  ["ops.tests", "wire.corpus", "build", "runs"],
+];
+
+const KINDS = {
+  data: { label: "Data moves", layer: "flow" },
+  write: { label: "Writes to tables", layer: "flow" },
+  read: { label: "Reads tables", layer: "flow" },
+  http: { label: "Network to the browser", layer: "flow" },
+  trigger: { label: "Database trigger", layer: "flow" },
+  danger: { label: "Prunes evidence bytes", layer: "flow" },
+  call: { label: "Module calls module", layer: "calls" },
+  contract: { label: "Schema, rule or validation", layer: "contract" },
+  cli: { label: "CLI command runs it", layer: "cli" },
+  build: { label: "Build, verify or deploy step", layer: "build" },
+  planned: { label: "Planned, not built", layer: "planned" },
+};
+const KIND_COLOR = { data: "var(--accent)", write: "#39c8e8", read: "var(--blue)", http: "var(--accent)", trigger: "var(--amber)", danger: "var(--red)", call: "#8fa6bb", contract: "var(--violet)", cli: "#9fd8b0", build: "#8796a8", planned: "#5c7891" };
+const LAYERS = [
+  { id: "flow", label: "Data flow", hint: "captures, table reads and writes, network" },
+  { id: "calls", label: "Module calls", hint: "which code calls which" },
+  { id: "contract", label: "Contracts and rules", hint: "schema, validation, policy gates" },
+  { id: "cli", label: "CLI commands", hint: "what each python -m eye command runs" },
+  { id: "build", label: "Build and CI", hint: "setup, verify, tests, images" },
+  { id: "planned", label: "Planned packages", hint: "ghost blocks for work not built yet" },
+];
+
+const INVARIANTS = [
+  "The default demo binds to loopback and needs no external account; production refuses to start without the private auth adapter and never falls back to fake auth.",
+  "Real provider adapters stay disabled until their source-policy row is approved; no paid request or bulk download runs by default or in CI.",
+  "A missing feed is unknown or failed coverage, never zero activity; a failed check is UNVERIFIED, never evidence of absence.",
+  "Deterministic facts stay separate from AI prose: a model must not create positions, dimensions, event outcomes, crowd counts, eclipse times or evidence labels.",
+  "One versioned wire schema for REST and WebSocket, generated client types, runtime validation on both sides; every query, response, queue and buffer is bounded.",
+  "Capture archives raw bytes before committing parsed records; ledgers are append-only; history is deleted only after derivation and an independent verified backup pass.",
+  "Configuration lives in one place; no hardcoded machine names, paths, ports or credentials; nothing the project starts opens a browser.",
+];
+
+const TOURS = [
+  { id: "capture", title: "Follow one capture", blurb: "From a fixture file to a count on DESK, step by step.", steps: [
+    { n: ["src.ais"], text: "It starts as an invented AIS position report in a fixture file. No real feed is read anywhere in this build." },
+    { n: ["src.ais", "ing.capture"], e: [["src.ais", "ing.capture"]], text: "archive stores the exact bytes and a pending batch in one transaction, before anything is parsed." },
+    { n: ["ing.capture", "ing.ais"], e: [["ing.capture", "ing.ais"]], text: "commit_batch re-reads the stored bytes, checks the checksum and has the AIS adapter parse them into records." },
+    { n: ["ing.capture", "st.evidence"], e: [["ing.capture", "st.evidence"]], text: "Observations, receipts and coverage are written in a second transaction. If the process crashes between the two steps, replay_pending finishes the batch." },
+    { n: ["st.evidence", "st.feed"], e: [["st.evidence", "st.feed"]], text: "A trigger appends a row to the change log. That row is what later wakes the live feed." },
+    { n: ["st.evidence", "wk.transits", "st.transits", "src.lines"], e: [["st.evidence", "wk.transits"], ["wk.transits", "st.transits"], ["src.lines", "wk.transits"]], text: "The transit worker splits observations into tracks, finds crossings of the count line and stores an hourly count with the exact batches it used." },
+    { n: ["st.feed", "api.feed", "api.stream", "wire.py"], e: [["st.feed", "api.feed"], ["api.stream", "api.feed"], ["api.stream", "wire.py"]], text: "The live hub polls the change log, builds a bounded delta and validates it against the wire schema before sending." },
+    { n: ["api.stream", "api.ws", "web.live", "web.validate"], e: [["api.stream", "api.ws"], ["api.ws", "web.live"], ["web.live", "web.validate"]], text: "The delta goes out over the WebSocket, naming the cursor it follows. The browser validates it too. A gap means a fresh snapshot, never a patched guess." },
+    { n: ["web.app", "web.globe", "web.desk", "web.facts"], e: [["web.app", "web.globe"], ["web.app", "web.desk"], ["web.globe", "web.facts"], ["web.desk", "web.facts"]], text: "THEATRE draws the track and DESK shows the count with its coverage and evidence. If the feed was out, DESK says Unknown, never 0." },
+  ] },
+  { id: "retention", title: "What must pass before deletion", blurb: "The checks that guard raw evidence.", steps: [
+    { n: ["ctl.config"], text: "Deletion is off unless retention.allow_deletion is true, and production refuses it outright. Nothing in setup, verify, the demo or CI turns it on." },
+    { n: ["wk.retention"], text: "Retention works on one partition at a time: one source, one layer, one UTC day. Its lateness window (at least 48 hours) must have closed." },
+    { n: ["wk.retention", "wk.rollups", "st.lifecycle"], e: [["wk.retention", "wk.rollups"], ["wk.rollups", "st.lifecycle"], ["st.lifecycle", "wk.retention"]], text: "Every derivation of the days involved needs a current manifest that re-derives exactly from current evidence." },
+    { n: ["wk.retention", "ing.capture"], e: [["wk.retention", "ing.capture"]], text: "The partition's own bytes must still reproduce every observation, claim, item, receipt and coverage row they produced." },
+    { n: ["wk.retention", "wk.backup", "ext.backupdir"], e: [["wk.retention", "wk.backup"], ["wk.backup", "ext.backupdir"]], text: "A verified backup must hold the same bytes, and it is re-read just before pruning." },
+    { n: ["wk.retention", "st.evidence", "st.lifecycle"], e: [["wk.retention", "st.evidence"], ["wk.retention", "st.lifecycle"], ["st.evidence", "st.lifecycle"]], text: "The database checks again by its own clock and against the batch seals. Only raw bytes are pruned; every row and every decision stays." },
+  ] },
+  { id: "startup", title: "Why startup can refuse", blurb: "The gates between a command and a listening socket.", steps: [
+    { n: ["ctl.config"], text: "Configuration is checked before any socket opens: loopback bind in demo mode, no enabled providers, no unknown keys." },
+    { n: ["ctl.cli", "api.auth"], e: [["ctl.cli", "api.auth"]], text: "The auth port resolves. Production without the private adapter stops here with exit 3. Demo auth is never a fallback." },
+    { n: ["api.server", "st.identity", "st.db"], e: [["api.server", "st.identity"], ["st.identity", "st.db"]], text: "The database must carry the claim for this mode. The demo refuses a private database or one holding real evidence." },
+    { n: ["api.server", "ext.viewer", "web.static"], e: [["api.server", "web.static"], ["ext.viewer", "web.static"]], text: "Only then does the server listen on loopback and print the URL. You open it yourself; nothing opens a browser for you." },
+    { n: ["plan.gateway", "api.server"], e: [["plan.gateway", "api.server"], ["ext.viewer", "plan.gateway"]], text: "In the private deployment, the lab gateway will sit in front and forward a request only after /_auth returns 204." },
+  ] },
+  { id: "build", title: "From commit to green CI", blurb: "What one setup and one verify command prove.", steps: [
+    { n: ["ops.deps", "ops.setup"], e: [["ops.deps", "ops.setup"]], text: "setup.sh installs only hash-locked tools, pinned images and the pinned headless browser build." },
+    { n: ["ops.verify", "ops.boundary"], e: [["ops.setup", "ops.verify"], ["ops.verify", "ops.boundary"]], text: "verify.sh first scans everything Git would publish for secrets, private addresses, browser-launch code and licence claims." },
+    { n: ["ops.verify", "wire.gen", "src.ais"], e: [["ops.verify", "wire.gen"], ["ops.verify", "src.ais"]], text: "It checks that generated wire types and synthetic AIS fixtures match their generators." },
+    { n: ["ops.verify", "web.app", "ops.tests", "wire.corpus"], e: [["ops.verify", "web.app"], ["ops.verify", "ops.tests"], ["ops.tests", "wire.corpus"]], text: "It rebuilds the browser code from source and runs every test against a disposable loopback PostGIS, in four workers." },
+    { n: ["ops.ci", "ops.image", "ops.demo"], e: [["ops.ci", "ops.setup"], ["ops.ci", "ops.verify"], ["ops.verify", "ops.image"]], text: "CI runs the same two commands plus a container smoke test, a gitleaks scan of full history and dependency audits. Green CI proves the public code, not the private deployment." },
+  ] },
+];
+
+/* ===================================================================
+   STATE
+   =================================================================== */
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const state = {
+  sel: null, hover: null, mode: "explore", chain: false,
+  layers: { flow: true, calls: true, contract: true, cli: false, build: false, planned: true },
+  draft: { ops: [], positions: {} },
+  preview: null, // { ops, msgIndex }
+  pick: null, // { kind: 'link', from }
+  tour: null, // { t, i }
+  tab: "node", panel: false,
+  claudeContext: null,
+};
+const view = { x: 0, y: 0, k: 1 };
+const $ = (id) => document.getElementById(id);
+const mainEl = $("main"), stage = $("stage"), world = $("world"), nodesEl = $("nodes"), zonesEl = $("zones"), labelsEl = $("labels");
+const svg = $("edges"), edgeG = $("edge-g"), flowG = $("flow-g"), particleG = $("particle-g");
+const SVGNS = "http://www.w3.org/2000/svg";
+
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  if (attrs) for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k === "text") e.textContent = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const k of kids) if (k != null && k !== false) e.append(k);
+  return e;
+}
+function sv(tag, attrs) { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v); return e; }
+const domId = (id) => "node-" + id.replace(/[^a-z0-9_-]/gi, "-");
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function store(key, val) { try { if (val === undefined) return localStorage.getItem(key); localStorage.setItem(key, val); } catch (_) { return null; } }
+
+/* ===================================================================
+   GRAPH: base + draft ops + preview ops
+   =================================================================== */
+let G = { nodes: new Map(), edges: [] };
+const edgeKey = (e) => e.from + "→" + e.to;
+
+function computeGraph() {
+  const nodes = new Map();
+  for (const n of NODES) nodes.set(n.id, { ...n, st: n.status || "base", notes: [] });
+  const edges = EDGES.map(([from, to, kind, label]) => ({ from, to, kind, label, st: "base" }));
+  const apply = (ops, origin) => {
+    for (const op of ops) {
+      const pv = origin === "preview";
+      if (op.op === "add_node" && !nodes.has(op.id)) {
+        const z = ZONE_BY_ID[op.zone] || ZONE_BY_ID.workers;
+        nodes.set(op.id, { id: op.id, zone: z.id, col: op.col ?? z.cols[0], kind: "new", label: op.label, path: op.path || "new component", sub: op.sub || op.about || "", about: op.about || "", rules: [], items: [], st: pv ? "proposed" : "added", notes: [], origin: op.by || "you" });
+      } else if (op.op === "remove_node" && nodes.has(op.id)) {
+        nodes.get(op.id).st = pv ? "proposed-remove" : "removed";
+      } else if (op.op === "modify_node" && nodes.has(op.id)) {
+        const n = nodes.get(op.id);
+        if (op.label) n.label = op.label;
+        if (op.about) { n.about = op.about; n.sub = op.about; }
+        if (op.path) n.path = op.path;
+        if (n.st === "base" || n.st === "planned" || n.st === "ext") n.st = pv ? "proposed-change" : "changed";
+      } else if (op.op === "note" && nodes.has(op.id)) {
+        nodes.get(op.id).notes.push(op.text);
+      } else if (op.op === "add_edge" && nodes.has(op.from) && nodes.has(op.to)) {
+        edges.push({ from: op.from, to: op.to, kind: KINDS[op.kind] ? op.kind : "data", label: op.label || "", st: pv ? "proposed" : "added" });
+      } else if (op.op === "remove_edge") {
+        const e = edges.find((x) => x.from === op.from && x.to === op.to && !x.st.includes("remove"));
+        if (e) e.st = pv ? "proposed-remove" : "removed";
+      }
+    }
+  };
+  apply(state.draft.ops, "draft");
+  if (state.preview) apply(state.preview.ops, "preview");
+  for (const e of edges) {
+    const a = nodes.get(e.from), b = nodes.get(e.to);
+    if (e.st === "base" && ((a && a.st === "removed") || (b && b.st === "removed"))) e.st = "removed";
+  }
+  G = { nodes, edges };
+}
+const nodeVisible = (n) => n && (state.layers.planned || n.st !== "planned");
+
+/* ===================================================================
+   RENDER: zones and nodes (DOM), then measure and lay out
+   =================================================================== */
+const COLX = (i) => 40 + i * 370;
+const NODE_W = 270;
+const layoutRect = new Map(); // id -> {x,y,w,h}
+let zoneRects = [];
+let worldBounds = { x: 0, y: 0, w: 3000, h: 2200 };
+
+function flagFor(n) {
+  return { planned: "PLANNED", added: "NEW", changed: "CHANGED", removed: "REMOVED", proposed: "PROPOSED", "proposed-change": "PROPOSED", "proposed-remove": "REMOVE?" }[n.st] || (n.st === "ext" ? "OUTSIDE" : "");
+}
+function renderNodes() {
+  nodesEl.textContent = "";
+  for (const n of G.nodes.values()) {
+    if (!nodeVisible(n)) continue;
+    const z = ZONE_BY_ID[n.zone];
+    const flag = flagFor(n);
+    const node = el("div", {
+      class: `node s-${n.st}`, id: domId(n.id), "data-id": n.id, tabindex: "0", role: "button",
+      "aria-label": `${n.label}. ${z.label}. ${n.sub || ""}`,
+      style: `--zc: var(--z-${z.id})`,
+    },
+      el("div", { class: "n-head" },
+        el("span", { class: "n-tag", text: TAGS[n.kind] || "·" }),
+        el("span", { class: "n-title", text: n.label }),
+        flag ? el("span", { class: "n-flag", text: flag }) : null),
+      n.path ? el("div", { class: "n-path", text: n.path + (n.loc ? ` · ${n.loc} lines` : "") }) : null,
+      n.sub ? el("div", { class: "n-sub", text: n.sub }) : null,
+      n.items && n.items.length ? el("ul", { class: "n-items" }, ...n.items.map((t) => el("li", { text: t }))) : null,
+      n.notes.length ? el("div", { class: "n-notes", text: "Note: " + n.notes.join(" · ") }) : null,
+    );
+    nodesEl.append(node);
+  }
+}
+function renderZones() {
+  zonesEl.textContent = "";
+  for (const r of zoneRects) {
+    const z = r.zone;
+    zonesEl.append(el("div", { class: "zone", style: `--zc: var(--z-${z.id}); left:${r.x}px; top:${r.y}px; width:${r.w}px; height:${r.h}px` },
+      el("div", { class: "zone-mark", text: z.label }),
+      el("div", { class: "zone-head" },
+        el("div", { class: "zone-title" }, z.step ? el("span", { class: "step", text: z.step }) : null, z.label),
+        el("div", { class: "zone-sub", text: z.sub }))));
+  }
+}
+
+function layout() {
+  // measure natural heights
+  const heights = new Map();
+  const wasFar = world.classList.contains("far");
+  world.classList.remove("far");
+  for (const d of nodesEl.children) { d.style.height = ""; d.style.left = "0px"; d.style.top = "0px"; heights.set(d.dataset.id, d.offsetHeight); }
+  if (wasFar) world.classList.add("far");
+  const bands = ["top", "main", "bottom"];
+  const HEAD = 78, GAP = 26, PAD_B = 34, BAND_GAP = 70;
+  let y0 = 40;
+  layoutRect.clear(); zoneRects = [];
+  for (const band of bands) {
+    const colY = {};
+    const bandZones = ZONES.filter((z) => z.band === band);
+    let bottom = y0 + HEAD + 40;
+    for (const n of G.nodes.values()) {
+      if (!nodeVisible(n)) continue;
+      const z = ZONE_BY_ID[n.zone];
+      if (z.band !== band) continue;
+      const col = clamp(n.col ?? z.cols[0], z.cols[0], z.cols[1]);
+      const h = heights.get(n.id) || 100;
+      const pos = state.draft.positions[n.id];
+      let x = COLX(col) + 30, y;
+      if (pos) { x = pos.x; y = pos.y; }
+      else { y = colY[col] ?? (y0 + HEAD); colY[col] = y + h + GAP; }
+      layoutRect.set(n.id, { x, y, w: NODE_W, h });
+      if (!pos) bottom = Math.max(bottom, y + h);
+    }
+    const yBottom = bottom + PAD_B;
+    for (const z of bandZones) {
+      const x = COLX(z.cols[0]);
+      zoneRects.push({ zone: z, x, y: y0, w: COLX(z.cols[1]) + 330 - x, h: yBottom - y0 });
+    }
+    y0 = yBottom + BAND_GAP;
+  }
+  // apply
+  for (const d of nodesEl.children) {
+    const r = layoutRect.get(d.dataset.id);
+    if (!r) continue;
+    d.style.left = r.x + "px"; d.style.top = r.y + "px"; d.style.height = r.h + "px";
+  }
+  let maxX = 0, maxY = 0, minX = 0, minY = 0;
+  for (const r of [...layoutRect.values(), ...zoneRects]) { maxX = Math.max(maxX, r.x + r.w); maxY = Math.max(maxY, r.y + r.h); minX = Math.min(minX, r.x); minY = Math.min(minY, r.y); }
+  worldBounds = { x: minX, y: minY, w: maxX - minX + 40, h: maxY - minY + 40 };
+  svg.setAttribute("width", maxX + 400); svg.setAttribute("height", maxY + 400);
+  renderZones();
+}
+
+/* ===================================================================
+   EDGES: routing, ports, arrows, labels
+   =================================================================== */
+let edgeEls = []; // { e, path, flow, arrow, mid }
+function layerOn(e) {
+  if (e.st !== "base") return true;
+  return !!state.layers[KINDS[e.kind].layer];
+}
+function edgeShown(e) {
+  const a = G.nodes.get(e.from), b = G.nodes.get(e.to);
+  if (!nodeVisible(a) || !nodeVisible(b) || !layoutRect.has(e.from) || !layoutRect.has(e.to)) return false;
+  if (layerOn(e)) return true;
+  if (state.sel && (e.from === state.sel || e.to === state.sel)) return true;
+  if (state.tour) { const s = TOURS[state.tour.t].steps[state.tour.i]; if ((s.e || []).some(([f, t]) => f === e.from && t === e.to)) return true; }
+  return false;
+}
+function drawEdges() {
+  edgeG.textContent = ""; flowG.textContent = ""; edgeEls = [];
+  const shown = G.edges.filter(edgeShown);
+  // decide geometry kind and sides
+  const geo = shown.map((e) => {
+    const a = layoutRect.get(e.from), b = layoutRect.get(e.to);
+    const acx = a.x + a.w / 2, bcx = b.x + b.w / 2;
+    const gapX = Math.abs(bcx - acx) - (a.w + b.w) / 2;
+    if (gapX > 14) { const dir = bcx > acx ? 1 : -1; return { e, a, b, h: true, dir, sSide: dir > 0 ? "R" : "L", tSide: dir > 0 ? "L" : "R" }; }
+    return { e, a, b, h: false, dir: 1, sSide: "L", tSide: "L" };
+  });
+  const buckets = new Map();
+  const add = (id, side, g, end, otherY) => { const k = id + side; if (!buckets.has(k)) buckets.set(k, []); buckets.get(k).push({ g, end, otherY }); };
+  for (const g of geo) { add(g.e.from, g.sSide, g, "s", g.b.y + g.b.h / 2); add(g.e.to, g.tSide, g, "t", g.a.y + g.a.h / 2); }
+  for (const list of buckets.values()) {
+    list.sort((p, q) => p.otherY - q.otherY);
+    const n = list.length;
+    list.forEach((p, i) => { const f = n === 1 ? 0.5 : 0.22 + (0.56 * i) / (n - 1); p.g[p.end + "f"] = f; });
+  }
+  const s = clamp(1 / view.k, 1, 2.6) * 6.5;
+  for (const g of geo) {
+    const { a, b, e } = g;
+    let sx, sy, tx, ty, c1x, c2x, d, ux;
+    sy = a.y + a.h * g.sf; ty = b.y + b.h * g.tf;
+    if (g.h) {
+      sx = g.dir > 0 ? a.x + a.w : a.x; tx = g.dir > 0 ? b.x : b.x + b.w;
+      const c = Math.max(48, Math.abs(tx - sx) * 0.45);
+      c1x = sx + g.dir * c; c2x = tx - g.dir * c; ux = g.dir;
+    } else {
+      sx = a.x; tx = b.x;
+      const bulge = 46 + Math.min(130, Math.abs(ty - sy) * 0.13);
+      c1x = sx - bulge; c2x = tx - bulge; ux = 1;
+    }
+    const ex = tx - ux * s * 1.4; // line ends at arrow base
+    d = `M${sx},${sy} C${c1x},${sy} ${c2x},${ty} ${ex},${ty}`;
+    const st = e.st === "base" ? "" : ` st-${e.st}`;
+    const path = sv("path", { d, class: `edge k-${e.kind}${st}` });
+    const flow = sv("path", { d, class: `flow k-${e.kind}` });
+    const arrow = sv("path", { d: `M${tx},${ty} L${tx - ux * s * 1.6},${ty - s * 0.75} L${tx - ux * s * 1.6},${ty + s * 0.75} Z`, class: `arrow k-${e.kind}${st}` });
+    edgeG.append(path, arrow); flowG.append(flow);
+    const mid = { x: (sx + 3 * c1x + 3 * c2x + ex) / 8, y: (sy + 3 * sy + 3 * ty + ty) / 8 };
+    edgeEls.push({ e, path, flow, arrow, mid });
+  }
+  paint();
+}
+
+/* ===================================================================
+   FOCUS: selection, trace, hover, tours
+   =================================================================== */
+function neighbors(id) {
+  const ups = new Set(), downs = new Set(), es = new Set();
+  for (const x of edgeEls) {
+    if (x.e.from === id) { downs.add(x.e.to); es.add(x); }
+    if (x.e.to === id) { ups.add(x.e.from); es.add(x); }
+  }
+  return { ups, downs, es };
+}
+function chain(id) {
+  const skip = new Set(["cli", "build", "planned"]);
+  const ups = new Set(), downs = new Set(), es = new Set();
+  const walk = (start, fwd, out) => {
+    const q = [start], seen = new Set([start]);
+    while (q.length) {
+      const cur = q.shift();
+      for (const x of edgeEls) {
+        if (skip.has(x.e.kind) && x.e.from !== id && x.e.to !== id) continue;
+        const [from, to] = fwd ? [x.e.from, x.e.to] : [x.e.to, x.e.from];
+        if (from !== cur) continue;
+        es.add(x);
+        if (!seen.has(to)) { seen.add(to); out.add(to); q.push(to); }
+      }
+    }
+  };
+  walk(id, true, downs); walk(id, false, ups);
+  return { ups, downs, es };
+}
+function focusSets() {
+  if (state.tour) {
+    const s = TOURS[state.tour.t].steps[state.tour.i];
+    const ns = new Set(s.n), es = new Set();
+    for (const x of edgeEls) if ((s.e || []).some(([f, t]) => f === x.e.from && t === x.e.to)) es.add(x);
+    return { nodes: ns, es, ups: new Set(), downs: new Set(), labels: true };
+  }
+  const id = state.sel || state.hover;
+  if (!id) return null;
+  const r = state.sel && state.chain ? chain(id) : neighbors(id);
+  const ns = new Set([id, ...r.ups, ...r.downs]);
+  return { nodes: ns, es: r.es, ups: r.ups, downs: r.downs, labels: !!state.sel };
+}
+function paint() {
+  const f = focusSets();
+  world.classList.toggle("has-focus", !!f);
+  for (const d of nodesEl.children) {
+    const id = d.dataset.id;
+    d.classList.toggle("sel", id === state.sel || !!(state.tour && f && f.nodes.has(id)));
+    d.classList.toggle("dim", !!f && !f.nodes.has(id));
+    d.classList.toggle("up", !!f && f.ups.has(id) && id !== state.sel);
+    d.classList.toggle("down", !!f && f.downs.has(id) && id !== state.sel);
+    d.classList.toggle("picking", !!state.pick && state.pick.from === id);
+  }
+  for (const x of edgeEls) {
+    const on = !!f && f.es.has(x);
+    x.path.classList.toggle("hl", on); x.arrow.classList.toggle("hl", on); x.flow.classList.toggle("hl", on);
+  }
+  labelsEl.textContent = "";
+  if (f && f.labels) {
+    for (const x of f.es) if (x.e.label) labelsEl.append(el("div", { class: "edge-label", style: `left:${x.mid.x}px; top:${x.mid.y}px`, text: x.e.label }));
+  }
+  startParticles(f && state.tour ? [...f.es] : []);
+  updateReadout();
+}
+
+/* tour particles */
+let particleRAF = 0;
+function startParticles(list) {
+  cancelAnimationFrame(particleRAF); particleG.textContent = "";
+  if (reduceMotion || !list.length) return;
+  const items = list.map((x) => { const c = sv("circle", { r: 5, class: "particle" }); particleG.append(c); return { c, p: x.path, len: x.path.getTotalLength() }; });
+  const t0 = performance.now();
+  const tick = (t) => {
+    const ph = ((t - t0) / 1600) % 1;
+    for (const it of items) { const pt = it.p.getPointAtLength(ph * it.len); it.c.setAttribute("cx", pt.x); it.c.setAttribute("cy", pt.y); it.c.setAttribute("r", clamp(5 / view.k, 4, 14)); }
+    particleRAF = requestAnimationFrame(tick);
+  };
+  particleRAF = requestAnimationFrame(tick);
+}
+
+/* ===================================================================
+   VIEW: pan, zoom, fly, fit, minimap
+   =================================================================== */
+const K_MIN = 0.12, K_MAX = 2.4;
+let lastArrowK = 1, edgeTimer = 0, mmQueued = false;
+function applyView() {
+  world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.k})`;
+  const inv = Math.min(1 / view.k, 3.6);
+  world.style.setProperty("--inv", inv.toFixed(3));
+  world.style.setProperty("--zinv", Math.min(1 / view.k, 1.7).toFixed(3));
+  world.classList.toggle("far", view.k < 0.68);
+  const m = 40 * view.k, M = 200 * view.k;
+  stage.style.backgroundSize = `${M}px ${M}px, ${M}px ${M}px, ${m}px ${m}px, ${m}px ${m}px`;
+  stage.style.backgroundPosition = `${view.x}px ${view.y}px`;
+  $("z-pct").textContent = Math.round(view.k * 100) + "%";
+  if (Math.abs(Math.log(view.k / lastArrowK)) > 0.2) { clearTimeout(edgeTimer); edgeTimer = setTimeout(() => { lastArrowK = view.k; drawEdges(); }, 140); }
+  if (!mmQueued) { mmQueued = true; requestAnimationFrame(() => { mmQueued = false; drawMinimap(); }); }
+}
+function zoomAt(k, cx, cy) {
+  k = clamp(k, K_MIN, K_MAX);
+  const wx = (cx - view.x) / view.k, wy = (cy - view.y) / view.k;
+  view.k = k; view.x = cx - wx * k; view.y = cy - wy * k; applyView();
+}
+function availRect() {
+  const r = stage.getBoundingClientRect();
+  let w = r.width, h = r.height;
+  if (state.panel) { if (innerWidth <= 760) h = h * 0.38; else w -= $("panel").offsetWidth; }
+  if (state.tour && !(state.panel && innerWidth <= 760)) h -= Math.min(200, h * 0.3);
+  return { w, h };
+}
+let flyRAF = 0;
+function flyTo(tx, ty, tk, ms = 650) {
+  cancelAnimationFrame(flyRAF);
+  if (reduceMotion || ms === 0) { view.x = tx; view.y = ty; view.k = tk; applyView(); return; }
+  const fx = view.x, fy = view.y, fk = view.k, t0 = performance.now();
+  const step = (t) => {
+    const p = Math.min(1, (t - t0) / ms), e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+    const k = fk * Math.pow(tk / fk, e);
+    view.k = k; view.x = fx + (tx - fx) * e; view.y = fy + (ty - fy) * e; applyView();
+    if (p < 1) flyRAF = requestAnimationFrame(step);
+  };
+  flyRAF = requestAnimationFrame(step);
+}
+function fitRect(b, pad = 60, maxK = 1.1, ms) {
+  const a = availRect();
+  const k = clamp(Math.min((a.w - pad * 2) / b.w, (a.h - pad * 2) / b.h), K_MIN, maxK);
+  flyTo(a.w / 2 - (b.x + b.w / 2) * k, a.h / 2 - (b.y + b.h / 2) * k, k, ms);
+}
+function fitAll(ms) { fitRect(worldBounds, 24, 1, ms); }
+function fitNodes(ids, maxK = 1) {
+  const rs = ids.map((id) => layoutRect.get(id)).filter(Boolean);
+  if (!rs.length) return;
+  const x = Math.min(...rs.map((r) => r.x)), y = Math.min(...rs.map((r) => r.y));
+  const X = Math.max(...rs.map((r) => r.x + r.w)), Y = Math.max(...rs.map((r) => r.y + r.h));
+  fitRect({ x: x - 40, y: y - 40, w: X - x + 80, h: Y - y + 80 }, 50, maxK);
+}
+
+const mm = $("minimap"), mmx = mm.getContext("2d");
+function mmScale() { const s = Math.min(mm.width / worldBounds.w, mm.height / worldBounds.h); return { s, ox: (mm.width - worldBounds.w * s) / 2 - worldBounds.x * s, oy: (mm.height - worldBounds.h * s) / 2 - worldBounds.y * s }; }
+function drawMinimap() {
+  if (mm.offsetParent === null) return;
+  const { s, ox, oy } = mmScale(), css = getComputedStyle(document.documentElement);
+  mmx.clearRect(0, 0, mm.width, mm.height);
+  for (const r of zoneRects) { mmx.strokeStyle = css.getPropertyValue(`--z-${r.zone.id}`).trim() || "#3ee6ff"; mmx.globalAlpha = 0.5; mmx.lineWidth = 1; mmx.strokeRect(ox + r.x * s, oy + r.y * s, r.w * s, r.h * s); }
+  mmx.globalAlpha = 0.85;
+  for (const [id, r] of layoutRect) {
+    const n = G.nodes.get(id);
+    mmx.fillStyle = id === state.sel ? "#3ee6ff" : n && n.st === "planned" ? "#2a3e52" : n && (n.st === "added" || n.st === "proposed") ? "#ff66d9" : "#4b6a86";
+    mmx.fillRect(ox + r.x * s, oy + r.y * s, Math.max(2, r.w * s), Math.max(2, r.h * s));
+  }
+  const a = stage.getBoundingClientRect();
+  mmx.globalAlpha = 1; mmx.strokeStyle = "#3ee6ff"; mmx.lineWidth = 2;
+  mmx.strokeRect(ox + (-view.x / view.k) * s, oy + (-view.y / view.k) * s, (a.width / view.k) * s, (a.height / view.k) * s);
+}
+function minimapGo(ev) {
+  const r = mm.getBoundingClientRect(), { s, ox, oy } = mmScale();
+  const mx = ((ev.clientX - r.left) / r.width) * mm.width, my = ((ev.clientY - r.top) / r.height) * mm.height;
+  const wx = (mx - ox) / s, wy = (my - oy) / s, a = availRect();
+  view.x = a.w / 2 - wx * view.k; view.y = a.h / 2 - wy * view.k; applyView();
+}
+mm.addEventListener("pointerdown", (ev) => { ev.stopPropagation(); mm.setPointerCapture(ev.pointerId); minimapGo(ev); const mv = (e) => minimapGo(e); mm.addEventListener("pointermove", mv); mm.addEventListener("pointerup", () => mm.removeEventListener("pointermove", mv), { once: true }); });
+
+/* pointer: pan, pinch, click, drag (redesign) */
+const pointers = new Map();
+let gesture = null; // {type:'pan'|'pinch'|'node', ...}
+stage.addEventListener("pointerdown", (ev) => {
+  if (ev.target.closest(".ui, #panel, .modal-back")) return;
+  const nodeDiv = ev.target.closest(".node");
+  pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  if (!nodeDiv) stage.setPointerCapture(ev.pointerId);
+  if (pointers.size === 2) {
+    const [p, q] = [...pointers.values()];
+    gesture = { type: "pinch", d: Math.hypot(p.x - q.x, p.y - q.y), k: view.k };
+    return;
+  }
+  if (nodeDiv) gesture = { type: "node", id: nodeDiv.dataset.id, div: nodeDiv, sx: ev.clientX, sy: ev.clientY, moved: false, r0: { ...layoutRect.get(nodeDiv.dataset.id) } };
+  else { gesture = { type: "pan", sx: ev.clientX, sy: ev.clientY, vx: view.x, vy: view.y, moved: false }; }
+});
+stage.addEventListener("pointermove", (ev) => {
+  if (!pointers.has(ev.pointerId)) {
+    if (!gesture && state.sel == null) {
+      const d = ev.target.closest && ev.target.closest(".node");
+      const id = d ? d.dataset.id : null;
+      if (id !== state.hover) { state.hover = id; paint(); }
+    }
+    return;
+  }
+  pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  if (!gesture) return;
+  if (gesture.type === "pinch" && pointers.size >= 2) {
+    const [p, q] = [...pointers.values()], r = stage.getBoundingClientRect();
+    const d = Math.hypot(p.x - q.x, p.y - q.y);
+    zoomAt(gesture.k * (d / gesture.d), (p.x + q.x) / 2 - r.left, (p.y + q.y) / 2 - r.top);
+    return;
+  }
+  const dx = ev.clientX - gesture.sx, dy = ev.clientY - gesture.sy;
+  if (!gesture.moved && Math.hypot(dx, dy) > 5) {
+    gesture.moved = true;
+    try { stage.setPointerCapture(ev.pointerId); } catch (_) { /* pointer already released */ }
+    if (gesture.type === "pan") stage.classList.add("panning");
+  }
+  if (!gesture.moved) return;
+  if (gesture.type === "pan") { view.x = gesture.vx + dx; view.y = gesture.vy + dy; applyView(); }
+  else if (gesture.type === "node") {
+    if (state.mode !== "redesign") { // a drag that starts on a node pans in explore mode
+      gesture = { type: "pan", sx: gesture.sx, sy: gesture.sy, vx: view.x, vy: view.y, moved: true }; stage.classList.add("panning"); return;
+    }
+    const r = layoutRect.get(gesture.id);
+    r.x = Math.round(gesture.r0.x + dx / view.k); r.y = Math.round(gesture.r0.y + dy / view.k);
+    gesture.div.style.left = r.x + "px"; gesture.div.style.top = r.y + "px"; gesture.div.classList.add("dragging");
+    queueEdgeRedraw();
+  }
+});
+let edgeQueued = false;
+function queueEdgeRedraw() { if (edgeQueued) return; edgeQueued = true; requestAnimationFrame(() => { edgeQueued = false; drawEdges(); drawMinimap(); }); }
+function endPointer(ev) {
+  if (!pointers.has(ev.pointerId)) return;
+  pointers.delete(ev.pointerId);
+  stage.classList.remove("panning");
+  const g = gesture;
+  if (pointers.size > 0) { if (g && g.type === "pinch") gesture = null; return; }
+  gesture = null;
+  if (!g || g.type === "pinch") return;
+  if (g.type === "node") {
+    if (g.moved && state.mode === "redesign") {
+      g.div.classList.remove("dragging");
+      const r = layoutRect.get(g.id);
+      state.draft.positions[g.id] = { x: r.x, y: r.y };
+      saveDraft(); refreshPanel(); return;
+    }
+    if (!g.moved) nodeClicked(g.id);
+  } else if (g.type === "pan" && !g.moved) {
+    if (state.pick) { cancelPick(); return; }
+    if (state.tour) return;
+    select(null);
+  }
+}
+stage.addEventListener("pointerup", endPointer);
+stage.addEventListener("pointercancel", endPointer);
+stage.addEventListener("pointerleave", () => { if (!gesture && state.hover) { state.hover = null; paint(); } });
+stage.addEventListener("wheel", (ev) => {
+  if (ev.target.closest(".ui, #panel, .modal-back")) return;
+  ev.preventDefault();
+  const r = stage.getBoundingClientRect();
+  const mouseLike = ev.deltaMode === 1 || (Math.abs(ev.deltaY) >= 40 && ev.deltaX === 0 && Number.isInteger(ev.deltaY));
+  if (ev.ctrlKey || mouseLike) zoomAt(view.k * Math.exp(-ev.deltaY * (ev.ctrlKey ? 0.01 : 0.0018)), ev.clientX - r.left, ev.clientY - r.top);
+  else { view.x -= ev.deltaX; view.y -= ev.deltaY; applyView(); }
+}, { passive: false });
+stage.addEventListener("dblclick", (ev) => {
+  const d = ev.target.closest(".node");
+  if (d) { fitNodes([d.dataset.id], 1.4); return; }
+  if (ev.target.closest(".ui, #panel")) return;
+  const r = stage.getBoundingClientRect(); zoomAt(view.k * 1.6, ev.clientX - r.left, ev.clientY - r.top);
+});
+nodesEl.addEventListener("keydown", (ev) => {
+  const d = ev.target.closest(".node");
+  if (d && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); nodeClicked(d.dataset.id); }
+});
+nodesEl.addEventListener("focusin", (ev) => { const d = ev.target.closest(".node"); if (d && !state.sel) { state.hover = d.dataset.id; paint(); } });
+
+/* ===================================================================
+   SELECTION + INSPECTOR
+   =================================================================== */
+function nodeClicked(id) {
+  if (state.pick) { completePick(id); return; }
+  if (state.tour) stopTour();
+  select(id);
+}
+function select(id, opts = {}) {
+  const prev = state.sel;
+  state.sel = id; state.hover = null;
+  if (id) { state.claudeContext = id; openPanel(opts.tab || (state.tab === "draft" && state.mode === "redesign" ? "node" : state.tab === "claude" ? "claude" : "node")); }
+  drawEdges(); // selection can reveal edges from hidden layers
+  renderInspector(); renderChatCtx();
+  if (opts.fly || (id && innerWidth <= 760)) fitNodes([id], innerWidth <= 760 ? 0.85 : 1.1);
+  else if (id) ensureVisible(id);
+  if (!id && prev && state.tab === "node" && state.panel) closePanel();
+}
+function ensureVisible(id) {
+  const r = layoutRect.get(id); if (!r) return;
+  const a = availRect(), m = 24;
+  const sx = r.x * view.k + view.x, sy = r.y * view.k + view.y, sw = r.w * view.k, sh = Math.min(r.h * view.k, a.h - 2 * m);
+  let dx = 0, dy = 0;
+  if (sx + sw > a.w - m) dx = a.w - m - (sx + sw); if (sx + dx < m) dx = m - sx;
+  if (sy + sh > a.h - m) dy = a.h - m - (sy + sh); if (sy + dy < m) dy = m - sy;
+  if (dx || dy) flyTo(view.x + dx, view.y + dy, view.k, 380);
+}
+function openPanel(tab) {
+  state.panel = true; $("panel").hidden = false; mainEl.classList.add("has-panel");
+  setTab(tab || state.tab);
+}
+function closePanel() { state.panel = false; $("panel").hidden = true; mainEl.classList.remove("has-panel"); drawMinimap(); }
+function setTab(tab) {
+  state.tab = tab;
+  for (const t of ["node", "claude", "draft"]) { $("tab-" + t).setAttribute("aria-selected", t === tab); $("pane-" + t).hidden = t !== tab; }
+  if (tab === "node") renderInspector();
+  if (tab === "draft") renderDraft();
+  if (tab === "claude") { renderChatCtx(); renderChat(); }
+}
+$("tab-node").onclick = () => setTab("node");
+$("tab-claude").onclick = () => setTab("claude");
+$("tab-draft").onclick = () => setTab("draft");
+$("p-close").onclick = () => { closePanel(); if (state.sel) select(null); };
+function refreshPanel() { if (!state.panel) return; if (state.tab === "node") renderInspector(); if (state.tab === "draft") renderDraft(); updateBadge(); }
+
+function linkRows(list, dirWord) {
+  if (!list.length) return el("p", { class: "empty", text: dirWord === "in" ? "Nothing feeds this directly." : "Nothing downstream." });
+  return el("div", { class: "links" }, ...list.map((e) => {
+    const other = G.nodes.get(dirWord === "in" ? e.from : e.to);
+    if (!other) return null;
+    return el("button", { class: "link-row", onclick: () => select(other.id, { fly: true }) },
+      el("i", { class: "dot", style: `background: ${KIND_COLOR[e.kind] || "var(--muted)"}` }),
+      el("div", null, el("b", { text: other.label }), el("span", { text: `${e.label || KINDS[e.kind].label} · ${KINDS[e.kind].label.toLowerCase()}${e.st !== "base" ? " · " + e.st : ""}` })));
+  }));
+}
+function renderInspector() {
+  const pane = $("pane-node");
+  pane.textContent = "";
+  const n = state.sel && G.nodes.get(state.sel);
+  if (!n) {
+    pane.append(el("p", { class: "eyebrow", style: "color: var(--accent)", text: "Nothing selected" }),
+      el("p", { class: "i-about", text: "Click any block on the map to see what it does, what feeds it, what it feeds, and the rules it keeps." }),
+      el("div", { class: "i-sec", text: "Project rules every design must keep" }),
+      el("ul", { class: "rules" }, ...INVARIANTS.map((t) => el("li", { text: t }))));
+    return;
+  }
+  const z = ZONE_BY_ID[n.zone];
+  const ins = G.edges.filter((e) => e.to === n.id), outs = G.edges.filter((e) => e.from === n.id);
+  const flag = flagFor(n);
+  pane.append(
+    el("div", { class: "eyebrow", style: `color: var(--z-${z.id})` }, (z.step ? z.step + " · " : "") + z.label),
+    el("h2", { class: "i-title", text: n.label }),
+    el("div", { class: "i-path" }, n.src ? el("a", { href: GH(n.src), target: "_blank", rel: "noopener", text: n.path }) : n.path || ""),
+    el("div", { class: "badges" },
+      el("span", { class: "bdg hot", text: TAGS[n.kind] || n.kind }),
+      n.pkg ? el("span", { class: "bdg", text: n.pkg }) : null,
+      n.loc ? el("span", { class: "bdg", text: `${n.loc} lines` }) : null,
+      flag ? el("span", { class: "bdg mag", text: flag }) : null,
+      el("span", { class: "bdg", text: `${ins.length} in · ${outs.length} out` })),
+    el("p", { class: "i-about", text: n.about || n.sub || "" }),
+  );
+  if (n.rules && n.rules.length) pane.append(el("div", { class: "i-sec", text: "Guarantees" }), el("ul", { class: "rules" }, ...n.rules.map((t) => el("li", { text: t }))));
+  if (n.items && n.items.length) pane.append(el("div", { class: "i-sec", text: n.kind === "sql" ? "Tables" : "Parts" }), el("div", { class: "chips" }, ...n.items.map((t) => el("span", { text: t }))));
+  if (n.notes.length) pane.append(el("div", { class: "i-sec", text: "Your notes" }), el("ul", { class: "rules" }, ...n.notes.map((t) => el("li", { text: t }))));
+  const chainBox = el("input", { type: "checkbox", id: "chain-toggle" }); chainBox.checked = state.chain;
+  chainBox.onchange = () => { state.chain = chainBox.checked; paint(); };
+  pane.append(
+    el("div", { class: "i-sec" }, "Connections", el("label", { class: "trace-toggle", for: "chain-toggle" }, chainBox, "Light up the full chain")),
+    el("p", { class: "eyebrow", style: "color: var(--blue); margin: 4px 0 6px", text: "Fed by" }), linkRows(ins, "in"),
+    el("p", { class: "eyebrow", style: "color: var(--accent); margin: 12px 0 6px", text: "Feeds" }), linkRows(outs, "out"),
+  );
+  // ask + redesign
+  const actions = el("div", { class: "actions" },
+    el("button", { class: "btn primary", onclick: () => askAbout(n.id, `Explain ${n.label} to me simply: what it does, why it exists, and how it connects to the rest.`) }, "Explain it"),
+    el("button", { class: "btn", onclick: () => askAbout(n.id, `If ${n.label} were removed or failed, what would break, and what would still work?`) }, "What if it fails?"),
+    el("button", { class: "btn", onclick: () => askAbout(n.id, `Propose a better design for ${n.label} and its connections that still keeps every project rule. Stage the changes on the map.`) }, "Redesign it"),
+  );
+  pane.append(el("div", { class: "i-sec", text: "Ask Claude here" }), actions);
+  if (state.mode === "redesign") {
+    pane.append(el("div", { class: "i-sec", text: "Edit in your draft" }), el("div", { class: "actions" },
+      el("button", { class: "btn", onclick: () => openEditModal(n) }, "Rename / describe"),
+      el("button", { class: "btn", onclick: () => startPick(n.id) }, "Link to…"),
+      el("button", { class: "btn", onclick: () => openNoteModal(n) }, "Add note"),
+      n.st === "removed" || n.st === "added" ? null : el("button", { class: "btn danger", onclick: () => pushOp({ op: "remove_node", id: n.id }) }, "Remove")));
+  }
+  pane.append(el("div", { class: "i-sec", text: "Hand off to Claude Code" }), handoffBox({
+    anchorEl: () => document.getElementById(domId(n.id)),
+    intro: "Claude Code works in the repository itself. It can read the files, change code, run verify and push a branch.",
+    placeholder: `e.g. "Split ${n.label} into smaller modules" or "Why does it work this way?"`,
+    compose: (text) => `[EYE system map] Component: ${n.label} (${n.id})\nFiles: ${n.path || "—"}\n\n${text}`,
+    showComment: true,
+  }));
+}
+
+/* ===================================================================
+   CLAUDE CODE HANDOFF (comments → watching Claude Code session)
+   =================================================================== */
+let comments = null;
+const use = (name) => (window.claude && typeof window.claude.use === "function") ? Promise.resolve(window.claude.use(name)).catch(() => null) : Promise.resolve(null);
+async function canSend() {
+  if (!comments || typeof comments.canSendToClaude !== "function") return "off";
+  try { return await comments.canSendToClaude(); } catch (_) { return "off"; }
+}
+function handoffBox({ anchorEl, intro, placeholder, compose, showComment, prefill }) {
+  const ta = el("textarea", { "aria-label": "Message for Claude Code", placeholder });
+  if (prefill) ta.value = prefill;
+  const status = el("div", { class: "status" });
+  const send = el("button", { class: "btn primary", disabled: true }, "Send to Claude Code");
+  const copy = el("button", { class: "btn" }, "Copy request");
+  const comment = showComment ? el("button", { class: "btn ghost", hidden: !comments }, "Comment") : null;
+  const copybox = el("textarea", { class: "copybox", readonly: true, hidden: true, "aria-label": "Request text to copy" });
+  const box = el("div", { class: "handoff" }, el("p", { text: intro }), ta, el("div", { class: "actions", style: "margin-top: 0" }, send, copy, comment), status, copybox);
+  const sayState = (s) => {
+    status.className = "status";
+    if (s === "available") { send.disabled = false; status.textContent = "Claude Code is watching this map. It replies in a comment thread here."; status.classList.add("ok"); }
+    else if (s === "no_session") { send.disabled = true; status.textContent = "No Claude Code session is watching this map right now. Copy the request into your session instead."; status.classList.add("warn"); }
+    else if (s === "writers_only") { send.disabled = true; status.textContent = "Only editors of this map can send to Claude. Copy the request instead."; status.classList.add("warn"); }
+    else { send.disabled = true; status.textContent = "Sending to Claude Code works when this map is open on claude.ai. Copy the request into your session instead."; }
+  };
+  canSend().then(sayState);
+  send.onclick = async () => {
+    const text = ta.value.trim();
+    if (!text) { status.textContent = "Write what you want Claude Code to do first."; status.className = "status warn"; ta.focus(); return; }
+    const target = anchorEl();
+    if (!target) return;
+    send.disabled = true; status.className = "status"; status.textContent = "Sending…";
+    try {
+      const anchor = await comments.anchorFor(target);
+      await comments.sendToClaude({ anchor, text: compose(text).slice(0, 3900) });
+      status.textContent = "Sent. Claude Code will reply in the comment thread on this spot."; status.className = "status ok"; ta.value = "";
+    } catch (e) {
+      const c = e && e.code;
+      status.className = "status warn";
+      status.textContent = c === "consent_required" ? "Not sent: allow this map to comment as you, then send again."
+        : c === "forbidden" ? "Commenting from the map is off for you here. Copy the request instead."
+        : c === "claude_unavailable" ? "No Claude session could take it right now. Nothing was posted; copy the request instead."
+        : c === "rate_limited" ? "Sent too often. Wait a moment, then send again."
+        : "It didn't go through. Try once more, or copy the request.";
+    } finally { canSend().then((s) => { if (s === "available") send.disabled = false; }); }
+  };
+  copy.onclick = () => {
+    const text = compose(ta.value.trim() || "(describe what you want)");
+    const fallback = () => { copybox.hidden = false; copybox.value = text; copybox.focus(); copybox.select(); status.textContent = "Select-all is on. Copy it with your keyboard."; status.className = "status"; };
+    try { navigator.clipboard.writeText(text).then(() => { status.textContent = "Copied. Paste it into your Claude Code session."; status.className = "status ok"; }, fallback); } catch (_) { fallback(); }
+  };
+  if (comment) comment.onclick = async () => {
+    try { const r = await comments.openComposer({ element: anchorEl() }); if (!r.opened) status.textContent = "Close the comment you're writing first."; }
+    catch (_) { comment.hidden = true; }
+  };
+  return box;
+}
+
+/* ===================================================================
+   REDESIGN: draft ops, tools, persistence
+   =================================================================== */
+let db = null, draftRef = null, saveState = "idle", lastSaved = "", saving = false, savePending = false, saveTimer = 0;
+const opId = () => Math.random().toString(36).slice(2, 9);
+function pushOp(op, opts = {}) {
+  state.draft.ops.push({ ...op, oid: opId(), by: op.by || "you", at: new Date().toISOString() });
+  rebuild();
+  saveDraft();
+  if (!opts.quiet) toast(describeOp(op));
+}
+function dropOp(oid) { state.draft.ops = state.draft.ops.filter((o) => o.oid !== oid); rebuild(); saveDraft(); }
+function undo() {
+  const op = state.draft.ops.pop();
+  if (op) { rebuild(); saveDraft(); toast("Undid: " + describeOp(op)); return; }
+  const ids = Object.keys(state.draft.positions);
+  if (ids.length) { delete state.draft.positions[ids[ids.length - 1]]; rebuild(); saveDraft(); toast("Undid a move"); }
+}
+function label(id) { const n = G.nodes.get(id) || NODES.find((x) => x.id === id); return n ? n.label : id; }
+function describeOp(o) {
+  switch (o.op) {
+    case "add_node": return `Add “${o.label}” to ${ZONE_BY_ID[o.zone] ? ZONE_BY_ID[o.zone].label : o.zone}`;
+    case "remove_node": return `Remove ${label(o.id)}`;
+    case "modify_node": return `Change ${label(o.id)}${o.label ? ` → “${o.label}”` : ""}${o.about ? `: ${o.about}` : ""}`;
+    case "add_edge": return `Link ${label(o.from)} → ${label(o.to)}${o.label ? ` (${o.label})` : ""}`;
+    case "remove_edge": return `Unlink ${label(o.from)} → ${label(o.to)}`;
+    case "note": return `Note on ${label(o.id)}: ${o.text}`;
+    default: return o.op;
+  }
+}
+const OP_CLASS = { add_node: "add", remove_node: "remove", modify_node: "change", add_edge: "link", remove_edge: "remove", note: "note" };
+const OP_WORD = { add_node: "ADD", remove_node: "REMOVE", modify_node: "CHANGE", add_edge: "LINK", remove_edge: "UNLINK", note: "NOTE" };
+
+function draftSummary() {
+  const lines = state.draft.ops.map((o, i) => `${i + 1}. ${describeOp(o)}${o.by === "claude" ? " (proposed by Claude, accepted)" : ""}`);
+  const moved = Object.keys(state.draft.positions).length;
+  if (moved) lines.push(`${lines.length + 1}. Moved ${moved} block${moved > 1 ? "s" : ""} on the map (layout only)`);
+  return lines.join("\n");
+}
+function renderDraft() {
+  const pane = $("pane-draft"); pane.textContent = "";
+  const count = state.draft.ops.length, moved = Object.keys(state.draft.positions).length;
+  pane.append(el("div", { class: "eyebrow", style: "color: var(--magenta)", text: "Redesign draft" }),
+    el("h2", { class: "i-title", id: "draft-title", text: count ? `${count} change${count > 1 ? "s" : ""} to EYE` : "No changes yet" }),
+    el("p", { class: "save-state", id: "save-state", text: saveText() }));
+  if (!count && !moved) {
+    pane.append(el("p", { class: "empty", text: "Switch to Redesign, then drag blocks, add components, link or remove them, or ask Claude to propose a redesign. Every change shows up here and on the map." }));
+    if (state.mode !== "redesign") pane.append(el("div", { class: "actions" }, el("button", { class: "btn primary", onclick: () => setMode("redesign") }, "Start redesigning")));
+  } else {
+    pane.append(el("ul", { class: "ops" }, ...state.draft.ops.map((o) => el("li", null,
+      el("span", { class: `op ${OP_CLASS[o.op] || "note"}`, text: OP_WORD[o.op] || "?" }),
+      el("span", { text: describeOp(o) + (o.by === "claude" ? " · from Claude" : "") }),
+      el("button", { "aria-label": "Drop this change", title: "Drop this change", onclick: () => dropOp(o.oid) }, "×")))));
+    if (moved) pane.append(el("p", { class: "empty", style: "margin-top: 10px", text: `${moved} block${moved > 1 ? "s" : ""} moved (layout only).` }));
+    const reset = el("button", { class: "btn danger" }, "Reset draft");
+    reset.onclick = () => {
+      if (reset.dataset.armed) { state.draft = { ops: [], positions: {} }; rebuild(); saveDraft(); renderDraft(); toast("Draft cleared"); return; }
+      reset.dataset.armed = "1"; reset.textContent = `Discard ${count + moved} changes?`; setTimeout(() => { if (reset.isConnected) { delete reset.dataset.armed; reset.textContent = "Reset draft"; } }, 4000);
+    };
+    pane.append(el("div", { class: "actions" },
+      el("button", { class: "btn", onclick: undo }, "Undo last"),
+      el("button", { class: "btn", onclick: () => askAbout(null, "Review my redesign draft: does it keep every project rule, what does it improve, what does it risk, and what would you change?") }, "Review with Claude"),
+      reset));
+  }
+  pane.append(el("div", { class: "i-sec", text: "Build it with Claude Code" }), handoffBox({
+    anchorEl: () => $("draft-title"),
+    intro: "Send the draft to the Claude Code session that has the repository. It can plan the change as a work package, edit the code and open a branch for your review.",
+    placeholder: "Anything Claude Code should know: priorities, what to build first, what not to touch…",
+    compose: (text) => `[EYE system map] Redesign draft against main @ ${COMMIT} (${count} changes; stored in this map's database at drafts/main):\n${draftSummary() || "(no changes yet)"}\n\nFrom the viewer:\n${text}`,
+  }));
+}
+function saveText() {
+  return {
+    idle: "Changes save automatically.",
+    db: "Saved with this map. Claude Code can read it from the map's database (drafts/main).",
+    saving: "Saving…",
+    local: db ? "Saved in this browser only: the map's database refused the write." : "Saved in this browser only. Open the map on claude.ai to keep it with the map.",
+    error: "Couldn't save the last change. It's still on screen; try another edit to retry.",
+  }[saveState];
+}
+function updateBadge() { const n = state.draft.ops.length; const b = $("draft-badge"); b.hidden = !n; b.textContent = n; }
+function saveDraft() {
+  updateBadge();
+  clearTimeout(saveTimer); saveTimer = setTimeout(flushSave, 450);
+}
+async function flushSave() {
+  if (saving) { savePending = true; return; }
+  saving = true;
+  const body = { ops: state.draft.ops, positions: state.draft.positions, base: `${REPO}@${COMMIT}`, updatedAt: new Date().toISOString() };
+  const sig = JSON.stringify([body.ops, body.positions]);
+  try { store("eye-map-draft", JSON.stringify(body)); } catch (_) { /* storage optional */ }
+  if (draftRef) {
+    saveState = "saving"; setSaveText();
+    try { await draftRef.set(body); lastSaved = sig; saveState = "db"; }
+    catch (e) { saveState = e && e.code === "unavailable" ? "error" : "local"; }
+  } else saveState = "local";
+  saving = false; setSaveText();
+  if (savePending) { savePending = false; flushSave(); }
+}
+function setSaveText() { const s = $("save-state"); if (s) s.textContent = saveText(); }
+function sanitizeDraft(d) {
+  const ops = Array.isArray(d && d.ops) ? d.ops.filter((o) => o && typeof o.op === "string").slice(0, 400) : [];
+  const positions = {};
+  if (d && d.positions && typeof d.positions === "object") for (const [k, v] of Object.entries(d.positions)) if (v && isFinite(v.x) && isFinite(v.y)) positions[k] = { x: +v.x, y: +v.y };
+  return { ops, positions };
+}
+async function initDb() {
+  try { const local = store("eye-map-draft"); if (local) { state.draft = sanitizeDraft(JSON.parse(local)); rebuild(); } } catch (_) { /* ignore */ }
+  db = await use("db");
+  if (!db) { saveState = "local"; setSaveText(); return; }
+  try { draftRef = db.doc("drafts/main"); } catch (_) { draftRef = null; return; }
+  let first = true;
+  draftRef.onSnapshot((snap) => {
+    if (snap.metadata && snap.metadata.hasPendingWrites) return;
+    if (!snap.exists) { if (first && (state.draft.ops.length || Object.keys(state.draft.positions).length)) flushSave(); first = false; saveState = "db"; setSaveText(); return; }
+    first = false;
+    const d = sanitizeDraft(snap.data());
+    const sig = JSON.stringify([d.ops, d.positions]);
+    saveState = "db";
+    if (sig !== lastSaved && sig !== JSON.stringify([state.draft.ops, state.draft.positions])) { state.draft = d; lastSaved = sig; rebuild(); }
+    else lastSaved = sig;
+    setSaveText();
+  }, () => { draftRef = null; saveState = "local"; setSaveText(); });
+}
+
+/* mode + toolbar */
+function setMode(m) {
+  state.mode = m;
+  $("mode-explore").setAttribute("aria-pressed", m === "explore");
+  $("mode-redesign").setAttribute("aria-pressed", m === "redesign");
+  $("toolbar").hidden = m !== "redesign";
+  stage.classList.toggle("edit", m === "redesign");
+  if (m === "redesign") { openPanel(state.sel ? "node" : "draft"); }
+  else cancelPick();
+  refreshPanel(); updateReadout();
+}
+$("mode-explore").onclick = () => setMode("explore");
+$("mode-redesign").onclick = () => setMode("redesign");
+$("tb-add").onclick = () => openAddModal();
+$("tb-link").onclick = () => { if (state.sel) startPick(state.sel); else { state.pick = { kind: "link", from: null }; hint("Click the block the link starts from · Esc cancels"); } };
+$("tb-note").onclick = () => { const n = state.sel && G.nodes.get(state.sel); if (n) openNoteModal(n); else hint("Select a block first, then add a note"); };
+$("tb-remove").onclick = () => { if (state.sel && G.nodes.get(state.sel)) pushOp({ op: "remove_node", id: state.sel }); else hint("Select a block first, then remove it"); };
+$("tb-undo").onclick = undo;
+function hint(t) { $("tb-hint").textContent = t; }
+function startPick(from) { state.pick = { kind: "link", from }; hint(`Linking from ${label(from)} · click the target block · Esc cancels`); paint(); }
+function cancelPick() { if (!state.pick) return; state.pick = null; hint("Drag blocks to rearrange · select one to edit it"); paint(); }
+function completePick(id) {
+  if (!state.pick.from) { state.pick.from = id; hint(`Linking from ${label(id)} · click the target block`); paint(); return; }
+  const from = state.pick.from; cancelPick();
+  if (from === id) return;
+  openLinkModal(from, id);
+}
+
+/* modals */
+function modal(title, fields, onSubmit, submitText = "Add to draft") {
+  const back = el("div", { class: "modal-back" });
+  const form = el("form", { class: "modal" }, el("h2", { text: title }), ...fields,
+    el("div", { class: "row" }, el("button", { type: "button", class: "btn", onclick: () => back.remove() }, "Cancel"), el("button", { type: "submit", class: "btn primary" }, submitText)));
+  form.addEventListener("submit", (ev) => { ev.preventDefault(); if (onSubmit(new FormData(form)) !== false) back.remove(); });
+  back.addEventListener("pointerdown", (ev) => { if (ev.target === back) back.remove(); });
+  back.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { ev.stopPropagation(); back.remove(); } });
+  back.append(form); mainEl.append(back);
+  const first = form.querySelector("input, textarea, select"); if (first) first.focus();
+}
+const field = (lbl, input) => el("div", { class: "field" }, el("label", { for: input.id, text: lbl }), input);
+const zoneSelect = (id, val) => el("select", { id, name: "zone" }, ...ZONES.map((z) => { const o = el("option", { value: z.id, text: z.label }); if (z.id === val) o.selected = true; return o; }));
+function openAddModal() {
+  const near = state.sel && G.nodes.get(state.sel);
+  modal("New component", [
+    field("Name", el("input", { id: "f-name", name: "name", required: true, maxlength: 60, placeholder: "e.g. Ingest scheduler" })),
+    field("Swimlane", zoneSelect("f-zone", near ? near.zone : "workers")),
+    field("What it does", el("textarea", { id: "f-about", name: "about", maxlength: 400, placeholder: "One or two sentences" })),
+  ], (fd) => {
+    const name = String(fd.get("name") || "").trim(); if (!name) return false;
+    const zone = String(fd.get("zone"));
+    const base = "new." + name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
+    let id = base, i = 2; while (G.nodes.has(id)) id = base + "-" + i++;
+    pushOp({ op: "add_node", id, label: name, zone, about: String(fd.get("about") || "").trim() });
+    setTimeout(() => select(id, { fly: true }), 30);
+  });
+}
+function openLinkModal(from, to) {
+  const kinds = ["data", "write", "read", "call", "contract", "http", "trigger"];
+  modal(`Link ${label(from)} → ${label(to)}`, [
+    field("Label", el("input", { id: "f-label", name: "label", maxlength: 60, placeholder: "what flows or happens" })),
+    field("Kind", el("select", { id: "f-kind", name: "kind" }, ...kinds.map((k) => el("option", { value: k, text: KINDS[k].label })))),
+  ], (fd) => { pushOp({ op: "add_edge", from, to, label: String(fd.get("label") || "").trim(), kind: String(fd.get("kind")) }); });
+}
+function openNoteModal(n) {
+  modal(`Note on ${n.label}`, [field("Note", el("textarea", { id: "f-note", name: "note", required: true, maxlength: 400, placeholder: "An idea, a concern, a question for later" }))],
+    (fd) => { const t = String(fd.get("note") || "").trim(); if (!t) return false; pushOp({ op: "note", id: n.id, text: t }); });
+}
+function openEditModal(n) {
+  modal(`Change ${n.label}`, [
+    field("Name", el("input", { id: "f-ename", name: "label", maxlength: 60, value: n.label })),
+    field("What it should do", el("textarea", { id: "f-eabout", name: "about", maxlength: 400 }, n.about || n.sub || "")),
+  ], (fd) => {
+    const lbl = String(fd.get("label") || "").trim(), about = String(fd.get("about") || "").trim();
+    const op = { op: "modify_node", id: n.id };
+    if (lbl && lbl !== n.label) op.label = lbl;
+    if (about && about !== (n.about || n.sub)) op.about = about;
+    if (op.label || op.about) pushOp(op);
+  }, "Save to draft");
+}
+
+/* ===================================================================
+   CLAUDE CHAT (sample)
+   =================================================================== */
+let sample = null, sampleReady = false, chatCtl = null, busy = false;
+const chat = []; // {role:'user'|'ai', text, about, actions, proposal, error, done}
+function factsForPrompt() {
+  const nodes = [...G.nodes.values()].map((n) => ({ id: n.id, zone: n.zone, label: n.label, files: n.path, pkg: n.pkg, status: n.st, does: n.about || n.sub, rules: n.rules && n.rules.length ? n.rules : undefined, parts: n.items && n.items.length ? n.items : undefined, notes: n.notes.length ? n.notes : undefined }));
+  const edges = G.edges.map((e) => [e.from, e.to, e.kind, e.label, e.st === "base" ? undefined : e.st].filter((x) => x !== undefined));
+  return JSON.stringify({ zones: ZONES.map((z) => ({ id: z.id, label: z.label, sub: z.sub })), nodes, edges });
+}
+function rulesTurn() {
+  return [
+    "You are the architecture copilot inside the EYE System Map, an interactive diagram of the public EYE repository (" + REPO + " at commit " + COMMIT + ").",
+    "EYE is a self-hosted geospatial and solar-system observation and research application. This public build runs on synthetic data only: Python backend (ingest, workers, API), PostgreSQL/PostGIS storage, one versioned wire schema, and a TypeScript browser client with THEATRE (globe) and DESK (analysis).",
+    "The viewer is the project's owner. They want to understand the design and redesign it. Speak plainly to someone who may not know the code.",
+    "",
+    "Project rules every design must keep:",
+    ...INVARIANTS.map((t) => "- " + t),
+    "",
+    "The map, as JSON (nodes with id, zone, files, what they do and their guarantees; edges as [from, to, kind, label, status]). Kinds: data, write, read, http, trigger, danger, call, contract, cli, build, planned. Status 'planned' means not built yet; 'added', 'removed', 'changed' are the viewer's draft:",
+    factsForPrompt(),
+    "",
+    "How to answer:",
+    "- Be concise: usually under 220 words. Use short paragraphs and '- ' bullets. Use `code` for file and table names and **bold** sparingly.",
+    "- Refer to components with their exact id in double brackets, like [[api.server]], so the viewer can click them. Use only ids from the map, or ids you add in changes.",
+    "- Base claims on the map. If something can only be confirmed in the code, say which file to check rather than guessing.",
+    "- When you propose a redesign, explain the why and the trade-offs, flag any project rule it touches, and keep deterministic facts out of any AI component.",
+    "- When the viewer asks for a change or a redesign, or when pointing at components helps, END your reply with exactly one fenced block:",
+    "```eye-actions",
+    '{"focus": ["node.id"], "changes": [ {"op":"add_node","id":"new.short-name","label":"Name","zone":"workers","about":"what it does"}, {"op":"remove_node","id":"..."}, {"op":"modify_node","id":"...","label":"...","about":"..."}, {"op":"add_edge","from":"...","to":"...","kind":"data","label":"..."}, {"op":"remove_edge","from":"...","to":"..."}, {"op":"note","id":"...","text":"..."} ] }',
+    "```",
+    "Zones: " + ZONES.map((z) => z.id).join(", ") + ". New ids start with 'new.'. Omit the block when there is nothing to focus or change. Never mention the block in your prose.",
+  ].join("\n");
+}
+function contextLine() {
+  const parts = [];
+  if (state.claudeContext && G.nodes.get(state.claudeContext)) parts.push(`The viewer has selected [[${state.claudeContext}]] (${label(state.claudeContext)}).`);
+  const s = draftSummary();
+  parts.push(s ? "Their current redesign draft:\n" + s : "They have no draft changes yet.");
+  return parts.join("\n");
+}
+function askAbout(id, text) {
+  if (id) state.claudeContext = id;
+  openPanel("claude");
+  $("chat-input").value = text;
+  sendChat();
+}
+async function sendChat() {
+  const input = $("chat-input");
+  const text = input.value.trim();
+  if (!text || busy) return;
+  if (!sample) { renderChat(); return; }
+  input.value = "";
+  const about = state.claudeContext ? label(state.claudeContext) : null;
+  chat.push({ role: "user", text, about, ctx: contextLine() });
+  const msg = { role: "ai", text: "", done: false };
+  chat.push(msg);
+  renderChat();
+  const turns = [{ role: "user", content: rulesTurn() }];
+  const hist = chat.slice(0, -1).filter((m) => m.role === "user" || (m.role === "ai" && m.text && !m.error)).slice(-12);
+  for (const m of hist) turns.push(m.role === "user" ? { role: "user", content: `${m.ctx}\n\nViewer: ${m.text}` } : { role: "assistant", content: m.raw || m.text });
+  if (turns[turns.length - 1].role !== "user") turns.push({ role: "user", content: text });
+  busy = true; chatCtl = new AbortController(); setBusy(true);
+  try {
+    const res = await sample(turns, { cache: false, signal: chatCtl.signal, onText: ({ text: t }) => { msg.raw = t; msg.text = stripActions(t); renderLastMessage(); } });
+    msg.raw = res.text; msg.text = stripActions(res.text); msg.done = true;
+    if (res.truncated) msg.error = "The answer was cut short. Ask for less at a time.";
+    handleActions(msg, res.text);
+  } catch (e) {
+    msg.done = true;
+    const c = e && e.code;
+    if (e && typeof e.text === "string" && c !== "refused") { msg.raw = e.text; msg.text = stripActions(e.text); } else if (c === "refused") msg.text = "";
+    if (c === "cancelled") msg.error = msg.text ? "Stopped." : "Stopped before Claude answered.";
+    else if (["not_granted", "sampling_disabled", "not_declared", "capability_disabled", "capability_removed"].includes(c)) { msg.error = "Claude isn't available on this map for you. You can still copy questions into your Claude Code session."; sample = null; }
+    else if (c === "rate_limited") msg.error = "Too many requests right now. Try again in a minute.";
+    else if (c === "session_expired") msg.error = "Your claude.ai sign-in expired. Sign in again, then send.";
+    else if (c === "refused") msg.error = "Claude declined that request. Try rephrasing it.";
+    else if (c === "prompt_too_large") msg.error = "The conversation is too long. Clear it and ask again.";
+    else msg.error = "The answer was interrupted. Send again to retry.";
+  } finally { busy = false; chatCtl = null; setBusy(false); renderChat(); }
+}
+function stripActions(t) { const i = t.indexOf("```eye-actions"); return (i >= 0 ? t.slice(0, i) : t).trim(); }
+function handleActions(msg, raw) {
+  const m = raw.match(/```eye-actions\s*([\s\S]*?)```/);
+  if (!m) return;
+  let data; try { data = JSON.parse(m[1]); } catch (_) { msg.error = "Claude's proposed changes were malformed, so none were staged."; return; }
+  const focus = Array.isArray(data.focus) ? data.focus.filter((id) => typeof id === "string" && G.nodes.has(id)).slice(0, 12) : [];
+  const { ops, dropped } = validateOps(Array.isArray(data.changes) ? data.changes : []);
+  msg.focus = focus;
+  if (ops.length) { msg.proposal = { ops, dropped, state: "preview" }; setPreview(msg); }
+  else if (focus.length) highlightIds(focus);
+}
+function validateOps(list) {
+  const ops = []; let dropped = 0;
+  const known = new Set(G.nodes.keys());
+  const s = (v, n) => (typeof v === "string" ? v.trim().slice(0, n) : "");
+  for (const c of list.slice(0, 40)) {
+    if (!c || typeof c !== "object") { dropped++; continue; }
+    const op = s(c.op, 20);
+    if (op === "add_node") {
+      let id = s(c.id, 60).toLowerCase().replace(/[^a-z0-9._-]/g, "-");
+      if (!id.startsWith("new.")) id = "new." + id.replace(/^\.+/, "");
+      const lbl = s(c.label, 60);
+      if (!lbl || known.has(id) || !ZONE_BY_ID[c.zone]) { dropped++; continue; }
+      known.add(id); ops.push({ op, id, label: lbl, zone: c.zone, about: s(c.about, 400), by: "claude" });
+    } else if (op === "remove_node" || op === "modify_node" || op === "note") {
+      const id = s(c.id, 60); if (!known.has(id)) { dropped++; continue; }
+      if (op === "remove_node") ops.push({ op, id, by: "claude" });
+      else if (op === "note") { const t = s(c.text, 400); if (!t) { dropped++; continue; } ops.push({ op, id, text: t, by: "claude" }); }
+      else { const o = { op, id, by: "claude" }; if (s(c.label, 60)) o.label = s(c.label, 60); if (s(c.about, 400)) o.about = s(c.about, 400); if (!o.label && !o.about) { dropped++; continue; } ops.push(o); }
+    } else if (op === "add_edge" || op === "remove_edge") {
+      const from = s(c.from, 60), to = s(c.to, 60);
+      if (!known.has(from) || !known.has(to) || from === to) { dropped++; continue; }
+      if (op === "add_edge") ops.push({ op, from, to, kind: KINDS[c.kind] && !["cli", "build", "planned"].includes(c.kind) ? c.kind : "data", label: s(c.label, 60), by: "claude" });
+      else ops.push({ op, from, to, by: "claude" });
+    } else dropped++;
+  }
+  return { ops, dropped };
+}
+function setPreview(msg) {
+  for (const m of chat) if (m.proposal && m !== msg && m.proposal.state === "preview") m.proposal.state = "hidden";
+  state.preview = { ops: msg.proposal.ops };
+  rebuild();
+  const ids = msg.proposal.ops.flatMap((o) => [o.id, o.from, o.to]).filter(Boolean);
+  highlightIds([...new Set([...(msg.focus || []), ...ids])], false);
+}
+function clearPreview() { state.preview = null; rebuild(); }
+function applyProposal(msg) {
+  for (const op of msg.proposal.ops) state.draft.ops.push({ ...op, oid: opId(), at: new Date().toISOString() });
+  msg.proposal.state = "applied"; state.preview = null;
+  rebuild(); saveDraft();
+  if (state.mode !== "redesign") setMode("redesign");
+  setTab("claude");
+  toast(`Added ${msg.proposal.ops.length} change${msg.proposal.ops.length > 1 ? "s" : ""} to your draft`);
+}
+function highlightIds(ids, selectFirst = true) {
+  ids = ids.filter((id) => layoutRect.has(id));
+  if (!ids.length) return;
+  if (selectFirst && ids.length === 1) { select(ids[0], { fly: true, tab: state.tab }); return; }
+  fitNodes(ids, 1);
+}
+function setBusy(b) { $("chat-send").hidden = b; $("chat-stop").hidden = !b; $("chat-input").disabled = false; }
+$("chat-send").onclick = sendChat;
+$("chat-stop").onclick = () => { if (chatCtl) chatCtl.abort(); };
+$("chat-clear").onclick = () => { if (busy && chatCtl) chatCtl.abort(); chat.length = 0; if (state.preview) clearPreview(); renderChat(); };
+$("chat-input").addEventListener("keydown", (ev) => { if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); sendChat(); } });
+$("btn-claude").onclick = () => { if (state.panel && state.tab === "claude") { closePanel(); return; } openPanel("claude"); $("chat-input").focus({ preventScroll: true }); };
+
+function renderChatCtx() {
+  const box = $("chat-ctx"); box.textContent = "";
+  const id = state.claudeContext;
+  box.append(el("span", { text: "Asking about" }));
+  if (id && G.nodes.get(id)) box.append(el("span", { class: "ctx-chip" }, label(id), el("button", { "aria-label": "Ask about the whole map instead", onclick: () => { state.claudeContext = null; renderChatCtx(); } }, "×")));
+  else box.append(el("span", { class: "ctx-chip", style: "padding-right: 10px" }, "the whole map"));
+  if (state.draft.ops.length) box.append(el("span", { text: `· your draft (${state.draft.ops.length})` }));
+}
+function suggestions() {
+  const n = state.claudeContext && G.nodes.get(state.claudeContext);
+  const list = n ? [
+    `Explain ${n.label} simply`, `How does data reach ${n.label}?`, `What would break without ${n.label}?`, `Propose a cleaner design for ${n.label}`,
+  ] : [
+    "Give me the 60-second tour of this architecture", "Where are the weakest points in this design?", "What should the next package build, and where does it plug in?", "Propose a redesign that makes the workers a durable job queue",
+  ];
+  return el("div", { class: "suggest" }, ...list.map((t) => el("button", { onclick: () => { $("chat-input").value = t; sendChat(); } }, t)));
+}
+function renderChat() {
+  const log = $("chat-log"); log.textContent = "";
+  $("composer").hidden = !sample && sampleReady;
+  if (!sample && sampleReady) {
+    log.append(el("div", { class: "unavail" }, el("p", { style: "margin: 0 0 8px", text: "Asking Claude from the page works when this map is open on claude.ai and you allow it." }),
+      el("p", { style: "margin: 0", text: "You can still hand any component or your draft to Claude Code from the Component and Draft tabs." })));
+    return;
+  }
+  if (!chat.length) {
+    log.append(el("div", { class: "msg ai" }, el("p", { text: state.claudeContext ? `Ask anything about ${label(state.claudeContext)}, or about how it fits the whole system. I can point at blocks on the map and stage redesigns for you to review.` : "Ask me anything about EYE's architecture. I can point at blocks on the map and stage redesigns for you to review before they go into your draft." })), suggestions());
+    return;
+  }
+  chat.forEach((m, i) => log.append(renderMsg(m, i)));
+  log.scrollTop = log.scrollHeight;
+}
+function renderLastMessage() {
+  const log = $("chat-log"), last = log.lastElementChild;
+  if (!last) return renderChat();
+  const m = chat[chat.length - 1];
+  last.replaceWith(renderMsg(m, chat.length - 1));
+  log.scrollTop = log.scrollHeight;
+}
+function renderMsg(m, i) {
+  if (m.role === "user") return el("div", { class: "msg user" }, m.about ? el("span", { class: "about", text: "about " + m.about }) : null, m.text);
+  const box = el("div", { class: "msg ai" });
+  if (!m.text && !m.done) box.append(el("span", { class: "thinking", text: "Thinking" }));
+  else renderMd(box, m.text);
+  if (m.error) box.append(el("p", { class: "err", text: m.error }));
+  if (m.done && m.focus && m.focus.length && !m.proposal) box.append(el("div", { class: "actions" }, el("button", { class: "btn", onclick: () => highlightIds(m.focus) }, "Show on map")));
+  if (m.proposal) {
+    const p = m.proposal;
+    const box2 = el("div", { class: "proposal" }, el("h5", { text: p.state === "applied" ? "Added to your draft" : `${p.ops.length} proposed change${p.ops.length > 1 ? "s" : ""}` }),
+      el("ul", null, ...p.ops.map((o) => el("li", { text: describeOp(o) }))),
+      p.dropped ? el("p", { class: "err", text: `${p.dropped} change${p.dropped > 1 ? "s" : ""} referred to blocks that don't exist and were left out.` }) : null);
+    if (p.state !== "applied") {
+      const showing = p.state === "preview";
+      box2.append(el("div", { class: "row" },
+        el("button", { class: "btn primary", onclick: () => applyProposal(m) }, "Add to draft"),
+        showing ? el("button", { class: "btn", onclick: () => { p.state = "hidden"; clearPreview(); renderChat(); } }, "Hide preview")
+          : el("button", { class: "btn", onclick: () => { p.state = "preview"; setPreview(m); renderChat(); } }, "Preview on map")));
+    }
+    box.append(box2);
+  }
+  return box;
+}
+function renderMd(container, text) {
+  const lines = text.replace(/\r/g, "").split("\n");
+  let para = [], list = null, pre = null;
+  const flushP = () => { if (para.length) { const p = el("p"); inline(p, para.join(" ")); container.append(p); para = []; } };
+  const flushL = () => { if (list) { container.append(list); list = null; } };
+  for (const raw of lines) {
+    if (raw.trim().startsWith("```")) { if (pre) { container.append(pre); pre = null; } else { flushP(); flushL(); pre = el("pre"); } continue; }
+    if (pre) { pre.append(raw + "\n"); continue; }
+    const line = raw.trim();
+    if (!line) { flushP(); flushL(); continue; }
+    const li = line.match(/^([-*•]|\d+[.)])\s+(.*)$/);
+    if (li) { flushP(); if (!list) list = el(/^\d/.test(li[1]) ? "ol" : "ul"); const item = el("li"); inline(item, li[2]); list.append(item); continue; }
+    const h = line.match(/^#{1,4}\s+(.*)$/);
+    if (h) { flushP(); flushL(); const hh = el("h4"); inline(hh, h[1]); container.append(hh); continue; }
+    flushL(); para.push(line);
+  }
+  if (pre) container.append(pre);
+  flushP(); flushL();
+}
+function inline(parent, s) {
+  const re = /\[\[([a-z0-9._-]+)\]\]|`([^`]+)`|\*\*([^*]+)\*\*/gi;
+  let last = 0, m;
+  while ((m = re.exec(s))) {
+    if (m.index > last) parent.append(s.slice(last, m.index));
+    if (m[1]) { const id = m[1]; parent.append(G.nodes.has(id) ? el("button", { class: "nchip", onclick: () => highlightIds([id]) }, label(id)) : el("code", { text: id })); }
+    else if (m[2]) parent.append(el("code", { text: m[2] }));
+    else parent.append(el("strong", { text: m[3] }));
+    last = re.lastIndex;
+  }
+  if (last < s.length) parent.append(s.slice(last));
+}
+
+/* ===================================================================
+   TOURS
+   =================================================================== */
+function startTour(t) {
+  closeMenus(); hideIntro();
+  state.sel = null; state.tour = { t, i: 0 };
+  showTourStep();
+}
+function showTourStep() {
+  const tour = TOURS[state.tour.t], s = tour.steps[state.tour.i];
+  drawEdges(); fitNodes(s.n, 1.05);
+  const bar = $("tourbar"); bar.hidden = false; bar.textContent = "";
+  const last = state.tour.i === tour.steps.length - 1;
+  bar.append(
+    el("div", { class: "t-top" }, el("span", { text: "Tour · " + tour.title }), el("span", { class: "count", text: `${state.tour.i + 1} / ${tour.steps.length}` })),
+    el("div", { class: "progress" }, el("i", { style: `width:${((state.tour.i + 1) / tour.steps.length) * 100}%` })),
+    el("p", { text: s.text }),
+    el("div", { class: "row" },
+      el("button", { class: "btn", disabled: state.tour.i === 0, onclick: () => { state.tour.i--; showTourStep(); } }, "Back"),
+      el("button", { class: "btn primary", onclick: () => { if (last) stopTour(true); else { state.tour.i++; showTourStep(); } } }, last ? "Finish" : "Next"),
+      el("button", { class: "btn ghost", onclick: () => { const id = s.n[s.n.length - 1]; stopTour(); select(id, { tab: "claude" }); $("chat-input").value = `In the "${tour.title}" tour, explain this step in more depth: ${s.text}`; } }, "Ask about this step"),
+      el("button", { class: "btn ghost", onclick: () => stopTour(true) }, "End tour")));
+}
+function stopTour(fit) {
+  if (!state.tour) return;
+  state.tour = null; $("tourbar").hidden = true; drawEdges();
+  if (fit) fitAll();
+}
+
+/* ===================================================================
+   SEARCH, MENUS, LEGEND, READOUT, TOAST, KEYS
+   =================================================================== */
+const search = $("search"), results = $("results");
+let hits = [], hitIdx = 0;
+function runSearch() {
+  const q = search.value.trim().toLowerCase();
+  if (!q) { results.hidden = true; return; }
+  hits = [...G.nodes.values()].filter(nodeVisible).map((n) => {
+    const hay = [n.label, n.path, n.id, (n.items || []).join(" "), n.sub].join(" ").toLowerCase();
+    const i = hay.indexOf(q); return i < 0 ? null : { n, score: n.label.toLowerCase().includes(q) ? 0 : 1 + i / 1000 };
+  }).filter(Boolean).sort((a, b) => a.score - b.score).slice(0, 10).map((h) => h.n);
+  hitIdx = 0; results.textContent = "";
+  if (!hits.length) results.append(el("div", { class: "empty", style: "padding: 10px", text: "No component, file or table matches." }));
+  hits.forEach((n, i) => results.append(el("button", { role: "option", "aria-selected": i === 0, onclick: () => pickHit(n.id) }, el("div", { class: "r-t", text: n.label }), el("div", { class: "r-p", text: `${ZONE_BY_ID[n.zone].label} · ${n.path || n.id}` }))));
+  results.hidden = false;
+}
+function pickHit(id) { results.hidden = true; search.value = ""; search.blur(); if (state.tour) stopTour(); select(id, { fly: true }); }
+search.addEventListener("input", runSearch);
+search.addEventListener("keydown", (ev) => {
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") { ev.preventDefault(); hitIdx = clamp(hitIdx + (ev.key === "ArrowDown" ? 1 : -1), 0, hits.length - 1); [...results.children].forEach((b, i) => b.setAttribute("aria-selected", i === hitIdx)); }
+  else if (ev.key === "Enter" && hits[hitIdx]) pickHit(hits[hitIdx].id);
+  else if (ev.key === "Escape") { results.hidden = true; search.blur(); }
+});
+search.addEventListener("blur", () => setTimeout(() => { results.hidden = true; }, 160));
+
+function buildMenus() {
+  const ml = $("menu-layers"); ml.textContent = "";
+  ml.append(el("h3", { text: "Show on the map" }));
+  for (const L of LAYERS) {
+    const cb = el("input", { type: "checkbox", id: "layer-" + L.id }); cb.checked = state.layers[L.id];
+    cb.onchange = () => { state.layers[L.id] = cb.checked; if (L.id === "planned") rebuild(); else drawEdges(); try { store("eye-map-layers", JSON.stringify(state.layers)); } catch (_) { /* optional */ } };
+    ml.append(el("label", { for: cb.id }, cb, el("span", null, L.label, el("small", { text: L.hint }))));
+  }
+  const mt = $("menu-tours"); mt.textContent = "";
+  mt.append(el("h3", { text: "Guided tours" }));
+  TOURS.forEach((t, i) => mt.append(el("button", { class: "tour-item", onclick: () => startTour(i) }, el("b", { text: t.title }), el("span", { text: `${t.blurb} ${t.steps.length} steps.` }))));
+}
+function toggleMenu(btn, menu) {
+  const open = menu.hidden; closeMenus();
+  if (open) { menu.hidden = false; btn.setAttribute("aria-expanded", "true"); }
+}
+function closeMenus() { for (const [b, m] of [["btn-layers", "menu-layers"], ["btn-tours", "menu-tours"]]) { $(m).hidden = true; $(b).setAttribute("aria-expanded", "false"); } }
+$("btn-layers").onclick = (ev) => { ev.stopPropagation(); toggleMenu($("btn-layers"), $("menu-layers")); };
+$("btn-tours").onclick = (ev) => { ev.stopPropagation(); toggleMenu($("btn-tours"), $("menu-tours")); };
+document.addEventListener("pointerdown", (ev) => { if (!ev.target.closest(".menu-wrap")) closeMenus(); });
+
+function buildLegend() {
+  const lg = $("legend"); lg.textContent = "";
+  lg.append(el("h3", { text: "This map" }), el("div", { class: "readout", id: "readout" }));
+  const line = (k) => { const s = sv("svg", { width: 30, height: 10 }); s.append(sv("path", { d: "M1,5 L29,5", class: `edge k-${k}`, style: "opacity: 1" })); return s; };
+  lg.append(el("h3", { text: "Links" }), el("ul", null, ...Object.keys(KINDS).map((k) => el("li", null, line(k), KINDS[k].label))));
+  lg.append(el("h3", { text: "Blocks" }), el("ul", null,
+    el("li", null, el("span", { class: "sw", style: "border: 1px solid var(--line-2); background: var(--panel-hi)" }), "Built, in this commit"),
+    el("li", null, el("span", { class: "sw", style: "border: 1px dashed var(--muted)" }), "Planned package, not built"),
+    el("li", null, el("span", { class: "sw", style: "border: 1px dashed var(--green)" }), "Added in your draft"),
+    el("li", null, el("span", { class: "sw", style: "border: 1px solid var(--red)" }), "Removed in your draft"),
+    el("li", null, el("span", { class: "sw", style: "border: 1px dashed var(--magenta)" }), "Proposed by Claude")));
+}
+$("z-legend").textContent = "Legend";
+$("z-legend").onclick = () => { const lg = $("legend"); lg.hidden = !lg.hidden; $("z-legend").setAttribute("aria-expanded", String(!lg.hidden)); };
+$("z-in").onclick = () => { const a = availRect(); zoomAt(view.k * 1.3, a.w / 2, a.h / 2); };
+$("z-out").onclick = () => { const a = availRect(); zoomAt(view.k / 1.3, a.w / 2, a.h / 2); };
+$("z-fit").onclick = () => fitAll();
+
+function updateReadout() {
+  const tables = NODES.filter((n) => n.kind === "sql").reduce((s, n) => s + n.items.filter((t) => !t.includes("(view)")).length, 0);
+  const loc = NODES.reduce((s, n) => s + (n.kind === "py" || n.kind === "ts" ? n.loc || 0 : 0), 0);
+  const r = $("readout"); if (!r) return; r.textContent = "";
+  const row = (k, v, cls) => el("div", null, el("b", { text: k }), cls ? el("span", { class: cls, text: v }) : v);
+  r.append(row("REF", `${REPO} @ ${COMMIT}`), row("BUILD", "Packages 0–5 · 6 source review"), row("MAP", `${NODES.filter((n) => n.status !== "planned").length} parts · ${EDGES.length} links · ${tables} tables`),
+    row("CODE", `≈${(loc / 1000).toFixed(1)}k lines Python + TypeScript`),
+    row("MODE", state.mode === "redesign" ? `REDESIGN · ${state.draft.ops.length} change${state.draft.ops.length === 1 ? "" : "s"}` : state.tour ? "TOUR" : "EXPLORE", state.mode === "redesign" ? "mode-edit" : null));
+}
+let toastTimer = 0;
+function toast(t) { const e = $("toast"); e.textContent = t; e.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { e.hidden = true; }, 2600); }
+
+function hideIntro() { $("intro").hidden = true; store("eye-map-intro", "seen"); }
+$("intro-close").onclick = hideIntro;
+$("intro-tour").onclick = () => startTour(0);
+
+document.addEventListener("keydown", (ev) => {
+  const typing = ev.target.closest && ev.target.closest("input, textarea, select, [contenteditable]");
+  if (ev.key === "Escape") {
+    if (document.querySelector(".modal-back")) return;
+    if (state.pick) { cancelPick(); return; }
+    if (state.tour) { stopTour(); return; }
+    if (!$("intro").hidden) { hideIntro(); return; }
+    closeMenus();
+    if (!typing && state.sel) { select(null); return; }
+    return;
+  }
+  if (typing) return;
+  const a = availRect();
+  if (ev.key === "/") { ev.preventDefault(); search.focus(); }
+  else if (ev.key === "+" || ev.key === "=") zoomAt(view.k * 1.25, a.w / 2, a.h / 2);
+  else if (ev.key === "-" || ev.key === "_") zoomAt(view.k / 1.25, a.w / 2, a.h / 2);
+  else if (ev.key === "0") fitAll();
+  else if (ev.key.startsWith("Arrow") && !ev.target.closest(".node, button")) {
+    const d = 60; if (ev.key === "ArrowLeft") view.x += d; if (ev.key === "ArrowRight") view.x -= d; if (ev.key === "ArrowUp") view.y += d; if (ev.key === "ArrowDown") view.y -= d; applyView();
+  } else if (state.tour && (ev.key === "ArrowRight" || ev.key === "ArrowLeft")) { /* handled by buttons */ }
+});
+
+/* ===================================================================
+   BOOT
+   =================================================================== */
+function rebuild() {
+  computeGraph();
+  if (state.sel && !G.nodes.has(state.sel)) state.sel = null;
+  renderNodes(); layout(); drawEdges(); drawMinimap();
+  refreshPanel(); renderChatCtx(); updateReadout(); updateBadge();
+}
+try { const L = JSON.parse(store("eye-map-layers") || "null"); if (L) Object.assign(state.layers, L); } catch (_) { /* optional */ }
+buildMenus(); buildLegend();
+rebuild();
+fitAll(0);
+if (store("eye-map-intro") !== "seen") $("intro").hidden = false;
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { rebuild(); fitAll(0); });
+addEventListener("resize", () => { drawMinimap(); });
+
+use("sample").then((s) => { sample = s; sampleReady = true; if (state.tab === "claude") renderChat(); });
+use("comments").then((c) => { comments = c; refreshPanel(); });
+initDb();
+setTimeout(() => { if (!sampleReady) { sampleReady = true; renderChat(); } }, 11000);
+})();
+</script>
+</body></html>
